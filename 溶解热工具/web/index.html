@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>溶解热实验报告一键生成</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --ink:#1f2328; --ink2:#5b6472;
+  --accent:#1f77b4; --accent2:#0d5c8f; --orange:#e08214; --green:#3aa93a;
+  --gray:#6b7280; --red:#d62728; --ok:#1a7f37; --warn:#b45309;
+  --shadow:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.04);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.6 "Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif}
+button{font:inherit}
+.top{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:14px;padding:10px 18px;box-shadow:var(--shadow);flex-wrap:wrap}
+.top h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.3px}
+.top .sub{color:var(--ink2);font-size:12px}
+.top .sub code{background:#f2f4f7;padding:2px 7px;border-radius:5px;font-size:12px;color:var(--ink)}
+.top .spacer{flex:1}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 14px;cursor:pointer;
+  color:var(--ink);transition:.15s;text-decoration:none;display:inline-block}
+.btn:hover{background:#f0f2f5}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--accent2)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.wrap{display:grid;grid-template-columns:340px 1fr;gap:16px;padding:16px;align-items:start}
+@media (max-width:1080px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+  padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--ink2);font-weight:600;letter-spacing:.5px}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.row label{flex:0 0 112px;color:var(--ink2);font-size:12.5px}
+input[type=text],input[type=number],select{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;
+  padding:5px 8px;font:inherit;background:#fff;color:var(--ink)}
+input:focus,select:focus{outline:2px solid #cfe4f5;border-color:var(--accent)}
+.hint{color:var(--ink2);font-size:12px;margin:6px 0 0}
+.round{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:#fcfcfd}
+.round.active{border-color:var(--accent);background:#f6fbff}
+.round .head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.round .head input[type=text]{flex:1;font-weight:600}
+.tag{font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--line);color:var(--ink2)}
+.tag.ok{background:#eaf7ee;border-color:#b7e0c3;color:#1a7f37}
+.tag.auto{background:#fff7e6;border-color:#f0d199;color:#8a5a10}
+.chartbox{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px}
+svg{display:block;width:100%;height:auto;touch-action:none;user-select:none}
+.legend{display:flex;flex-wrap:wrap;gap:12px;padding:6px 10px 2px;font-size:12px;color:var(--ink2)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.legend .dot{width:9px;height:9px;border-radius:50%}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.stat{background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.stat .k{font-size:11.5px;color:var(--ink2)}
+.stat .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.fixed{flex:1;font-size:12.5px;background:#fafbfc;border:1px solid var(--line);
+  border-radius:7px;padding:5px 8px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{border:1px solid var(--line);padding:5px 7px;text-align:center;font-variant-numeric:tabular-nums}
+th{background:#f2f4f7;font-weight:600;color:var(--ink2)}
+.pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:20px;background:#eef6ff;
+  color:#1a5b8c;border:1px solid #bcd9f2}
+.pill.warn{background:#fff7e6;color:#8a5a10;border-color:#f0d199}
+.pill.ok{background:#eaf7ee;color:#1a7f37;border-color:#b7e0c3}
+.msg{font-size:13px;color:var(--ink)}
+.msg p{margin:4px 0}
+.overlay{position:fixed;inset:0;background:rgba(255,255,255,.72);display:none;align-items:center;
+  justify-content:center;z-index:50;flex-direction:column;gap:10px}
+.overlay.on{display:flex}
+.spin{width:26px;height:26px;border:3px solid #d8dde3;border-top-color:var(--accent);border-radius:50%;
+  animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;right:18px;bottom:18px;background:#1f2328;color:#fff;padding:10px 16px;border-radius:9px;
+  opacity:0;transform:translateY(8px);transition:.25s;z-index:60;max-width:62ch}
+.toast.on{opacity:1;transform:none}
+code{background:#f2f4f7;padding:1px 5px;border-radius:4px;font-size:12px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:900px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>溶解热实验报告 · 一键生成</h1>
+  <a class="btn" id="btnHome" href="/" style="display:none">← 返回入口</a>
+  <span class="sub" id="status">正在初始化…</span>
+  <span class="spacer"></span>
+  <button class="btn" id="btnCalc">重新计算</button>
+  <span class="sub">输出：<code id="exportName">—</code></span>
+  <button class="btn primary" id="btnExport">一键生成报告 (.docx)</button>
+</div>
+
+<div class="wrap">
+  <!-- ======================= 左侧配置 ======================= -->
+  <div>
+    <div class="card">
+      <h2>数据文件夹</h2>
+      <div class="row">
+        <input type="text" id="dataDir" placeholder="数据所在的文件夹…">
+        <button class="btn" id="btnScan">扫描</button>
+        <button class="btn" id="btnPick" title="弹出窗口选择数据文件夹">选择…</button>
+      </div>
+      <p class="hint" id="fileCount"></p>
+      <p class="hint" id="swInfo"></p>
+      <p class="hint" id="outInfo"></p>
+    </div>
+
+    <div class="card">
+      <h2>数据轮次</h2>
+      <div id="rounds"></div>
+      <button class="btn" id="btnAddRound" style="width:100%">+ 添加一轮数据</button>
+      <p class="hint">把该实验目录下的 dissolutiondata-*.csv 按实验先后顺序排列（累加法要求顺序不能乱）。</p>
+    </div>
+
+    <div class="card">
+      <h2>报告封面 / 实验条件</h2>
+      <div class="row"><label>姓名</label><input type="text" id="student_name" placeholder="张三"></div>
+      <div class="row"><label>学号</label><input type="text" id="student_id" placeholder="2300012602"></div>
+      <div class="row"><label>组别 / 组号</label>
+        <input type="text" id="group" placeholder="3" style="flex:1">
+        <input type="text" id="group_no" placeholder="8" style="flex:1">
+      </div>
+      <div class="row"><label>实验日期</label><input type="text" id="date" placeholder="2026/09/23"></div>
+      <div class="row"><label>大气压强 /kPa</label><input type="number" step="0.1" id="pressure_kPa" placeholder="101.3"></div>
+      <div class="row"><label>水体积 /mL</label><input type="number" step="1" id="water_volume_mL"></div>
+      <div class="row"><label>室温 /℃</label><input type="number" step="0.01" id="temperature_C" placeholder="留空=用文件中的数据"></div>
+      <div class="row"><label style="flex:0 0 auto">
+        <input type="checkbox" id="force_temperature" style="flex:none;width:auto;margin-right:6px">
+        全部轮次统一用这个室温</label>
+      </div>
+      <div class="row"><label>水密度 /(g/mL)</label><input type="number" step="0.0000001" id="water_density" placeholder="自动"></div>
+      <div class="row"><label>水比热 /(J/gK)</label><input type="number" step="0.0001" id="water_capacity" placeholder="自动"></div>
+      <p class="hint">水的密度与比热容按室温自动查表（CRC Handbook，与课程软件一致）。
+        不勾选统一室温时，每轮各自采用数据文件里记录的 <code>room_temperature(K)</code>。</p>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button class="btn" id="btnSaveDefault" style="flex:1">存为默认</button>
+        <button class="btn" id="btnResetDefault">恢复出厂默认</button>
+      </div>
+      <p class="hint" id="savedInfo"></p>
+    </div>
+
+    <div class="card">
+      <h2>溶质与不确定度</h2>
+      <div class="row"><label>溶质</label><select id="solute"></select></div>
+      <div class="row"><label>溶质式量</label><input type="number" step="0.001" id="solute_molarmass" placeholder="自动"></div>
+      <div class="row"><label>手册 Q<sub>s</sub><sup>0</sup></label><input type="number" step="0.01" id="literature_Qs0" placeholder="可不填"><span class="sub">kJ/mol</span></div>
+      <div class="row"><label>σ<sub>I</sub>（电流）</label><input type="number" step="0.001" id="sigma_current"><span class="sub">A</span></div>
+      <div class="row"><label>σ<sub>R</sub>（电阻）</label><input type="number" step="0.01" id="sigma_resistance"><span class="sub">Ω</span></div>
+      <div class="row"><label>σ<sub>t</sub>（时间）</label><input type="number" step="0.01" id="sigma_time"><span class="sub">s</span></div>
+      <div class="row"><label>σ<sub>ΔT</sub>（温差）</label><input type="number" step="0.001" id="sigma_dt"><span class="sub">K</span></div>
+      <div class="row"><label>天平允差</label><input type="number" step="0.0001" id="e_balance"><span class="sub">g</span></div>
+      <div class="row"><label>取点来源</label>
+        <select id="point_source" style="flex:1">
+          <option value="file">课程软件 dissolution.csv 里记录的取点（推荐）</option>
+          <option value="auto">按曲线自动寻点</option>
+        </select>
+      </div>
+      <p class="hint">误差分析沿用本课程报告一贯的口径：直接给各量的标准差
+        —— 电流 σ<sub>I</sub>=0.01 A、电阻 σ<sub>R</sub>=0.2 Ω（实验前后相差约 0.15 Ω，
+        接触电阻使读数偏大）、通电时间 σ<sub>t</sub>=0.7 s（单次计时 0.5 s 按 √2 合成）、
+        校正温差 σ<sub>ΔT</sub>=0.01 K（单次测温 0.005 K，两点相减）。
+        报告 4.3.1 会按式(12)估算溶解热的平均偏差并给出各项贡献。</p>
+    </div>
+  </div>
+
+  <!-- ======================= 右侧结果 ======================= -->
+  <div>
+    <div class="card">
+      <h2>等面积雷诺校正 <span id="chartTitle" class="pill"></span></h2>
+      <div id="chartHost" class="chartbox"></div>
+      <div class="legend">
+        <span><i style="background:dimgray"></i>ΔT–t 数据</span>
+        <span><i class="dot" style="background:var(--orange)"></i>平台1端点</span>
+        <span><i class="dot" style="background:var(--green)"></i>平台2端点</span>
+        <span><i class="dot" style="background:var(--gray)"></i>平台3端点</span>
+        <span><i style="background:var(--accent)"></i>平滑曲线</span>
+        <span><i style="background:var(--orange)"></i>拟合直线 A</span>
+        <span><i style="background:var(--green)"></i>拟合直线 B</span>
+        <span><i style="background:var(--gray)"></i>拟合直线 C</span>
+        <span><i style="background:var(--red)"></i>雷诺校正线 t₁ / t₂</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label>微调序号</label>
+        <select id="whichPoint" style="flex:0 0 150px">
+          <option value="0">Start 1</option><option value="1">End 1</option>
+          <option value="2">Start 2</option><option value="3">End 2</option>
+          <option value="4">Start 3</option><option value="5">End 3</option>
+        </select>
+        <input type="number" id="pointValue" style="flex:0 0 110px">
+        <button class="btn" id="btnApplyPoint">应用</button>
+        <button class="btn" id="btnAutoPoint">恢复自动寻点</button>
+      </div>
+      <p class="hint">也可以直接在图上拖动橙/绿/灰三个端点。溶解降温段用平台1、2校正，
+        通电升温段用平台2、3校正；两次校正的温差直接决定该轮的溶解热。</p>
+      <p class="hint" id="autoInfo"></p>
+      <div class="grid2" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <h2>逐轮溶解热</h2>
+      <div id="roundTable"></div>
+    </div>
+
+    <div class="card">
+      <h2>积分溶解热与经验方程拟合</h2>
+      <div id="results" class="msg">点击「重新计算」</div>
+      <div id="fitChart" class="chartbox" style="margin-top:10px"></div>
+      <div class="two" style="margin-top:10px">
+        <div><h2 style="margin-top:8px">各浓度下的热效应</h2><div id="diffTable"></div></div>
+        <div><h2 style="margin-top:8px">原始数据（前 30 行）</h2><div id="rawtable"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"><div class="spin"></div><div id="overlayText">处理中…</div></div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

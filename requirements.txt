@@ -1,0 +1,5 @@
+# 三个报告工具共用的依赖
+python-docx>=1.1
+numpy
+scipy
+matplotlib

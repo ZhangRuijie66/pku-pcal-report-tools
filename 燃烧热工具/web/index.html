@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>燃烧热实验报告一键生成</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --ink:#1f2328; --ink2:#5b6472;
+  --accent:#1f77b4; --accent2:#0d5c8f; --orange:#e08214; --green:#3aa93a;
+  --red:#d62728; --ok:#1a7f37; --warn:#b45309; --shadow:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.04);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.6 "Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif}
+button{font:inherit}
+.top{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:14px;padding:10px 18px;box-shadow:var(--shadow)}
+.top h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.3px}
+.top .sub{color:var(--ink2);font-size:12px}
+.top .sub code{background:#f2f4f7;padding:2px 7px;border-radius:5px;font-size:12px;color:var(--ink)}
+.top .spacer{flex:1}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 14px;cursor:pointer;
+  color:var(--ink);transition:.15s}
+.btn:hover{background:#f0f2f5}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--accent2)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.wrap{display:grid;grid-template-columns:330px 1fr;gap:16px;padding:16px;align-items:start}
+@media (max-width:1080px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+  padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--ink2);font-weight:600;letter-spacing:.5px;
+  text-transform:uppercase}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.row label{flex:0 0 108px;color:var(--ink2);font-size:12.5px}
+input[type=text],input[type=number],select{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;
+  padding:5px 8px;font:inherit;background:#fff;color:var(--ink)}
+input:focus,select:focus{outline:2px solid #cfe4f5;border-color:var(--accent)}
+.hint{color:var(--ink2);font-size:12px;margin:6px 0 0}
+.round{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:#fcfcfd}
+.round.active{border-color:var(--accent);background:#f6fbff}
+.round .head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.round .head input[type=text]{flex:1;font-weight:600}
+.tag{font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--line);color:var(--ink2)}
+.tag.std{background:#fff4e6;border-color:#f0c894;color:#8a5a10}
+.tag.sam{background:#eef6ff;border-color:#bcd9f2;color:#1a5b8c}
+.chartbox{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px}
+svg{display:block;width:100%;height:auto;touch-action:none;user-select:none}
+.legend{display:flex;flex-wrap:wrap;gap:14px;padding:6px 10px 2px;font-size:12px;color:var(--ink2)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.legend .dot{width:9px;height:9px;border-radius:50%}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
+.stat{background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.stat .k{font-size:11.5px;color:var(--ink2)}
+.stat .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.fixed{flex:1;font-size:12.5px;color:var(--ink);background:#fafbfc;border:1px solid var(--line);
+  border-radius:7px;padding:5px 8px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{border:1px solid var(--line);padding:5px 7px;text-align:center;font-variant-numeric:tabular-nums}
+th{background:#f2f4f7;font-weight:600;color:var(--ink2)}
+.pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:20px;background:#eef6ff;
+  color:#1a5b8c;border:1px solid #bcd9f2}
+.pill.warn{background:#fff7e6;color:#8a5a10;border-color:#f0d199}
+.pill.ok{background:#eaf7ee;color:#1a7f37;border-color:#b7e0c3}
+.msg{font-size:12px;color:var(--ink2);min-height:18px}
+.overlay{position:fixed;inset:0;background:rgba(255,255,255,.72);display:none;align-items:center;
+  justify-content:center;z-index:50;flex-direction:column;gap:10px}
+.overlay.on{display:flex}
+.spin{width:26px;height:26px;border:3px solid #d8dde3;border-top-color:var(--accent);border-radius:50%;
+  animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;right:18px;bottom:18px;background:#1f2328;color:#fff;padding:10px 16px;border-radius:9px;
+  opacity:0;transform:translateY(8px);transition:.25s;z-index:60;max-width:60ch}
+.toast.on{opacity:1;transform:none}
+.slider{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+.slider input[type=range]{flex:1}
+code{background:#f2f4f7;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>燃烧热实验报告 · 一键生成</h1>
+  <a class="btn" id="btnHome" href="/" style="display:none">← 返回入口</a>
+  <span class="sub" id="status">正在初始化…</span>
+  <span class="spacer"></span>
+  <button class="btn" id="btnCalc">重新计算</button>
+  <span class="sub">输出：<code id="exportName">—</code></span>
+  <button class="btn primary" id="btnExport">一键生成报告 (.docx)</button>
+</div>
+
+<div class="wrap">
+  <!-- ======================= 左侧配置 ======================= -->
+  <div>
+    <div class="card">
+      <h2>数据文件夹</h2>
+      <div class="row">
+        <input type="text" id="dataDir" placeholder="数据所在的文件夹…">
+        <button class="btn" id="btnScan">扫描</button>
+        <button class="btn" id="btnPick" title="弹出窗口选择数据文件夹">选择…</button>
+      </div>
+      <p class="hint" id="fileCount"></p>
+      <p class="hint" id="outInfo"></p>
+    </div>
+
+    <div class="card">
+      <h2>报告封面 / 实验条件</h2>
+      <div class="row"><label>姓名</label><input type="text" id="student_name" placeholder="张三"></div>
+      <div class="row"><label>学号</label><input type="text" id="student_id" placeholder="2300012602"></div>
+      <div class="row"><label>组别 / 组号</label>
+        <input type="text" id="group" placeholder="20" style="flex:1">
+        <input type="text" id="group_no" placeholder="1" style="flex:1">
+      </div>
+      <div class="row"><label>实验日期</label><input type="text" id="date" placeholder="2026/09/16"></div>
+      <div class="row"><label>大气压强 /kPa</label><input type="number" step="0.1" id="pressure_kPa" placeholder="102.4"></div>
+      <div class="row"><label>内筒水体积 /mL</label><input type="number" step="1" id="water_volume_mL"></div>
+      <div class="row"><label>室温 /℃</label><input type="number" step="0.1" id="temperature_C" placeholder="留空=用文件中的数据"></div>
+      <div class="row"><label style="flex:0 0 auto">
+        <input type="checkbox" id="force_temperature" style="flex:none;width:auto;margin-right:6px">
+        全部轮次统一用这个室温</label>
+      </div>
+      <p class="hint">不勾选时，每轮各自采用数据文件里记录的 <code>room_temperature(K)</code>
+        （本套数据是 299.65 / 299.75 / 300.15 K）。勾选后所有轮次都用上面的室温。
+        水的密度与比热容按该温度自动查表（CRC Handbook，与课程软件一致）。</p>
+      <div class="row"><label>水密度 /(g/mL)</label><input type="number" step="0.0000001" id="water_density" placeholder="自动"></div>
+      <div class="row"><label>水比热 /(J/gK)</label><input type="number" step="0.0001" id="water_capacity" placeholder="自动"></div>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button class="btn" id="btnSaveDefault" style="flex:1">存为默认</button>
+        <button class="btn" id="btnResetDefault">恢复出厂默认</button>
+      </div>
+      <p class="hint" id="savedInfo"></p>
+    </div>
+
+    <div class="card">
+      <h2>热化学常数与不确定度</h2>
+      <div class="row"><label>棉线燃烧热</label><input type="number" step="1" id="cotton_heat"><span class="sub">J/g</span></div>
+      <div class="row"><label>镍丝燃烧热</label><input type="number" step="1" id="nickel_heat"><span class="sub">J/g</span></div>
+      <div class="row"><label>苯甲酸燃烧焓</label><input type="number" step="0.1" id="benzoic_enthalpy"><span class="sub">kJ/mol</span></div>
+      <div class="row"><label>天平允差</label><input type="number" step="0.0001" id="e_balance"><span class="sub">g</span></div>
+      <div class="row"><label>温差仪允差</label><input type="number" step="0.001" id="e_temperature"><span class="sub">K</span></div>
+      <div class="row"><label>自动寻点方式</label>
+        <select id="point_prefer" style="flex:1">
+          <option value="software">与课程软件一致（推荐）</option>
+          <option value="rise">升温段法（平台更靠内）</option>
+          <option value="anchor">平台锚点法（窗口紧贴升温段）</option>
+        </select>
+      </div>
+      <div class="row"><label>自动寻点阈值</label><input type="number" step="0.001" id="std_limit"><span class="sub">σ</span></div>
+      <p class="hint">「与课程软件一致」沿用软件的平台判据（滑动窗口标准差 &lt; σ）。
+        课程软件内置 σ=0.005，但本套数据升温缓慢、基线有漂移，σ=0.005 会把基线漂移
+        误判成平台结束、把拟合区间放到还在上升的曲线上；默认 0.02 才能取到真正平直的
+        两段平台。软件算法失效时会自动改用其它方案并在下方提示。取点也可以随时手动拖动。</p>
+    </div>
+
+    <div class="card">
+      <h2>数据轮次</h2>
+      <div id="rounds"></div>
+      <button class="btn" id="btnAddRound" style="width:100%">+ 添加一轮数据</button>
+      <p class="hint">把其中一轮标为「标准物质」用于标定量热计常数，其余轮次按样品计算燃烧热。</p>
+    </div>
+  </div>
+
+  <!-- ======================= 右侧结果 ======================= -->
+  <div>
+    <div class="card">
+      <h2>雷诺校正 <span id="chartTitle" class="pill"></span></h2>
+      <div id="chartHost" class="chartbox"></div>
+      <div class="legend">
+        <span><i style="background:dimgray"></i>ΔT–t 数据</span>
+        <span><i class="dot" style="background:var(--orange)"></i>拟合区间1端点</span>
+        <span><i class="dot" style="background:var(--green)"></i>拟合区间2端点</span>
+        <span><i style="background:var(--accent)"></i>平滑曲线</span>
+        <span><i style="background:var(--orange)"></i>拟合直线1</span>
+        <span><i style="background:var(--green)"></i>拟合直线2</span>
+        <span><i style="background:var(--red)"></i>雷诺校正线</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label>微调序号</label>
+        <select id="whichPoint" style="flex:0 0 130px">
+          <option value="0">Start 1</option><option value="1">End 1</option>
+          <option value="2">Start 2</option><option value="3">End 2</option>
+        </select>
+        <input type="number" id="pointValue" style="flex:0 0 110px">
+        <button class="btn" id="btnApplyPoint">应用</button>
+        <button class="btn" id="btnAutoPoint">恢复自动寻点</button>
+        <span class="hint" style="margin:0">也可以直接在图上拖动橙色/绿色端点</span>
+      </div>
+      <p class="hint" id="autoInfo"></p>
+      <div class="grid2" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <h2>计算结果</h2>
+      <div id="results" class="msg">点击「重新计算」</div>
+    </div>
+
+    <div class="card">
+      <h2>原始数据（前 30 行）</h2>
+      <div id="rawtable"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"><div class="spin"></div><div id="overlayText">处理中…</div></div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

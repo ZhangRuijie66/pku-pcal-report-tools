@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>物化实验报告工具 · 项目入口</title>
+<style>
+:root{
+  --bg:#f4f6f9; --card:#fff; --line:#e4e7ec; --ink:#1f2328; --ink2:#5b6472;
+  --accent:#1f77b4; --accent2:#0d5c8f; --ok:#1a7f37; --warn:#b45309; --off:#98a2b3;
+  --shadow:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.04);
+  --shadow2:0 10px 26px rgba(16,24,40,.10);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.65 "Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif}
+.hero{background:linear-gradient(135deg,#1f77b4,#0d5c8f 55%,#123a5c);color:#fff;
+  padding:34px 28px 30px}
+.hero .inner{max-width:1180px;margin:0 auto}
+.hero h1{margin:0 0 6px;font-size:24px;font-weight:700;letter-spacing:.5px}
+.hero p{margin:0;color:#d8e8f5;font-size:13.5px;max-width:78ch}
+.hero .meta{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;font-size:12px}
+.hero .meta span{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);
+  padding:3px 10px;border-radius:20px}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 28px 60px}
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px}
+.bar .spacer{flex:1}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 14px;cursor:pointer;
+  color:var(--ink);text-decoration:none;display:inline-block;transition:.15s;font:inherit}
+.btn:hover{background:#f0f2f5}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--accent2)}
+.btn.ghost{background:#fff}
+.status{font-size:12.5px;color:var(--ink2)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);padding:18px;display:flex;flex-direction:column;gap:10px;
+  transition:.18s;position:relative;overflow:hidden}
+.card.live{cursor:pointer}
+.card.live:hover{box-shadow:var(--shadow2);transform:translateY(-2px);border-color:#cfe0f0}
+.card.dead{opacity:.72}
+.card h2{margin:0;font-size:16.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+.card .desc{color:var(--ink2);font-size:13px;margin:0;min-height:40px}
+.tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag{font-size:11px;padding:2px 8px;border-radius:20px;background:#eef6ff;color:#1a5b8c;
+  border:1px solid #bcd9f2}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:0 0 auto}
+.dot.on{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+.dot.off{background:var(--off)}
+.dot.err{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.18)}
+.foot{display:flex;align-items:center;gap:8px;margin-top:auto;flex-wrap:wrap}
+.foot .url{font-size:12px;color:var(--ink2);font-family:ui-monospace,Consolas,monospace}
+.badge{position:absolute;top:0;right:0;font-size:11px;padding:3px 12px;border-bottom-left-radius:10px;
+  background:#f2f4f7;color:var(--ink2);border-left:1px solid var(--line);border-bottom:1px solid var(--line)}
+.badge.ok{background:#eaf7ee;color:#1a7f37;border-color:#b7e0c3}
+.badge.soon{background:#f7f8fa;color:#98a2b3}
+.note{margin-top:22px;background:#fff;border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);padding:16px 18px;font-size:13px;color:var(--ink2)}
+.note h3{margin:0 0 8px;font-size:14px;color:var(--ink)}
+.note ol{margin:6px 0 0 20px;padding:0}
+.note li{margin:3px 0}
+.note code{background:#f2f4f7;padding:1px 6px;border-radius:5px;font-size:12px}
+.toast{position:fixed;right:18px;bottom:18px;background:#1f2328;color:#fff;padding:10px 16px;
+  border-radius:9px;opacity:0;transform:translateY(8px);transition:.25s;z-index:60;max-width:62ch}
+.toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="inner">
+    <h1>物化实验报告工具</h1>
+    <p>北京大学物理化学实验（2026 秋）—— 从课程软件导出的原始数据出发，
+       在本地网页界面里交互式处理（雷诺校正取点、拟合核对），
+       一键导出与课程模板同款的 Word 实验报告。全部计算在本机完成，不联网、不上传数据。</p>
+    <div class="meta">
+      <span id="mLab">实验目录：—</span>
+      <span id="mPort">入口端口：—</span>
+      <span id="mCount">模块：—</span>
+      <span id="mOut">报告输出：—</span>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="bar">
+    <button class="btn primary" id="btnAll">全部启动 / 重新检查</button>
+    <button class="btn" id="btnReload">刷新状态</button>
+    <span class="spacer"></span>
+    <span class="status" id="status">正在检查各模块…</span>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="note">
+    <h3>怎么用</h3>
+    <ol>
+      <li>点上面任意一张<b>绿色圆点</b>的卡片，就进入该实验的交互界面（在新标签页打开）。</li>
+      <li>在实验界面里选好数据文件夹 → 核对取点 → 「一键生成报告 (.docx)」，
+          报告写到 <code id="noteOutDir">实验报告输出\</code> 里（每份报告一个子文件夹，
+          全部实验共用这一个目录）。</li>
+      <li>回到本页可以随时切换实验；本窗口关掉，所有模块一起停止。</li>
+      <li>每个实验也能单独启动：进各自的工具目录双击 <code>启动.cmd</code>。</li>
+    </ol>
+    <h3 style="margin-top:14px">再加一个实验</h3>
+    <ol>
+      <li>照 <code>燃烧热工具</code> / <code>溶解热工具</code> 的样子新建
+          <code>××工具\</code>（<code>pcal\</code> 计算内核 + <code>web\</code> 界面 +
+          <code>templates\</code> 报告模板 + <code>启动.cmd</code>）。</li>
+      <li>让它的 <code>server.main()</code> 支持 <code>--port</code> / <code>--no-browser</code>。</li>
+      <li>在 <code>portal.py</code> 的 <code>MODULES</code> 里把 <code>tool</code>
+          从 <code>None</code> 改成目录名，入口页上这张卡片就自动变成可点。</li>
+    </ol>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let PORTAL = location.origin;
+const $ = (id) => document.getElementById(id);
+function toast(m, ms = 3000) {
+  const t = $('toast'); t.textContent = m; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms);
+}
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+async function api(p) {
+  const r = await fetch(p);
+  const j = await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+  return j;
+}
+
+function card(m) {
+  if (!m.installed) {
+    return `<div class="card dead">
+      <span class="badge soon">即将支持</span>
+      <h2><span class="dot off"></span>${esc(m.title)}</h2>
+      <p class="desc">${esc(m.desc)}</p>
+      <div class="tags">${(m.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      <div class="foot"><span class="status">模块尚未安装（把它的目录放进实验文件夹并在 portal.py 里登记即可）</span></div>
+    </div>`;
+  }
+  const live = m.running;
+  const dot = live ? 'on' : (m.ok === false && m.error ? 'err' : 'off');
+  const badge = live ? '<span class="badge ok">运行中</span>' : '';
+  const link = live
+    ? `<a class="btn primary" href="${esc(m.url)}" target="_blank" rel="noopener">进入实验界面 →</a>
+       <button class="btn" data-stop="${esc(m.key)}">停止</button>
+       <span class="url">${esc(m.raw_url)}</span>`
+    : `<button class="btn primary" data-start="${esc(m.key)}">启动这个模块</button>
+       ${m.error ? `<span class="status" style="color:#b45309">${esc(m.error)}</span>` : ''}`;
+  return `<div class="card ${live ? 'live' : ''}">
+    ${badge}
+    <h2><span class="dot ${dot}"></span>${esc(m.title)}</h2>
+    <p class="desc">${esc(m.desc)}</p>
+    <div class="tags">${(m.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+    <div class="foot">${link}</div>
+  </div>`;
+}
+
+function render(data) {
+  PORTAL = location.origin;
+  $('mLab').textContent = '实验目录：' + (data.lab_dir || '—');
+  $('mPort').textContent = '入口端口：' + data.portal_port;
+  const total = data.modules.length;
+  const ready = data.modules.filter(m => m.installed).length;
+  const live = data.modules.filter(m => m.running).length;
+  $('mCount').textContent = `模块：${live} 个运行中 / ${ready} 个已安装（共登记 ${total} 个）`;
+  if (data.output_dir) {
+    const el = $('mOut');
+    if (el) el.textContent = '报告输出：' + data.output_dir;
+    const nd = $('noteOutDir');
+    if (nd) { nd.textContent = data.output_dir; nd.title = data.output_dir; }
+  }
+  $('grid').innerHTML = data.modules.map(card).join('');
+  $('status').textContent = `${live} 个模块可用 · ${new Date().toLocaleTimeString()}`;
+  document.querySelectorAll('[data-start]').forEach(b =>
+    b.addEventListener('click', () => start(b.dataset.start, false)));
+  document.querySelectorAll('[data-stop]').forEach(b =>
+    b.addEventListener('click', () => stop(b.dataset.stop)));
+}
+
+async function load() {
+  const j = await api('/api/modules');
+  if (!j.ok) return toast(j.error || '读取失败');
+  render(j);
+}
+async function start(key, force) {
+  $('status').textContent = '正在启动…';
+  const j = await api('/api/start?key=' + encodeURIComponent(key) + (force ? '&force=1' : ''));
+  if (!j.ok) { toast('启动失败：' + (j.error || ''), 6000); }
+  else { toast('已启动'); }
+  await load();
+}
+async function stop(key) {
+  await api('/api/stop?key=' + encodeURIComponent(key));
+  toast('已停止');
+  await load();
+}
+
+$('btnAll').addEventListener('click', async () => {
+  const j = await api('/api/modules');
+  const keys = (j.modules || []).filter(m => m.installed && !m.running).map(m => m.key);
+  if (!keys.length) { toast('所有已安装的模块都在运行'); return load(); }
+  $('status').textContent = '正在启动 ' + keys.length + ' 个模块…';
+  for (const k of keys) await api('/api/start?key=' + encodeURIComponent(k));
+  await load();
+});
+$('btnReload').addEventListener('click', load);
+load();
+setInterval(() => { if (!document.hidden) load(); }, 15000);
+</script>
+</body>
+</html>

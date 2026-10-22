@@ -1,0 +1,19 @@
+# 只跟踪四个工具目录（数据、报告输出、发布包、学习资料都不进仓库）
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/requirements.txt
+!/启动入口.cmd
+!/物化实验报告工具/
+!/燃烧热工具/
+!/溶解热工具/
+!/紫外光谱工具/
+
+# 通用排除（对所有层级生效）
+__pycache__/
+*.py[cod]
+settings.json
+_test_out/
+*.bak
+.dsh-ops-update-*.lock
