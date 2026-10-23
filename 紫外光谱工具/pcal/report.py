@@ -699,7 +699,7 @@ def _sec_gaussian(rb, cfg, mol):
     rb.para('本部分使用 Gaussian 16（Rev. C.01）对上述 6 种共轭分子作量子化学计算：'
             '先用密度泛函理论（DFT，泛函 PBE0、基组 def2-TZVP）优化基态几何结构，'
             '再以这套 PBE0/def2-TZVP 几何为基础，用含时密度泛函理论（TD-DFT）计算'
-            '前 10 个激发态（个别泛函为 6 个）的激发能与振子强度，取振子强度最大者'
+            '前 10 个激发态的激发能与振子强度，取振子强度最大者'
             '对应的波长作为理论最大吸收波长，与实验值比较。%s；为考察泛函的影响，'
             'A2 还在同一几何上换用 CAM-B3LYP、M06-2X、LC-wPBE 重算了激发能。'
             '初始结构由 ChemDraw 绘制的二维结构经 ETKDG（MMFF94 力场）生成三维构象，'
@@ -731,11 +731,27 @@ def _sec_gaussian(rb, cfg, mol):
                    '约 %d~%d nm' % (min(short), max(short), min(cya), max(cya)))
     else:
         dev_txt = '短共轭体系偏差较小，而 A2~A4 三个花青染料偏差显著增大'
+    def _delta(base):
+        for r in rows:
+            if r[0] == base and r[5] != '—':
+                return float(r[5])
+        return None
+
+    b1_row = next((r for r in rows if r[0] == 'B1' and r[5] != '—'), None)
+    d_b1 = _delta('B1')
+    if b1_row is not None and d_b1 is not None and d_b1 > 0:
+        b1_txt = ('；B1（β-胡萝卜素）是例外，计算值 %.1f nm 比实验值 %.1f nm '
+                  '偏红 %.1f nm，误差方向与花青染料相反，说明长共轭多烯的误差机制'
+                  '不同，需单独看待' % (float(b1_row[1]), float(b1_row[4]), d_b1))
+    elif d_b1 is not None:
+        b1_txt = '；B1 的偏差为 %.1f nm' % abs(d_b1)
+    else:
+        b1_txt = ''
     rb.para('由表可见，计算值与实验值的偏差随共轭链增长而显著增大：' + dev_txt +
-            '，且全部表现为计算波长偏短（能量偏高），即 TD-DFT 系统性高估了能隙。'
-            '此外，花青染料的吸收对分子几何（双键顺反、链的平面性）和溶剂环境都'
-            '极为敏感，计算中若采用弯折构象或气相条件会进一步放大蓝移；本报告的'
-            '几何均取全反式构象。')
+            '，且这些分子的计算波长均偏短（能量偏高），即 TD-DFT 系统性高估了能隙'
+            + b1_txt + '。此外，花青染料的吸收对分子几何（双键顺反、链的平面性）和'
+            '溶剂环境都极为敏感，计算中若采用弯折构象或气相条件会进一步放大蓝移；'
+            '本报告的几何均取全反式构象。')
 
     # ---- A2 多泛函对比（同一几何，按固定顺序只列实际算过的泛函）
     a2 = chosen.get('A2')
