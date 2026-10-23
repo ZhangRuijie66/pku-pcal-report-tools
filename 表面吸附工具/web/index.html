@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>溶液表面吸附的测定 · 报告生成器</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --text:#1d2430; --sub:#5b6472;
+  --accent:#1f6feb; --accent2:#0b4fbf; --ok:#1a7f37; --warn:#b45309; --err:#b42318;
+  --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.06),0 6px 18px rgba(16,24,40,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei","Segoe UI",system-ui,sans-serif}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;padding:10px 18px;
+  background:#fff;border-bottom:1px solid var(--line);box-shadow:0 1px 2px rgba(16,24,40,.04)}
+header h1{font-size:16px;margin:0;font-weight:700;white-space:nowrap}
+header .sub{color:var(--sub);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header .grow{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 11px;
+  border:1px solid var(--line);background:#fff;border-radius:8px;color:var(--text);
+  font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#c9d1da;background:#fafbfc}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+.btn.mini{padding:2px 7px;font-size:12px;border-radius:6px}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+main{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;padding:14px 18px 40px;align-items:start}
+.panel{display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px}
+.card h2{font-size:13px;margin:0 0 8px;color:var(--sub);font-weight:700;letter-spacing:.02em}
+.field{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.field>label{font-size:12px;color:var(--sub)}
+.field input[type=text],.field input[type=number],.field select{
+  width:100%;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:7px;
+  font:inherit;background:#fff;color:var(--text)}
+.field input:focus,.field select:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.btnrow{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
+.hint{color:var(--sub);font-size:12px;margin:6px 0 0;line-height:1.55}
+.hint code{background:#f1f3f5;border-radius:4px;padding:0 4px;word-break:break-all}
+.content{display:flex;flex-direction:column;gap:14px;min-width:0}
+.chartbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.chartbar select{padding:5px 8px;border:1px solid var(--line);border-radius:7px;font:inherit;background:#fff;max-width:280px}
+.chartbox{background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px;min-height:300px;display:flex;align-items:center;justify-content:center;overflow:auto}
+.chartbox img{max-width:100%;max-height:520px;display:block}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:4px 5px;border-bottom:1px solid var(--line);text-align:center}
+th{background:#f7f8fa;color:var(--sub);font-weight:600;white-space:nowrap}
+td input[type=number]{width:100%;min-width:58px;padding:3px 4px;border:1px solid var(--line);
+  border-radius:5px;font:inherit;text-align:center;background:#fff}
+td input[type=number]:focus{outline:2px solid rgba(31,111,235,.16);border-color:var(--accent)}
+td input[type=checkbox]{transform:scale(1.05)}
+.scroll{overflow-x:auto}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;background:#eef4ff;color:var(--accent2);font-size:12px}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+.msg{padding:8px 10px;border-radius:8px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-size:13px;margin:4px 0}
+.msg.ok{background:#ecfdf3;border-color:#abefc6;color:#067647}
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:center;justify-content:center;z-index:50}
+.overlay.show{display:flex}
+.overlay .box{background:#fff;border-radius:12px;padding:18px 22px;display:flex;align-items:center;gap:12px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.spin{width:18px;height:18px;border:3px solid #dbe3ee;border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#111827;color:#fff;
+  padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.foot{color:var(--sub);font-size:12px;text-align:center;padding:0 0 18px}
+@media (max-width:1150px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>溶液表面吸附的测定 · 报告生成器</h1>
+  <span class="sub" id="status">正在初始化…</span>
+  <span class="grow"></span>
+  <a class="btn" id="btnHome" href="/" style="display:none">← 返回入口</a>
+  <button class="btn" id="btnSaveDefault">存为默认</button>
+  <button class="btn" id="btnCalc">重新计算</button>
+  <button class="btn primary" id="btnExport">一键生成报告 (.docx)</button>
+</header>
+
+<main>
+  <aside class="panel">
+    <section class="card">
+      <h2>数据</h2>
+      <div class="btnrow">
+        <button class="btn" id="btnSample">载入示例数据</button>
+        <button class="btn" id="btnSaveData">保存数据</button>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <div class="field"><label>导入类型</label>
+          <select id="importKind">
+            <option value="bubble">最大气泡法（c, 左×3, 右×3）</option>
+            <option value="plate">吊片法（c, γ×3）</option>
+            <option value="zero">零点（左×3, 右×3）</option>
+            <option value="water_bubble">纯水（左×3, 右×3）</option>
+          </select>
+        </div>
+        <div class="field"><label>CSV / TXT 文件</label>
+          <input type="file" id="fileInput" accept=".csv,.txt,.tsv" style="padding:4px 0">
+        </div>
+      </div>
+      <p class="hint">示例数据来自同一课程 2025 年的报告，仅用于预览流程；正式报告请换成自己的数据。
+        数据保存在 <code id="dataFile">—</code>，可随工具一起拷走。</p>
+    </section>
+
+    <section class="card">
+      <h2>实验条件</h2>
+      <div class="grid2">
+        <div class="field"><label>气泡法温度 /℃</label><input type="number" step="0.01" id="temperature_bubble"></div>
+        <div class="field"><label>吊片法温度 /℃</label><input type="number" step="0.01" id="temperature_plate"></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>纯水 γ_w /(mN·m⁻¹)</label><input type="number" step="0.01" id="gamma_water"></div>
+        <div class="field"><label>单次读数 σ_h /cm</label><input type="number" step="0.01" id="sigma_read"></div>
+        <div class="field"><label>吊片仪 σ /(mN·m⁻¹)</label><input type="number" step="0.01" id="sigma_plate"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>作图横轴</label>
+          <select id="conc_axis">
+            <option value="lg">lg c（讲义口径）</option>
+            <option value="ln">ln c（旧报告口径）</option>
+          </select>
+        </div>
+        <div class="field"><label>压力计零点</label>
+          <select id="zero_correction">
+            <option value="1">扣除零点</option>
+            <option value="0">不扣除（旧报告口径）</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">扣零点时 Δh = h_right − h_left − Δh₀，纯水与溶液用同一个零点；
+        两种口径的 Γ∞ 只差约 2%，报告会自动按所选口径写公式。</p>
+    </section>
+
+    <section class="card">
+      <h2>报告封面</h2>
+      <div class="field"><label>姓名</label><input type="text" id="student_name"></div>
+      <div class="field"><label>学号</label><input type="text" id="student_id"></div>
+      <div class="grid2">
+        <div class="field"><label>组别</label><input type="text" id="group"></div>
+        <div class="field"><label>组号</label><input type="text" id="group_no"></div>
+      </div>
+      <div class="field"><label>实验日期</label><input type="text" id="date"></div>
+      <div class="grid2">
+        <div class="field"><label>室温 /℃</label><input type="number" step="0.1" id="room_temp"></div>
+        <div class="field"><label>大气压强 /kPa</label><input type="number" step="0.1" id="pressure"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>压力计零点 / 纯水</h2>
+      <div class="scroll"><table id="zeroTable"></table></div>
+      <p class="hint">每个格填一次读数；零点与纯水各 3 次平行。</p>
+      <div class="scroll"><table id="waterTable"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>最大气泡压力法</h2>
+      <div class="scroll"><table id="bubbleTable"></table></div>
+      <div class="btnrow">
+        <button class="btn mini" id="btnAddBubble">+ 添加一行</button>
+        <span class="hint" style="margin:0">勾选「拟合」的浓度参与线性区拟合。</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>吊片法</h2>
+      <div class="scroll"><table id="plateTable"></table></div>
+      <div class="btnrow">
+        <button class="btn mini" id="btnAddPlate">+ 添加一行</button>
+        <span class="hint" style="margin:0">离群点取消勾选「拟合」即可排除。</span>
+      </div>
+    </section>
+  </aside>
+
+  <div class="content">
+    <section class="card">
+      <div class="chartbar">
+        <h2 style="margin:0">预览</h2>
+        <select id="chartKind">
+          <option value="bubble_curve">最大气泡法 · γ–浓度曲线</option>
+          <option value="bubble_fit">最大气泡法 · 线性区拟合</option>
+          <option value="plate_curve">吊片法 · γ–浓度曲线</option>
+          <option value="plate_fit">吊片法 · 线性区拟合</option>
+          <option value="qc">两种方法 · q_c 对比</option>
+        </select>
+        <span class="sub" id="chartHint"></span>
+      </div>
+      <div class="chartbox"><img id="chart" alt="预览图"></div>
+    </section>
+
+    <section class="card">
+      <h2>结果</h2>
+      <div class="scroll"><table id="resultTable"></table></div>
+      <p class="hint" id="resultNote"></p>
+    </section>
+
+    <section class="card">
+      <h2>浓度修正后的分子面积</h2>
+      <div class="scroll"><table id="qcTable"></table></div>
+      <p class="hint">q_c = 10¹⁸ / [Γ∞N_A + 100(cN_A)^(2/3)]，相对偏差以无修正的 q 为基准。</p>
+    </section>
+
+    <section class="card" id="warnCard" style="display:none">
+      <h2>提示</h2>
+      <div id="warns"></div>
+    </section>
+  </div>
+</main>
+<div class="foot">全部计算在本机完成，不联网、不上传数据。报告输出到与报告同名的文件夹，连图一起拷走即可。</div>
+<div class="overlay" id="overlay"><div class="box"><div class="spin"></div><div id="overlayText">处理中…</div></div></div>
+<div class="toast" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

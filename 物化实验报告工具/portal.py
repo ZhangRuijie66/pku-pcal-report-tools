@@ -61,8 +61,12 @@ MODULES = [
         'tags': ['饱和蒸气压', '汽化焓'], 'sample': None,
     },
     {
-        'key': 'adsorption', 'title': '固体比表面的测定', 'tool': None, 'port': 8771,
-        'desc': 'BET 法测固体比表面积。', 'tags': ['BET', '比表面'], 'sample': None,
+        'key': 'adsorption', 'title': '溶液表面吸附的测定', 'tool': '表面吸附工具',
+        'port': 8771,
+        'desc': '最大气泡压力法与吊片法测正丁醇溶液的表面张力；'
+                '由 γ–lg c（或 γ–ln c）线性区斜率求饱和吸附量 Γ∞、分子面积 q 与浓度修正 q_c。',
+        'tags': ['表面张力', 'Gibbs 吸附', 'Γ∞ / q_c'],
+        'sample': None,
     },
     {
         'key': 'magnetic', 'title': '磁化率的测定', 'tool': None, 'port': 8781,
@@ -81,9 +85,12 @@ MODULES = [
         'desc': '电动势的测定与电极电势。', 'tags': ['电动势'], 'sample': None,
     },
     {
-        'key': 'sucrose', 'title': '蔗糖转化的测定', 'tool': None, 'port': 8811,
-        'desc': '旋光法测蔗糖水解速率常数与活化能。',
-        'tags': ['旋光法', '速率常数'], 'sample': None,
+        'key': 'kinetics', 'title': '化学反应动力学探究', 'tool': '化学动力学工具',
+        'port': 8811,
+        'desc': '数智旋光仪监测蔗糖水解；积分法判定反应级数，求速率常数、半衰期，'
+                '并由 k₁–c(H⁺) 关系确定氢离子反应级数。',
+        'tags': ['蔗糖水解', '一级反应', 'k₁ / t₁/₂'],
+        'sample': None,
     },
 ]
 
