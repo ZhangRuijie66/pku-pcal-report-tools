@@ -355,12 +355,13 @@ function renderGcalc(res) {
     $('gcalcNote').textContent = '提示：先在高斯计算工具里跑完 TD 单点，再回到这里读取。';
     return;
   }
-  let html = '<thead><tr><th>分子</th><th>计算 λmax / nm</th><th>f</th>' +
+  let html = '<thead><tr><th>分子</th><th>泛函</th><th>计算 λmax / nm</th><th>f</th>' +
              '<th>S1 / nm</th><th>态</th></tr></thead><tbody>';
   mols.forEach((m) => {
     const b = m.bright || {}; const s1 = m.s1 || {};
     html += '<tr data-name="' + esc(m.name) + '" style="cursor:pointer">' +
-      '<td>' + esc(gcalcBase(m.name)) + '</td>' +
+      '<td>' + esc(m.base || gcalcBase(m.name)) + '</td>' +
+      '<td>' + esc(m.functional || '—') + '</td>' +
       '<td>' + (b.wavelength_nm ? b.wavelength_nm.toFixed(1) : '—') + '</td>' +
       '<td>' + (b.f != null ? b.f.toFixed(3) : '—') + '</td>' +
       '<td>' + (s1.wavelength_nm ? s1.wavelength_nm.toFixed(1) : '—') + '</td>' +
@@ -371,7 +372,9 @@ function renderGcalc(res) {
   box.querySelectorAll('tr[data-name]').forEach((tr) => {
     tr.addEventListener('click', () => showGcalcFigure(tr.dataset.name));
   });
-  $('gcalcNote').textContent = '共 ' + mols.length + ' 个分子（目录：' + (res.dir || '') +
+  const nBase = new Set(mols.map((m) => m.base || gcalcBase(m.name))).size;
+  $('gcalcNote').textContent = '共 ' + mols.length + ' 条计算结果（' + nBase +
+    ' 个分子，目录：' + (res.dir || '') +
     '）。点任意一行看它的计算谱；点「一键生成报告」时 3.5 节会自动带上对照表。';
   showGcalcFigure(mols[0].name);
 }

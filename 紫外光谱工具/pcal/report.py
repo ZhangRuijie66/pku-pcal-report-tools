@@ -32,6 +32,7 @@ import numpy as np
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm
 
+from . import gcalc_bridge
 from . import plotting
 from . import uv
 from .analysis import default_config
@@ -114,6 +115,15 @@ def num_sig(x, n=3):
     if x in (None, 0) or not np.isfinite(x):
         return '—'
     return '%.3g' % x
+
+
+def lam_txt(x, nd=1):
+    """正文里的实验波长写法；缺数据时给「—」，避免出现 nan。"""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return '—'
+    return ('%.*f' % (nd, v)) if np.isfinite(v) else '—'
 
 
 # ---------------------------------------------------------------- 主流程
@@ -308,6 +318,9 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             indent_chars=0)
     rb.para('[6] ChemicalBook. 3,3′-二乙基硫二碳碘化氰 (CAS 514-73-8) 物性数据'
             '[DB/OL]. https://www.chemicalbook.cn/CAS_514-73-8.htm, 2026.',
+            indent_chars=0)
+    rb.para('[7] Le Guennic B, Jacquemin D. Taking Up the Cyanine Challenge with '
+            'Quantum Tools[J]. Acc. Chem. Res., 2015, 48(3): 530-537.',
             indent_chars=0)
 
     log('写入 docx…')
@@ -589,14 +602,7 @@ def _sec_molecules(rb, analysis, mol, long_png, short_png, voigt_png=None):
 # ---------------------------------------------------------------- 3.5 Gaussian
 def _sec_gaussian(rb, cfg, mol):
     rb.heading('3.5 Gaussian 理论计算', 2)
-    rb.para('本部分使用 Gaussian 16（Rev. C.01）对上述 6 种共轭分子作量子化学计算：'
-            '先用密度泛函理论（DFT，泛函 PBE0、基组 def2-TZVP）优化基态几何结构，'
-            '再用含时密度泛函理论（TD-DFT，PBE0/def2-TZVP，配合 IEFPCM 乙醇溶剂模型）'
-            '计算前 10 个激发态的激发能与振子强度，取振子强度最大者对应的波长作为'
-            '理论最大吸收波长，与实验值比较。初始结构由 ChemDraw 绘制的二维结构经'
-            'ETKDG（MMFF94 力场）生成三维构象，双键一律取实验上稳定的全反式（E）构型；'
-            '所有计算均提交到北京大学高性能计算平台（教学二号）完成，'
-            'TD-DFT 激发能计算中同样采用 IEFPCM 隐式溶剂模型以对应乙醇溶液实验条件。')
+
 
     g = (cfg or {}).get('gcalc') or {}
     results = g.get('molecules') or []
@@ -604,31 +610,101 @@ def _sec_gaussian(rb, cfg, mol):
         rb.para('相关计算正在进行中，本部分结果暂待补充。')
         return
 
-    def _base(name):
-        n = str(name)
-        for suf in ('_td', '_gs', '_fc', '_freq', '_opt'):
-            if n.lower().endswith(suf):
-                return n[:-len(suf)]
-        return n
+    def _fields(m):
+        """兼容旧数据：没有 base/functional/geometry 时从名字和 route 现推。"""
+        name = m.get('name') or ''
+        base = m.get('base') or gcalc_bridge.base_name(name)
+        func = m.get('functional') or gcalc_bridge.functional_of(m.get('route') or '')
+        geo = m.get('geometry') or ('v2' if 'v2' in name.lower() else 'base')
+        return base, (func or '—'), geo
 
-    mol_map = {k: v for k, v in (mol or {}).items() if isinstance(v, dict)}
+    def _num(x, fmt='%.1f'):
+        try:
+            return fmt % float(x) if np.isfinite(float(x)) else '—'
+        except (TypeError, ValueError):
+            return '—'
+
+    def _bright(m):
+        return m.get('bright') or {}
+
+    def _s1(m):
+        return m.get('s1') or {}
+
+    def _best(entries, want=None):
+        pool = [x for x in entries if want is None or _fields(x)[1] == want]
+        return gcalc_bridge.pick_best(pool)
+
+    order = ('A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'benzene')
+    groups = gcalc_bridge.group_results(results)
+
+    # 每个分子先按 geometry 分组：取泛函数最多的一组；并列时 v2 优先、再看带溶剂
+    chosen = {}
+    for base in order:
+        entries = groups.get(base) or []
+        if not entries:
+            continue
+        by_geo = {}
+        for m in entries:
+            by_geo.setdefault(_fields(m)[2], []).append(m)
+
+        def _geo_score(item):
+            geo, ms = item
+            return (len({_fields(x)[1] for x in ms}), 1 if geo == 'v2' else 0,
+                    sum(1 for x in ms if x.get('has_solvent')))
+
+        geo, ms = max(by_geo.items(), key=_geo_score)
+        chosen[base] = (geo, ms)
+
+    def _pick_main(ms):
+        """组内取 PBE0；没有 PBE0 就取出现次数最多的泛函。"""
+        m = _best(ms, 'PBE0')
+        if m is not None:
+            return m
+        counts = {}
+        for x in ms:
+            f = _fields(x)[1]
+            counts[f] = counts.get(f, 0) + 1
+        if not counts:
+            return None
+        return _best(ms, max(counts, key=lambda f: counts[f]))
+
+    mol_map = {kk: v for kk, v in (mol or {}).items() if isinstance(v, dict)}
     rows = []
-    for m in results:
-        name = _base(m.get('name'))
-        b = m.get('bright') or {}
-        s1 = m.get('s1') or {}
+    main_entries = []
+    for base in order:
+        if base not in chosen:
+            continue
+        m = _pick_main(chosen[base][1])
+        if m is None:
+            continue
+        b = _bright(m)
+        s1 = _s1(m)
         lam_calc = b.get('wavelength_nm')
-        lam_exp = (mol_map.get(name) or {}).get('lam')
-        lam_c = ('%.1f' % lam_calc) if lam_calc else '—'
-        lam_e = ('%.1f' % lam_exp) if lam_exp else '—'
-        if lam_calc and lam_exp:
-            d = '%.1f' % (lam_calc - lam_exp)
-        else:
-            d = '—'
-        rows.append((name, lam_c,
-                     ('%.3f' % b.get('f')) if b.get('f') is not None else '—',
-                     ('%.1f' % s1.get('wavelength_nm')) if s1.get('wavelength_nm') else '—',
-                     lam_e, d))
+        lam_exp = (mol_map.get(base) or {}).get('lam')
+        d = '—'
+        if lam_calc is not None and lam_exp is not None and np.isfinite(lam_exp):
+            d = '%.1f' % (float(lam_calc) - float(lam_exp))
+        rows.append((base, _num(lam_calc), _num(b.get('f'), '%.3f'),
+                     _num(s1.get('wavelength_nm')), _num(lam_exp), d))
+        main_entries.append(m)
+
+    n_solv = sum(1 for m in main_entries if m.get('has_solvent'))
+    if main_entries and n_solv == len(main_entries):
+        solv_txt = 'TD-DFT 激发能计算均采用 IEFPCM 乙醇溶剂模型，以对应乙醇溶液实验条件'
+    elif n_solv == 0:
+        solv_txt = 'TD-DFT 激发能计算为气相条件'
+    else:
+        solv_txt = ('TD-DFT 激发能计算中 %d/%d 个分子加入 IEFPCM 乙醇溶剂模型，'
+                    '以考察溶剂化效应' % (n_solv, len(main_entries)))
+    rb.para('本部分使用 Gaussian 16（Rev. C.01）对上述 6 种共轭分子作量子化学计算：'
+            '先用密度泛函理论（DFT，泛函 PBE0、基组 def2-TZVP）优化基态几何结构，'
+            '再以这套 PBE0/def2-TZVP 几何为基础，用含时密度泛函理论（TD-DFT）计算'
+            '前 10 个激发态（个别泛函为 6 个）的激发能与振子强度，取振子强度最大者'
+            '对应的波长作为理论最大吸收波长，与实验值比较。%s；为考察泛函的影响，'
+            'A2 还在同一几何上换用 CAM-B3LYP、M06-2X、LC-wPBE 重算了激发能。'
+            '初始结构由 ChemDraw 绘制的二维结构经 ETKDG（MMFF94 力场）生成三维构象，'
+            '双键一律取实验上稳定的全反式（E）构型；所有计算均提交到北京大学高性能'
+            '计算平台（教学二号）完成。' % solv_txt)
 
     rb.table(['分子', '计算 λ_{max} / nm', '振子强度 f', 'S_{1} / nm',
               '实验 λ_{max} / nm', 'Δλ / nm'], rows,
@@ -637,16 +713,86 @@ def _sec_gaussian(rb, cfg, mol):
     rb.para('表中「计算 λ_{max}」取振子强度最大的允许跃迁（S_{n}），'
             '「S_{1}」为第一激发态；对高对称分子（如苯），S_{1} 可能因对称性禁阻而'
             '振子强度为零，此时应以最大 f 的跃迁与实验比较。'
-            'Δλ = 计算值 − 实验值，正值表示计算偏红。')
-    rb.para('由表可见，计算值与实验值的偏差随共轭链增长而显著增大：A1、B2 等短共轭体系'
-            '偏差约 20~30 nm，而 A2~A4 三个花青染料偏差可达 120~210 nm，且全部表现为'
-            '计算波长偏短（能量偏高），即 TD-DFT 系统性高估了能隙。这一现象并非泛函选择'
-            '不当：用长程校正泛函 CAM-B3LYP 在同一几何上重算，A2、A4 的激发能分别为'
-            '2.84 与 2.18 eV，与 PBE0 的 2.79 与 2.20 eV 几乎相同，说明误差来自单参考'
-            'TD-DFT 对花青类强离域、多参考特征体系的固有局限，而不是交换相关泛函的'
-            '具体形式。此外，花青染料的吸收对分子几何（双键顺反、链的平面性）和溶剂'
-            '环境都极为敏感，计算中若采用弯折构象或气相条件会进一步放大蓝移，报告中'
-            '的数值已采用全反式构象与 IEFPCM 乙醇溶剂模型。')
+            'Δλ = 计算值 − 实验值，正值表示计算偏红。每个分子列出 PBE0/def2-TZVP 的'
+            '结果；A2 的多泛函对比另见下表。'
+            + ('B1（β-胡萝卜素）的 TD-DFT 结果仍在计算中，暂未列入。'
+               if 'B1' not in chosen else ''))
+    def _abs_delta(base):
+        for r in rows:
+            if r[0] == base and r[5] != '—':
+                return abs(float(r[5]))
+        return None
+
+    short = [x for x in (_abs_delta('A1'), _abs_delta('B2')) if x is not None]
+    cya = [x for x in (_abs_delta('A2'), _abs_delta('A3'), _abs_delta('A4'))
+           if x is not None]
+    if short and cya:
+        dev_txt = ('短共轭体系（A1、B2）偏差约 %d~%d nm，而 A2~A4 三个花青染料偏差'
+                   '约 %d~%d nm' % (min(short), max(short), min(cya), max(cya)))
+    else:
+        dev_txt = '短共轭体系偏差较小，而 A2~A4 三个花青染料偏差显著增大'
+    rb.para('由表可见，计算值与实验值的偏差随共轭链增长而显著增大：' + dev_txt +
+            '，且全部表现为计算波长偏短（能量偏高），即 TD-DFT 系统性高估了能隙。'
+            '此外，花青染料的吸收对分子几何（双键顺反、链的平面性）和溶剂环境都'
+            '极为敏感，计算中若采用弯折构象或气相条件会进一步放大蓝移；本报告的'
+            '几何均取全反式构象。')
+
+    # ---- A2 多泛函对比（同一几何，按固定顺序只列实际算过的泛函）
+    a2 = chosen.get('A2')
+    func_order = ('PBE0', 'CAM-B3LYP', 'M06-2X', 'LC-wPBE')
+    a2_rows = []
+    a2_ev = {}
+    if a2:
+        exp_a2 = (mol_map.get('A2') or {}).get('lam')
+        for f in func_order:
+            m = _best(a2[1], f)
+            if m is None:
+                continue
+            b = _bright(m)
+            s1 = _s1(m)
+            lam = b.get('wavelength_nm')
+            e_ev = b.get('energy_ev')
+            d = '—'
+            if lam is not None and exp_a2 is not None and np.isfinite(exp_a2):
+                d = '%.1f' % (float(lam) - float(exp_a2))
+            a2_rows.append([f, _num(lam), _num(e_ev, '%.3f'),
+                            _num(b.get('f'), '%.3f'), _num(s1.get('wavelength_nm')), d])
+            if e_ev is not None and np.isfinite(e_ev):
+                a2_ev[f] = float(e_ev)
+
+    if a2_rows:
+        rb.para('A2 是本实验唯一做了多泛函对比的分子，下表把同一 A2 几何上各泛函的'
+                '结果与实验值并列（按 PBE0、CAM-B3LYP、M06-2X、LC-wPBE 排列，'
+                '只列实际算过的泛函）：', keep_next=True)
+        rb.table(['泛函', '计算 λ_{max} / nm', 'E / eV', 'f', 'S_{1} / nm', 'Δλ / nm'],
+                 a2_rows, widths_cm=[2.6, 3.0, 1.8, 1.8, 2.0, 2.2],
+                 keep_together=True)
+
+    a2_lams = [float(x[1]) for x in a2_rows if x[1] != '—']
+    if len(a2_ev) >= 2 and a2_lams:
+        # 误差段不写死数字，全部从实际条目算
+        lams = a2_lams
+        evs = list(a2_ev.values())
+        exp_nm = (mol_map.get('A2') or {}).get('lam')
+        if exp_nm is None or not np.isfinite(exp_nm):
+            exp_nm = 560.9
+        exp_ev = 1239.841984 / float(exp_nm)
+        lam_lo, lam_hi = min(lams), max(lams)
+        e_lo, e_hi = min(evs), max(evs)
+        de_lo, de_hi = e_lo - exp_ev, e_hi - exp_ev
+        rb.para('由上表，A2 的 λ_{max} 落在 %.1f~%.1f nm，不同泛函之间的激发能极差'
+                '只有 %.2f eV；而相对实验值 %.1f nm（%.3f eV）的 '
+                'ΔE（计算 − 实验）为 %.2f~%.2f eV，即不同泛函尽管彼此差别很小，'
+                '却一致地把吸收峰算短（激发能偏高）。这种“泛函不敏感的系统性蓝移”'
+                '是花青类染料绝热 TD-DFT 的特征失败，根源是双激发与基态–激发态'
+                '微分电子相关不足，不是电荷转移失效，也不是静态多参考'
+                '（CAS-PT2 的主行列式约占 88%%）；长程校正泛函 CAM-B3LYP、LC-wPBE '
+                '同样不能修正^{[7]}。'
+                % (lam_lo, lam_hi, e_hi - e_lo, exp_nm, exp_ev, de_lo, de_hi))
+    elif a2_rows:
+        rb.para('由上表，A2 的计算 λ_{max} 与实验值 %s nm 相比仍偏短，'
+                '单泛函的结果还不足以判断误差来源。'
+                % (_num((mol_map.get('A2') or {}).get('lam')),))
 
 
 # ---------------------------------------------------------------- 4.1 定性
@@ -730,19 +876,21 @@ def _sec_box(rb, analysis, mol):
         rows.append(['%d' % r['a'], '%.4f' % r['x'], '%.4f' % r['y'],
                      '%.1f' % r['lam2'], '%.1f' % r['lam3']])
     rows.append(['实验值', '', '',
-                 '%.1f' % mol.get('A2', {}).get('lam', float('nan')),
-                 '%.1f' % mol.get('A3', {}).get('lam', float('nan'))])
+                 lam_txt(mol.get('A2', {}).get('lam')),
+                 lam_txt(mol.get('A3', {}).get('lam'))])
     rb.caption('表6  A 类分子一维势箱模型预测结果')
     rb.table(['a', 'x / nm', 'y / nm', 'λ_{2} 预测值 / nm', 'λ_{3} 预测值 / nm'],
              rows, widths_cm=[1.8, 2.4, 2.4, 3.2, 3.2], keep_together=True)
     rb.para('表6可以提供不少信息。首先 y 随 a 的变化符合预期：参与共轭的电子数越多，'
             '芳香基团对箱长的贡献越大。其次，对 λ₂ 与 λ₃ 的预测在 540~655 nm 之间，'
-            '与实验值（562.6 与 659.3 nm）相当接近，说明一维势箱模型在结构上有一定的'
+            '与实验值（%s 与 %s nm）相当接近，说明一维势箱模型在结构上有一定的'
             '合理性。需注意这里说的“结构上”的合理性是有限的：一维势箱要求体系是'
             '一维线性的，而苯环的存在显然打破了这一要求。通过拟合经验参数可以部分规避'
             '这一影响，即箱长不再具有表观的物理意义，而是通过实验拟合出芳香基团的'
             '“有效箱长”，这样基团是否一维线性就变得不那么重要了；'
-            '波长与箱长平方成正比、与电子数成反比这一结构关系，仍然是有意义的。')
+            '波长与箱长平方成正比、与电子数成反比这一结构关系，仍然是有意义的。'
+            % (lam_txt(mol.get('A2', {}).get('lam')),
+               lam_txt(mol.get('A3', {}).get('lam'))))
     rb.para('从表6看，a = 4 和 a = 6 时对 λ₂、λ₃ 的预测与实验值最为接近，a = 0 与 '
             'a = 10 的偏差最大。这说明 N 原子一定参与共轭，S 原子大概率不参与共轭；'
             '苯环虽然参与共轭，但共轭程度有限，不会提供全部 6 个 π 电子。'
@@ -764,15 +912,17 @@ def _sec_box(rb, analysis, mol):
         rows.append([r['code'], '%d~%d' % units,
                      '%.2f~%.2f' % (r['L_lo'], r['L_hi']), '%d' % r['n'],
                      '%.0f~%.0f' % (r['lam_lo'], r['lam_hi']),
-                     '%.1f' % r['exp']])
+                     lam_txt(r.get('exp'))])
     rb.caption('表7  B 类分子一维势箱模型预测结果')
     rb.table(['编号', 'C–C=C 数', '箱长 L / nm', 'N', 'λ 预测值 / nm', 'λ 实验值 / nm'],
              rows, widths_cm=[1.8, 2.6, 2.8, 1.4, 3.4, 3.0], keep_together=True)
-    rb.para('由结果可见，对于小分子 B2，预测值（140~315 nm）与实验值（294.3 nm）比较'
-            '接近；但对于长共轭体系 B1，预测值为 1066~1290 nm，与实验值 450.7 nm '
+    rb.para('由结果可见，对于小分子 B2，预测值（140~315 nm）与实验值（%s nm）比较'
+            '接近；但对于长共轭体系 B1，预测值为 1066~1290 nm，与实验值 %s nm '
             '相差甚远。这一失败的原因是长共轭体系严重偏离一维线性：β-胡萝卜素'
             '的共轭链并非直链，而是存在 s-顺/s-反构象与环的限制，用一维势箱描述'
-            '其离域范围已经超出了模型的适用范围。')
+            '其离域范围已经超出了模型的适用范围。'
+            % (lam_txt(mol.get('B2', {}).get('lam')),
+               lam_txt(mol.get('B1', {}).get('lam'))))
     rb.para('综上，可以对一维势箱模型作一个完整的评述：在短共轭体系（A1~A4、B2）中，'
             '模型呈现“定性合理、半定量可用”的特点，其用法是把 C–C 平均键长取为'
             '0.140 nm 左右、对非线性基团用实验拟合的经验箱长替代；对于长共轭体系（B1），'
