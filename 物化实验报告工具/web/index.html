@@ -31,6 +31,8 @@ body{margin:0;background:var(--bg);color:var(--ink);
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .btn.primary:hover{background:var(--accent2)}
 .btn.ghost{background:#fff}
+.btn.danger{border-color:#f3c1c1;color:#b42318;background:#fff}
+.btn.danger:hover{background:#fef1f1}
 .status{font-size:12.5px;color:var(--ink2)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
@@ -87,6 +89,7 @@ body{margin:0;background:var(--bg);color:var(--ink);
     <button class="btn" id="btnReload">刷新状态</button>
     <span class="spacer"></span>
     <span class="status" id="status">正在检查各模块…</span>
+    <button class="btn danger" id="btnStop">停止全部服务</button>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -98,14 +101,16 @@ body{margin:0;background:var(--bg);color:var(--ink);
       <li>在实验界面里选好数据文件夹 → 核对取点 → 「一键生成报告 (.docx)」，
           报告写到 <code id="noteOutDir">实验报告输出\</code> 里（每份报告一个子文件夹，
           全部实验共用这一个目录）。</li>
-      <li>回到本页可以随时切换实验；本窗口关掉，所有模块一起停止。</li>
-      <li>每个实验也能单独启动：进各自的工具目录双击 <code>启动.cmd</code>。</li>
+      <li>回到本页可以随时切换实验；全部服务都在后台运行，没有命令行窗口，
+          要收摊就点右上角<b>停止全部服务</b>（或双击实验文件夹里的
+          <code>停止服务.vbs</code>）。</li>
+      <li>每个实验也能单独启动：进各自的工具目录双击 <code>启动.vbs</code>。</li>
     </ol>
     <h3 style="margin-top:14px">再加一个实验</h3>
     <ol>
       <li>照 <code>燃烧热工具</code> / <code>溶解热工具</code> 的样子新建
           <code>××工具\</code>（<code>pcal\</code> 计算内核 + <code>web\</code> 界面 +
-          <code>templates\</code> 报告模板 + <code>启动.cmd</code>）。</li>
+          <code>templates\</code> 报告模板 + <code>启动.vbs</code>）。</li>
       <li>让它的 <code>server.main()</code> 支持 <code>--port</code> / <code>--no-browser</code>。</li>
       <li>在 <code>portal.py</code> 的 <code>MODULES</code> 里把 <code>tool</code>
           从 <code>None</code> 改成目录名，入口页上这张卡片就自动变成可点。</li>
@@ -210,6 +215,14 @@ $('btnAll').addEventListener('click', async () => {
   await load();
 });
 $('btnReload').addEventListener('click', load);
+$('btnStop').addEventListener('click', async () => {
+  if (!confirm('确定停掉入口页和全部实验模块？\n（正在编辑的内容都已经保存在 settings.json / 数据文件里。）')) return;
+  $('status').textContent = '正在停止全部服务…';
+  try { await api('/api/shutdown'); } catch (e) { /* 服务已退出，请求自然断掉 */ }
+  $('btnAll').disabled = true;
+  $('status').textContent = '已全部停止，这个标签页可以关掉了。';
+  toast('服务已停止', 8000);
+});
 load();
 setInterval(() => { if (!document.hidden) load(); }, 15000);
 </script>

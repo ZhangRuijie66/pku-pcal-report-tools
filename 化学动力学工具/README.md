@@ -6,7 +6,7 @@
 ## 启动
 
 ```bat
-双击 启动.cmd
+双击 启动.vbs
 :: 或
 python run.py
 python run.py --port 8812 --no-browser

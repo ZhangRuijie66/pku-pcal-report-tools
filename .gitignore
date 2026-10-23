@@ -5,6 +5,10 @@
 !/LICENSE
 !/requirements.txt
 !/启动入口.cmd
+!/启动入口.vbs
+!/停止服务.vbs
+!/安装依赖.cmd
+!/_tools/
 !/物化实验报告工具/
 !/燃烧热工具/
 !/溶解热工具/
@@ -18,6 +22,7 @@ __pycache__/
 settings.json
 _test_out/
 *.bak
+_tools/启动日志.log
 .dsh-ops-update-*.lock
 
 # 两个手工录入模块的本地数据（示例/个人数据，不进仓库）

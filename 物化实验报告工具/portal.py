@@ -9,6 +9,8 @@
 · 只监听 127.0.0.1，不联网、不上传任何数据；
 · 每个实验模块都是独立目录、独立进程（各自的 pcal 包互不干扰），
   入口只负责挑端口、拉起子进程、做健康检查、退出时收摊；
+· 全部在后台运行（没有命令行窗口），停止走入口页的「停止全部服务」
+  或根目录的 停止服务.vbs；
 · 新增实验只要在 MODULES 里加一条，并把该模块的 server.main() 支持
   --port / --no-browser 即可（两个已有模块都已支持）。
 """
@@ -31,6 +33,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, 'web')
 LAB_DIR = os.path.dirname(HERE)          # …\物理化学实验
 PYTHON = sys.executable or 'python'
+LOG_PATH = os.path.join(LAB_DIR, '_tools', '启动日志.log')
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+PORTAL_PORTS = (8700, 8730)              # 入口页优先用 8700，被占了往后找
 
 # ---------------------------------------------------------------- 实验模块登记表
 # ok=True 的模块会随入口一起启动；其余在入口页上显示为「即将支持」。
@@ -96,12 +101,22 @@ MODULES = [
 
 STATE = {
     'portal_port': 0,
+    'httpd': None,
     'modules': {},          # key -> {'proc':Popen, 'port':int, 'ok':bool, 'error':str}
     'lock': threading.Lock(),
 }
 
 
 # ---------------------------------------------------------------- 小工具
+def _log_handle():
+    """后台运行时看不到 stdout，把各模块的输出汇到一个日志里。"""
+    try:
+        fh = open(LOG_PATH, 'a', encoding='utf-8')
+        fh.write('\n===== %s\n' % time.strftime('%Y-%m-%d %H:%M:%S'))
+        fh.flush()
+        return fh
+    except OSError:
+        return subprocess.DEVNULL
 def _free_port(preferred):
     for port in range(preferred, preferred + 60):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -127,6 +142,80 @@ def _healthy(port, timeout=1.0):
             return r.status == 200
     except (urllib.error.URLError, OSError, ValueError):
         return False
+
+
+def find_portal_port():
+    """已经有一个入口页在跑就复用它（重复点快捷方式只会开一个新标签页）。"""
+    for port in range(*PORTAL_PORTS):
+        if not _port_open(port):
+            continue
+        try:
+            with urllib.request.urlopen('http://127.0.0.1:%d/api/modules' % port,
+                                        timeout=1.0) as r:
+                data = json.loads(r.read().decode('utf-8'))
+        except (urllib.error.URLError, OSError, ValueError):
+            continue
+        if data.get('portal_port') == port:
+            return port
+    return 0
+
+
+def _run_cli(args):
+    """取命令输出：中文 Windows 的控制台输出不是 UTF-8，按字节读再宽容解码。"""
+    try:
+        out = subprocess.check_output(args, stderr=subprocess.DEVNULL,
+                                      creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return out.decode('utf-8-sig', errors='ignore') if isinstance(out, bytes) else str(out)
+
+
+def _python_processes():
+    """[(pid, 命令行), …] 本机所有 python/pythonw 进程。
+
+    PowerShell 往管道里写的是本机 ANSI/OEM 编码，中文路径会解错，
+    所以显式让它输出 UTF-8，再按 utf-8-sig 解码。
+    """
+    script = ('[Console]::OutputEncoding=[Text.Encoding]::UTF8; '
+              "Get-CimInstance Win32_Process -Filter \"name='python.exe' or "
+              "name='pythonw.exe'\" | ForEach-Object "
+              '{ "$($_.ProcessId)|$($_.CommandLine)" }')
+    raw = _run_cli(['powershell', '-NoProfile', '-Command', script])
+    procs = []
+    for line in raw.splitlines():
+        pid, sep, cmd = line.partition('|')
+        if sep and pid.strip().isdigit():
+            procs.append((pid.strip(), cmd))
+    return procs
+
+
+def kill_tools(tool_names):
+    """按命令行精确回收这些工具自己的服务进程：只杀命令行里带
+       <工具目录>\run.py 的 python，不看端口号（各模块端口区间会互相重叠），
+       也绝不碰入口进程本身。返回被杀掉的工具名列表。"""
+    needles = {n: (os.sep + n + os.sep + 'run.py').lower() for n in set(tool_names) if n}
+    if not needles:
+        return []
+    killed = set()
+    for pid, cmd in _python_processes():
+        if pid == str(os.getpid()):
+            continue
+        low = cmd.lower()
+        for name, needle in needles.items():
+            if needle not in low:
+                continue
+            try:
+                subprocess.call(['taskkill', '/PID', pid, '/F'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                creationflags=CREATE_NO_WINDOW)
+                killed.add(name)
+            except OSError:
+                pass
+    return sorted(killed)
+
+
+def kill_tool(tool_name):
+    return bool(kill_tools([tool_name]))
 
 
 def _module_dir(mod):
@@ -165,13 +254,16 @@ def _start_module(mod, force_new_port=False):
 
     creationflags = 0
     if os.name == 'nt':
-        creationflags = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+        creationflags = (getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) |
+                         CREATE_NO_WINDOW)
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUNBUFFERED'] = '1'      # 输出要实时进日志，不然攒到退出才写
     try:
         proc = subprocess.Popen(
             [PYTHON, os.path.join(d, 'run.py'), '--port', str(port), '--no-browser'],
-            cwd=d, env=env, creationflags=creationflags)
+            cwd=d, env=env, creationflags=creationflags,
+            stdin=subprocess.DEVNULL, stdout=_log_handle(), stderr=subprocess.STDOUT)
     except OSError as exc:
         return {'ok': False, 'installed': True, 'port': None, 'error': str(exc)}
 
@@ -192,24 +284,31 @@ def _start_module(mod, force_new_port=False):
             'error': '启动超时（40 s 内没有响应）'}
 
 
-def _stop_all():
+def _stop_all(kill_external=False):
     with STATE['lock']:
-        for st in STATE['modules'].values():
-            proc = st.get('proc')
-            if proc and proc.poll() is None:
-                try:
-                    proc.terminate()
-                except OSError:
-                    pass
+        mine = list(STATE['modules'].items())
+        external = [mod for mod in MODULES
+                    if _installed(mod) and
+                    (STATE['modules'].get(mod['key']) or {}).get('external')]
+    for key, st in mine:
+        proc = st.get('proc')
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
     time.sleep(0.4)
-    with STATE['lock']:
-        for st in STATE['modules'].values():
-            proc = st.get('proc')
-            if proc and proc.poll() is None:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+    for key, st in mine:
+        proc = st.get('proc')
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        with STATE['lock']:
+            STATE['modules'].pop(key, None)
+    if kill_external and external:
+        kill_tools([mod['tool'] for mod in external])
 
 
 def _module_payload():
@@ -276,6 +375,8 @@ class Handler(BaseHTTPRequestHandler):
                 q = urllib.parse.parse_qs(u.query)
                 key = (q.get('key') or [''])[0]
                 return self._stop(key)
+            if u.path == '/api/shutdown':
+                return self._shutdown()
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
         except Exception as exc:  # noqa: BLE001
             return self._json({'ok': False, 'error': str(exc)}, 400)
@@ -296,16 +397,40 @@ class Handler(BaseHTTPRequestHandler):
     def _stop(self, key, quiet=False):
         with STATE['lock']:
             st = STATE['modules'].get(key)
+        external_tool = None
         if st and st.get('proc') and st['proc'].poll() is None:
             try:
                 st['proc'].terminate()
             except OSError:
                 pass
+        elif st and st.get('external'):
+            # 用户单独用 启动.vbs 起的模块：按命令行找回它自己的 python 进程
+            mod = next((m for m in MODULES if m['key'] == key), None)
+            if mod and mod.get('tool'):
+                external_tool = mod['tool']
         with STATE['lock']:
             STATE['modules'].pop(key, None)
+        if external_tool:
+            kill_tool(external_tool)
         if quiet:
             return {'ok': True}
         return self._json({'ok': True, 'modules': _module_payload()})
+
+    def _shutdown(self):
+        """后台运行没有窗口可关，停止服务走这里。"""
+        resp = self._json({'ok': True, 'bye': True})
+
+        def worker():
+            time.sleep(0.3)
+            _stop_all(kill_external=True)
+            httpd = STATE.get('httpd')
+            if httpd:
+                threading.Thread(target=httpd.shutdown, daemon=True).start()
+            time.sleep(0.5)
+            os._exit(0)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return resp
 
 
 # ---------------------------------------------------------------- 主流程
@@ -314,7 +439,15 @@ def main():
     open_browser = True
     if '--no-browser' in argv:
         open_browser = False
-    port = _free_port(8700)
+    existing = find_portal_port()
+    if existing:
+        # 已经开着了：再点一次快捷方式只是把入口页重新打开，不再起一套服务
+        url = 'http://127.0.0.1:%d' % existing
+        print('入口页已经在运行：%s' % url)
+        if open_browser:
+            webbrowser.open(url)
+        return 0
+    port = _free_port(PORTAL_PORTS[0])
     if not port:
         print('找不到空闲端口，退出。')
         return 1
@@ -331,9 +464,11 @@ def main():
     print('-' * 60)
 
     httpd = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    STATE['httpd'] = httpd
     url = 'http://127.0.0.1:%d' % port
     print('  请在浏览器打开：%s' % url)
-    print('  关闭本窗口即可停止全部服务。')
+    print('  停止服务：入口页点「停止全部服务」，或双击 停止服务.vbs。')
+    print('  运行日志：%s' % LOG_PATH)
     print('=' * 60)
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
@@ -343,7 +478,7 @@ def main():
         print('\n正在停止各模块…')
     finally:
         httpd.server_close()
-        _stop_all()
+        _stop_all(kill_external=True)
         print('已停止。')
     return 0
 
