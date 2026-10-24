@@ -39,6 +39,8 @@ from pcal import plotting                     # noqa: E402
 from pcal.analysis import (Analysis, SUBSTANCES, PERSIST_KEYS, default_config,
                            default_config_with_saved, default_round)  # noqa: E402
 from pcal import report as rpt                # noqa: E402
+from pcal import profile
+from pcal import workspace
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 
@@ -49,9 +51,9 @@ def load_settings():
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {}
+        return profile.merge_saved(data if isinstance(data, dict) else {})
     except (OSError, ValueError):
-        return {}
+        return profile.merge_saved({})
 
 
 def save_settings(cfg):
@@ -485,6 +487,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'ok': False,
                                'error': '无法写入 %s（文件被占用），请关闭正在打开该文档的 '
                                         'Word 后重试。' % out}, 400)
+        try:
+            workspace.save(out_dir, payload, base, '溶解热', TEMPLATE,
+                           extra={'datasets': sorted(datasets)})
+        except Exception as exc:                     # noqa: BLE001
+            messages.append('工作区快照写入失败：%s' % exc)
         return self._json({'ok': True, 'path': out, 'filename': os.path.basename(out),
                            'dir': os.path.dirname(out), 'messages': messages})
 

@@ -33,6 +33,8 @@ from pcal import gcalc_bridge                    # noqa: E402
 from pcal import plotting                        # noqa: E402
 from pcal import uv                              # noqa: E402
 from pcal import report as rpt                   # noqa: E402
+from pcal import profile
+from pcal import workspace
 from pcal.analysis import (Analysis, PERSIST_KEYS, default_config,  # noqa: E402
                            default_config_with_saved)
 
@@ -86,9 +88,9 @@ def pick_folder(initial=None):
 def load_settings():
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as fh:
-            return json.load(fh)
+            return profile.merge_saved(json.load(fh))
     except (OSError, ValueError):
-        return {}
+        return profile.merge_saved({})
 
 
 def save_settings(cfg):
@@ -319,6 +321,11 @@ def _export(cfg):
     logs = []
     rpt.build_report(an, cfg, out, plots, TEMPLATE,
                      progress=lambda m: logs.append(m))
+    try:
+        workspace.save(out_dir, {'config': cfg}, cfg, '紫外', TEMPLATE,
+                       extra={'spectra': sorted(getattr(an, 'spectra', {}) or {})})
+    except Exception as exc:                         # noqa: BLE001
+        logs.append('工作区快照写入失败：%s' % exc)
     return dict(ok=True, path=out, note=note, logs=logs, figures=plots)
 
 

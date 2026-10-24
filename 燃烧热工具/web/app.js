@@ -12,6 +12,12 @@ const state = {
   active: 0,
   dirty: false,
 };
+const DRAFT_KEY = 'pcal-draft-combustion-v1';
+const DRAFT_MAX_AGE = 30 * 864e5;
+const undoStack = [];
+let restoringDraft = false;
+let draftReady = false;
+let draftTimer = null;
 
 /* ---------------------------------------------------------------- util */
 function toast(msg, ms = 2600) {
@@ -74,6 +80,8 @@ async function boot() {
   await scanDir($('dataDir').value, true);
   setStatus('就绪 · 数据目录 ' + ($('dataDir').value || '—'));
   await recalc();
+  await maybeRestoreDraft();
+  draftReady = true;
 }
 
 async function scanDir(dir, autoFill) {
@@ -297,6 +305,7 @@ async function recalc() {
     setStatus('计算完成 · ' + new Date().toLocaleTimeString());
     showRound(state.active);
     renderResults(res);
+    saveDraft();
   } catch (err) {
     setStatus('计算失败');
     toast('计算失败：' + err.message, 5000);
@@ -547,6 +556,7 @@ function attachChartEvents(v, tr) {
       const ok = pts[0] < pts[1] && pts[1] < pts[2] && pts[2] < pts[3]
         && pts[0] >= 0 && pts[3] < xs.length;
       if (ok) {
+        if (!drag.undoPushed) { pushUndoAll(); drag.undoPushed = true; }
         v.points = pts;
         $('pointValue').value = pts[Number($('whichPoint').value)];
         state.rounds[state.active].points = pts;
@@ -568,12 +578,101 @@ function debouncedRecalc() {
   recalcTimer = setTimeout(() => { /* 拖动结束再算 */ }, 10);
 }
 
+/* ------------------------------------------------ 草稿与撤销 */
+function draftSnapshot() {
+  return {
+    savedAt: Date.now(),
+    active: state.active,
+    dataDir: $('dataDir').value.trim(),
+    config: readConfigForm(),
+    rounds: state.rounds.map(r => ({
+      index: r.index, enabled: r.enabled !== false, role: r.role,
+      name: r.name, substance: r.substance, file: r.file,
+      params: r.params || {}, points: r.points, sample_mass: r.sample_mass,
+      note: r.note || '',
+    })),
+  };
+}
+
+function saveDraft() {
+  if (!draftReady || restoringDraft || !state.config) return;
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftSnapshot()));
+  } catch (e) { /* 隐私模式/配额满：草稿失败不影响正常使用 */ }
+}
+
+function scheduleDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 500);
+}
+
+function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
+}
+
+async function restoreDraft(draft) {
+  restoringDraft = true;
+  try {
+    fillConfigForm(draft.config || {});
+    if (draft.dataDir) $('dataDir').value = draft.dataDir;
+    if (Array.isArray(draft.rounds) && draft.rounds.length) {
+      state.rounds = draft.rounds.map((r, i) => Object.assign(mkRound(i + 1), r));
+    }
+    state.active = Math.min(draft.active || 0, Math.max(0, state.rounds.length - 1));
+    renderRounds();
+    if (draft.dataDir) {
+      try { await scanDir(draft.dataDir, false); } catch (e) { /* 目录暂时不可用也能恢复 */ }
+    }
+    await recalc();
+    toast('已恢复上次未导出的编辑');
+  } finally {
+    restoringDraft = false;
+  }
+}
+
+async function maybeRestoreDraft() {
+  let raw = null;
+  try { raw = localStorage.getItem(DRAFT_KEY); } catch (e) { return; }
+  if (!raw) return;
+  let draft = null;
+  try { draft = JSON.parse(raw); } catch (e) { clearDraft(); return; }
+  if (!draft || !draft.savedAt) { clearDraft(); return; }
+  if (Date.now() - draft.savedAt > DRAFT_MAX_AGE) { clearDraft(); return; }
+  const when = new Date(draft.savedAt).toLocaleString();
+  if (confirm('发现上次未导出的编辑（' + when + '），是否恢复？\n取消则保留草稿，下次打开再问。')) {
+    await restoreDraft(draft);
+  }
+}
+
+function pushUndoAll() {
+  undoStack.push({
+    active: state.active,
+    points: state.rounds.map(r => (r.points ? r.points.slice() : null)),
+  });
+  if (undoStack.length > 50) undoStack.shift();
+}
+
+async function undoPoints() {
+  if (!undoStack.length) return toast('没有可撤销的取点');
+  const snap = undoStack.pop();
+  state.rounds.forEach((r, i) => {
+    r.points = snap.points[i] ? snap.points[i].slice() : null;
+  });
+  const v = state.views[state.active];
+  if (v && state.rounds[state.active]) {
+    v.points = state.rounds[state.active].points;
+  }
+  await recalc();
+  toast('已撤销上一步取点');
+}
+
 /* ---------------------------------------------------------------- 事件 */
 function bindUI() {
   $('btnCalc').addEventListener('click', recalc);
   $('btnAddRound').addEventListener('click', () => {
     state.rounds.push(mkRound(state.rounds.length + 1));
     renderRounds();
+    saveDraft();
   });
   $('btnPick').addEventListener('click', async () => {
     try {
@@ -607,6 +706,7 @@ function bindUI() {
     if (!(pts[0] < pts[1] && pts[1] < pts[2] && pts[2] < pts[3])) {
       return toast('必须满足 Start1 < End1 < Start2 < End2');
     }
+    pushUndoAll();
     v.points = pts;
     state.rounds[state.active].points = pts;
     await recalc();
@@ -614,13 +714,28 @@ function bindUI() {
   $('btnAutoPoint').addEventListener('click', async () => {
     const v = state.views[state.active];
     if (!v) return;
+    pushUndoAll();
     const pts = v.auto_points;
     state.rounds[state.active].points = pts;
     await recalc();
   });
+  const undoBtn = document.createElement('button');
+  undoBtn.className = 'btn';
+  undoBtn.textContent = '撤销取点 (Ctrl+Z)';
+  undoBtn.addEventListener('click', undoPoints);
+  $('btnAutoPoint').insertAdjacentElement('afterend', undoBtn);
   $('btnExport').addEventListener('click', doExport);
   $('btnSaveDefault').addEventListener('click', saveAsDefault);
   $('btnResetDefault').addEventListener('click', resetDefault);
+  document.addEventListener('input', scheduleDraft);
+  document.addEventListener('change', scheduleDraft);
+  document.addEventListener('keydown', (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== 'z') return;
+    const tag = (ev.target && ev.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    ev.preventDefault();
+    undoPoints();
+  });
 }
 
 async function doExport() {
@@ -643,6 +758,7 @@ async function doExport() {
     });
     busy(false);
     toast('已生成：' + res.path, 6000);
+    clearDraft();
     setStatus('报告已生成：' + res.filename);
     const note = (res.messages || []).find(m => m.indexOf('占用') >= 0);
     if (note) toast(note, 9000);

@@ -225,6 +225,15 @@ async function boot() {
       $('btnHome').style.display = '';
     }
     setStatus('就绪');
+    await PcalDraft.init({
+      key: 'pcal-draft-dipole-v1',
+      read: () => ({config: readConfig(), data: readData()}),
+      apply: async (d) => {
+        fillConfig(d.config || {});
+        fillData(d.data || {});
+        await recalc();
+      },
+    });
   } catch (e) {
     setStatus('初始化失败：' + e.message, 'err');
     toast('初始化失败：' + e.message, 5000);
@@ -248,6 +257,7 @@ async function recalc() {
     drawChart();
     setStatus('已重新计算');
     toast('计算完成');
+    if (window.PcalDraft) PcalDraft.save();
   } catch (e) {
     setStatus('计算失败：' + e.message, 'err');
     toast('计算失败：' + e.message, 5000);
@@ -266,6 +276,7 @@ async function doExport() {
     setStatus('已生成报告');
     const logs = (r.logs || []).slice(-3).join('；');
     toast('已生成：' + r.path, 7000);
+    if (window.PcalDraft) PcalDraft.clear();
     alert('报告已生成：\n' + r.path + (r.note ? '\n\n' + r.note : '') +
       (logs ? '\n\n' + logs : ''));
   } catch (e) {

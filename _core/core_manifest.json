@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0",
+  "files": {
+    "omml.py": "1d720d45a580fdd6f7f29fc919cf92c8a22aea8b3427d2c9ed8149cb5785ebcb",
+    "docxkit.py": "85e69f84a152284858079fce01d27d5ba959d034711b1c96835566802b0d407e",
+    "workspace.py": "0fe745f926b2d6b2f36d53b2ecd8bd5d1b09e07e15836bcd07ed91c002a66c07",
+    "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3"
+  },
+  "web_files": {
+    "web_draft.js": "36eb1d72a43d75a10b956cdc113f7f312bb0cb074c90787d1b72fb4590852a7a"
+  },
+  "tools": [
+    "燃烧热工具",
+    "溶解热工具",
+    "紫外光谱工具",
+    "化学动力学工具",
+    "电化学工具",
+    "电导率工具",
+    "蒸气压工具",
+    "双液系工具",
+    "偶极矩工具",
+    "磁化率工具",
+    "表面吸附工具"
+  ],
+  "web_tools": [
+    "化学动力学工具",
+    "蒸气压工具",
+    "双液系工具",
+    "偶极矩工具",
+    "表面吸附工具",
+    "磁化率工具"
+  ],
+  "note": "canonical 源在 _core/；各工具 pcal/ 是 vendored 副本。"
+}

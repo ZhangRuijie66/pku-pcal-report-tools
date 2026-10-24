@@ -24,6 +24,8 @@ sys.path.insert(0, ROOT)
 
 from pcal import magnetic, plotting
 from pcal import report as rpt
+from pcal import profile
+from pcal import workspace
 from pcal.analysis import run_analysis, format_results
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
@@ -58,9 +60,9 @@ def default_config_with_saved(saved):
 def load_settings():
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as fh:
-            return json.load(fh)
+            return profile.merge_saved(json.load(fh))
     except (OSError, ValueError):
-        return {}
+        return profile.merge_saved({})
 
 
 def save_settings(cfg):
@@ -144,6 +146,12 @@ def _export(cfg, data, progress=None):
 
     rpt.build_report(an, cfg, out_path, plots_dir, template_path,
                      progress=progress, cover_tail_blanks=0)
+    try:
+        workspace.save(os.path.dirname(out_path), {'config': cfg, 'data': data},
+                       cfg, '磁化率', template_path)
+    except Exception as exc:                         # noqa: BLE001
+        if progress:
+            progress('工作区快照写入失败：%s' % exc)
 
     return out_path, an
 

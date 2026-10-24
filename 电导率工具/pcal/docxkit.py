@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# canonical 版本：由 _core/sync_core.py 同步到各实验工具的 pcal/docxkit.py。
 """把一次 Analysis 的结果写成与“物理化学实验报告”模板同款的 .docx。"""
 from __future__ import annotations
 
@@ -228,7 +229,11 @@ def _sub_chunks(body):
     out = []
     for m in _SUB_CHUNK_RE.finditer(body):
         s = m.group(0)
-        up = (not s.isalpha()) or len(s) > 1
+        # 重复索引 i/j（h_{ii}、ε_{ij}）是变量本身，保持斜体（与 omml 一致）
+        if s.isalpha() and (len(s) == 1 or all(c in 'ij' for c in s)):
+            up = False
+        else:
+            up = (not s.isalpha()) or len(s) > 1
         out.append((s, up))
     return out
 
@@ -301,7 +306,10 @@ def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
         for idx, (kind, body) in enumerate(toks):
             if kind != 't':
                 sub = dict(opts)
-                sub['italic'] = False
+                # 交给 _write_script 按块判定：单字母变量 / 重复索引 i/j 斜体，
+                # 数字、单位、说明性缩写（sam、Ni）正体。不能在这里一律置 False，
+                # 否则 Q_{s} 的 s 会被排成正体（题注规范要求斜体）。
+                sub['italic'] = True
                 if sub_scale != 1.0:
                     sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
                 _write_script(p, body, sub, sup=(kind == 'sup'))
@@ -620,6 +628,12 @@ class ReportBuilder:
     def table(self, headers, rows, widths_cm=None, font_size=10.5,
               cell_margin_mm=0.9, keep_together=False):
         """表格默认用五号字（10.5 pt）；不自动换行，靠给定列宽排开。"""
+        rows = list(rows)
+        for i, row in enumerate(rows):
+            if len(row) != len(headers):
+                raise ValueError(
+                    '表格第 %d 行有 %d 列，表头是 %d 列（列数不一致会把整行左移）'
+                    % (i + 1, len(row), len(headers)))
         t = self.doc.add_table(rows=1 + len(rows), cols=len(headers))
         t.style = self._grid_style()
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -685,12 +699,37 @@ class ReportBuilder:
         整块正体，表 1 / 表 3 的 n₀ 列头就成了粗正体（用户 2026-09-23 抓到）。
         判据：表头里出现拉丁字母或小写希腊字母 → 是量符号，斜体；纯中文才正体。
         """
-        text = '' if text is None else str(text)
         base = {'size': font_size, 'bold': True}
-        if '/' in text:
-            sym, unit = text.split('/', 1)
+        # 片段列表表头：'ln(p/p^{⊖})' 这类形式按 '/' 切会切错位置，
+        # 允许直接给 [(片段, opts), …]；也接受纯字符串列表。
+        if isinstance(text, (list, tuple)):
+            for seg in text:
+                if isinstance(seg, (list, tuple)):
+                    seg_text = seg[0] if seg else ''
+                    seg_opts = seg[1] if len(seg) > 1 and isinstance(seg[1], dict) else {}
+                else:
+                    seg_text, seg_opts = seg, {}
+                opts = dict(base)
+                opts.update(seg_opts or {})
+                add_rich_text(p, seg_text, opts)
+            return
+        text = '' if text is None else str(text)
+        # '/' 可能是变量与单位的分隔符，也可能在 _{1/2} 里：
+        # 只在花括号外的第一个 '/' 处切（t_{1/2} / s、m_{Ni-1}/g 都正确）。
+        cut = None
+        depth = 0
+        for i, ch in enumerate(text):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth = max(0, depth - 1)
+            elif ch == '/' and depth == 0:
+                cut = i
+                break
+        if cut is not None:
+            sym, unit = text[:cut], text[cut:]
             add_rich_text(p, sym, dict(base, italic=True))
-            add_rich_text(p, '/' + unit, base)
+            add_rich_text(p, unit, base)
         elif re.search(r'[A-Za-zα-ω]', text):
             add_rich_text(p, text, dict(base, italic=True))
         else:

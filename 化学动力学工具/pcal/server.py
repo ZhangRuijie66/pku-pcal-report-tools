@@ -25,6 +25,8 @@ sys.path.insert(0, ROOT)
 
 from pcal import kinetics, plotting                       # noqa: E402
 from pcal import report as rpt                            # noqa: E402
+from pcal import profile
+from pcal import workspace
 from pcal.analysis import (default_config, default_config_with_saved,  # noqa: E402
                            load_data, save_data, PERSIST_KEYS)
 
@@ -36,9 +38,9 @@ LOCK = threading.Lock()
 def load_settings():
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as fh:
-            return json.load(fh)
+            return profile.merge_saved(json.load(fh))
     except (OSError, ValueError):
-        return {}
+        return profile.merge_saved({})
 
 
 def save_settings(cfg):
@@ -272,6 +274,11 @@ def _export(cfg, data):
     logs = []
     rpt.build_report(an, cfg, out, plots, TEMPLATE,
                      progress=lambda m: logs.append(m))
+    try:
+        workspace.save(out_dir, {'config': cfg, 'data': data}, cfg,
+                       '化学动力学', TEMPLATE)
+    except Exception as exc:                         # noqa: BLE001
+        logs.append('工作区快照写入失败：%s' % exc)
     return dict(ok=True, path=out, note=note, logs=logs, figures=plots)
 
 

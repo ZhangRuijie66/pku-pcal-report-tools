@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# canonical 版本：由 _core/sync_core.py 同步到各实验工具的 pcal/docxkit.py。
 """把一次 Analysis 的结果写成与“物理化学实验报告”模板同款的 .docx。"""
 from __future__ import annotations
 
@@ -157,6 +158,65 @@ def _split_runs_by_italic(text):
     return out
 
 
+def _split_caption_runs(text, next_body=None):
+    """
+    图题/表题里只把**量符号**排斜体，普通单词与编号保持正体：
+        'A3'      → 正体 A3（分子编号）
+        'Voigt'   → 正体（人名）
+        'μmol'    → 正体（单位，μ 是词头）
+        'L−1'     → 正体 L（单位升）
+        'A–c'     → 斜体 A、正体 –、斜体 c
+        'A 类'    → 正体 A（类别标签）
+
+    next_body：紧随其后的上下标内容（题注切分时的「下标预览」）——
+    单字母 + 纯数字下标（N_{2}、O_{2}）是化学物种，字母正体；
+    单字母 + 字母下标（Q_{s}）才是变量，斜体。
+    """
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'):
+            j = i
+            while j < n and (('a' <= text[j] <= 'z') or ('A' <= text[j] <= 'Z')):
+                j += 1
+            word, nxt = text[i:j], (text[j] if j < n else '')
+            if len(word) > 1:
+                it = False                      # Voigt、mol、nm…
+            else:
+                it = True
+                if nxt.isdigit():               # A3、B2：编号正体
+                    it = False
+                elif word == 'L' and nxt in '·−':   # L·mol⁻¹ / L−1：单位升
+                    it = False
+                elif nxt == ' ' and text[j + 1:j + 2] == '类':   # A 类
+                    it = False
+                elif j >= n and next_body is not None:
+                    body = next_body.strip()
+                    if not body or not any(c.isalpha() for c in body):
+                        it = False              # N_{2}：化学式下标纯数字
+            out.append([word, it])
+            i = j
+            continue
+        if ch in _GREEK_LOWER:
+            prev_letter = i > 0 and text[i - 1].isascii() and text[i - 1].isalpha()
+            nxt_letter = i + 1 < n and text[i + 1].isascii() and text[i + 1].isalpha()
+            it = not (ch == 'μ' and nxt_letter and not prev_letter)  # μmol/μm 正体
+            out.append([ch, it])
+            i += 1
+            continue
+        out.append([ch, False])
+        i += 1
+    # 合并相邻同样式的片段
+    merged = []
+    for chunk, it in out:
+        if merged and merged[-1][1] is it:
+            merged[-1][0] += chunk
+        else:
+            merged.append([chunk, it])
+    return merged
+
+
 _SUB_CHUNK_RE = re.compile(r'[A-Za-z]+|\d+|[^A-Za-z\d]+')
 
 
@@ -169,7 +229,11 @@ def _sub_chunks(body):
     out = []
     for m in _SUB_CHUNK_RE.finditer(body):
         s = m.group(0)
-        up = (not s.isalpha()) or len(s) > 1
+        # 重复索引 i/j（h_{ii}、ε_{ij}）是变量本身，保持斜体（与 omml 一致）
+        if s.isalpha() and (len(s) == 1 or all(c in 'ij' for c in s)):
+            up = False
+        else:
+            up = (not s.isalpha()) or len(s) > 1
         out.append((s, up))
     return out
 
@@ -177,6 +241,12 @@ def _sub_chunks(body):
 def _emit_text(p, text, opts):
     """按 opts 写一段文本；斜体 run 里的大写希腊字母 / 数字 / 符号自动改正体。"""
     if not text:
+        return
+    if (opts or {}).get('caption_italic'):
+        for chunk, italic in _split_caption_runs(text):
+            o = {k: v for k, v in opts.items() if k != 'caption_italic'}
+            o['italic'] = italic
+            style_run(p.add_run(chunk), **o)
         return
     if not (opts or {}).get('italic'):
         style_run(p.add_run(text), **(opts or {}))
@@ -194,7 +264,7 @@ def _write_script(p, body, opts, sup):
     所以 Q_{V-Ni} → 斜体 V + 正体 -Ni；R^{2} → 斜体 R + 正体上标 2。
     """
     for chunk, upright in _sub_chunks(body):
-        o = dict(opts)
+        o = {k: v for k, v in opts.items() if k != 'caption_italic'}
         if o.get('italic'):
             o['italic'] = not upright
         r = p.add_run(chunk)
@@ -205,7 +275,20 @@ def _write_script(p, body, opts, sup):
         style_run(r, **o)
 
 
-def add_rich_text(p, text, base_opts=None, sub_scale=1.0):
+def _rich_tokens(text):
+    """把含 _{..} / ^{..} 标记的文本切成 [(kind, body), …]，kind: t/sub/sup。"""
+    out, pos = [], 0
+    for m in _RICH_RE.finditer(text):
+        if m.start() > pos:
+            out.append(('t', text[pos:m.start()]))
+        out.append(('sub' if m.group(1) == '_' else 'sup', m.group(2)))
+        pos = m.end()
+    if pos < len(text):
+        out.append(('t', text[pos:]))
+    return out
+
+
+def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
     """
     把 'm_{Ni-1}/g'、'10^{-5}' 这类写法写成真正的 Word 下标 / 上标。
 
@@ -217,6 +300,28 @@ def add_rich_text(p, text, base_opts=None, sub_scale=1.0):
     """
     opts = dict(base_opts or {})
     text = _minus_signs(_scripts_to_markers(str(text)))
+    if caption:
+        # 题注：正斜体切分要看得到下标内容（N_{2} 是化学式 → 正体，Q_{s} 是变量 → 斜体）
+        toks = _rich_tokens(text)
+        for idx, (kind, body) in enumerate(toks):
+            if kind != 't':
+                sub = dict(opts)
+                # 交给 _write_script 按块判定：单字母变量 / 重复索引 i/j 斜体，
+                # 数字、单位、说明性缩写（sam、Ni）正体。不能在这里一律置 False，
+                # 否则 Q_{s} 的 s 会被排成正体（题注规范要求斜体）。
+                sub['italic'] = True
+                if sub_scale != 1.0:
+                    sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
+                _write_script(p, body, sub, sup=(kind == 'sup'))
+                continue
+            nxt = None
+            if idx + 1 < len(toks) and toks[idx + 1][0] != 't':
+                nxt = toks[idx + 1][1]
+            for chunk, italic in _split_caption_runs(body, next_body=nxt):
+                o = dict(opts)
+                o['italic'] = italic
+                style_run(p.add_run(chunk), **o)
+        return
     pos = 0
     for m in _RICH_RE.finditer(text):
         if m.start() > pos:
@@ -306,11 +411,12 @@ class ReportBuilder:
             s = s.replace(ch, '')
         return s
 
-    def set_cover(self, mapping):
+    def set_cover(self, mapping, title_size=26.0):
         """
         按“字段名 -> 值”更新封面表格（只覆盖右侧单元格）。返回命中的字段。
 
-        字号跟课程模板的段落标记一致：题目 26 pt 黑体；其余字段 14 pt 黑体加粗。
+        字号跟课程模板的段落标记一致：题目默认 26 pt 黑体；其余字段 14 pt 黑体加粗。
+        题目过长（例如本实验的 25 字题目）时用 title_size 调小，否则会撑破单元格。
         """
         matched = []
         for table in self.doc.tables:
@@ -328,10 +434,25 @@ class ReportBuilder:
                         for r in list(p.runs):
                             r._element.getparent().remove(r._element)
                         big = label in ('题目', '实验题目', '题目名称')
+                        size = float(title_size) if big else 14.0
                         r = p.add_run(str(value))
-                        style_run(r, size=26.0 if big else 14.0,
+                        style_run(r, size=size,
                                   cjk=FONT_HEI, latin=FONT_HEI,
                                   bold=not big)
+                        if big:
+                            # 长题目要能折行：单倍行距，并把单元格加高、垂直居中
+                            p.paragraph_format.line_spacing = 1.0
+                            p.paragraph_format.space_before = 0
+                            p.paragraph_format.space_after = 0
+                            trpr = row._tr.get_or_add_trPr()
+                            trh = trpr.find(qn('w:trHeight'))
+                            if trh is not None:
+                                trh.set(qn('w:val'), '1100')
+                                trh.set(qn('w:hRule'), 'atLeast')
+                            tcpr = cell._tc.get_or_add_tcPr()
+                            va = tcpr.find(qn('w:vAlign'))
+                            if va is not None:
+                                va.set(qn('w:val'), 'center')
                         # 段落标记也带上同样格式，模板里单元格是空的，靠这个定字号
                         ppr = p._element.get_or_add_pPr()
                         rpr = ppr.find(qn('w:rPr'))
@@ -343,8 +464,7 @@ class ReportBuilder:
                             '%s</w:rPr>'
                             % (W_NS, FONT_HEI, FONT_HEI, FONT_HEI,
                                ' w:hint="eastAsia"',
-                               int((26.0 if big else 14.0) * 2),
-                               int((26.0 if big else 14.0) * 2),
+                               int(size * 2), int(size * 2),
                                '' if big else '<w:b/>')))
                         matched.append(key)
         return matched
@@ -376,6 +496,10 @@ class ReportBuilder:
         _para_fmt(p, indent_chars=0, line_spacing=1.0,
                   space_before=6, space_after=6,
                   page_break_before=page_break_before)
+        # 标题不能孤零零留在页底：跟后面的正文/公式绑在一页
+        _ppr = p._element.get_or_add_pPr()
+        if _ppr.find(qn('w:keepNext')) is None:
+            _ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
         # 段落标记也要压到五号，否则模板样式里的 22 pt 会把标题行高撑大
         ppr = p._element.get_or_add_pPr()
         old = ppr.find(qn('w:rPr'))
@@ -389,7 +513,7 @@ class ReportBuilder:
         return p
 
     def para(self, segments, indent_chars=2.0, align=WD_ALIGN_PARAGRAPH.JUSTIFY,
-             line_spacing=1.0):
+             line_spacing=1.0, keep_next=False):
         """
         segments —— 字符串，或段落片段列表。片段可以是：
             '普通文本'                     默认正文格式
@@ -400,6 +524,10 @@ class ReportBuilder:
         """
         p = self.doc.add_paragraph()
         _para_fmt(p, indent_chars=indent_chars, align=align, line_spacing=line_spacing)
+        if keep_next:
+            ppr = p._element.get_or_add_pPr()
+            if ppr.find(qn('w:keepNext')) is None:
+                ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
         self._write_segments(p, segments)
         return p
 
@@ -451,16 +579,17 @@ class ReportBuilder:
             xml = '<m:oMath %s %s>%s</m:oMath>' % (W_NS, M_NS, omml.to_omml_body(latex))
         p._element.append(parse_xml(xml))
 
-    def caption(self, text):
+    def caption(self, text, keep_next=True):
         """图题 / 表题：居中，「表1」「图2」这几个字加粗（跟课程模板一致）。"""
         p = self.doc.add_paragraph()
         _para_fmt(p, indent_chars=0, align=WD_ALIGN_PARAGRAPH.CENTER, line_spacing=1.0,
                   space_before=0, space_after=6)
         # keepNext：题注必须与紧随其后的表格 / 图片留在同一页，
         # 否则表题会孤零零地留在上一页页底。
-        ppr = p._element.get_or_add_pPr()
-        if ppr.find(qn('w:keepNext')) is None:
-            ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
+        if keep_next:
+            ppr = p._element.get_or_add_pPr()
+            if ppr.find(qn('w:keepNext')) is None:
+                ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
         head = ''
         rest = text or ''
         m = re.match(r'^([表图]\s*\d+)(.*)$', rest)
@@ -468,8 +597,9 @@ class ReportBuilder:
             head, rest = m.group(1), m.group(2)
         if head:
             style_run(p.add_run(head), size=10.5, bold=True)
-        # 题注里可能出现量符号（Q_s、n_0…）：用富文本写，真上/下标 + 变量斜体
-        add_rich_text(p, rest, {'size': 10.5, 'italic': True})
+        # 题注里可能出现量符号（Q_s、A–c…）：真上/下标 + 只把量符号排斜体
+        # （A3、Voigt、μmol、L 这类编号/单词/单位保持正体）
+        add_rich_text(p, rest, {'size': 10.5}, caption=True)
         return p
 
     def blank(self, size=10.5):
@@ -492,12 +622,18 @@ class ReportBuilder:
         r = p.add_run()
         r.add_picture(image_path, width=Cm(width_cm))
         if caption:
-            self.caption(caption)
+            self.caption(caption, keep_next=False)
 
     # ------------------------------------------------------------ 表格
     def table(self, headers, rows, widths_cm=None, font_size=10.5,
-              cell_margin_mm=0.9):
+              cell_margin_mm=0.9, keep_together=False):
         """表格默认用五号字（10.5 pt）；不自动换行，靠给定列宽排开。"""
+        rows = list(rows)
+        for i, row in enumerate(rows):
+            if len(row) != len(headers):
+                raise ValueError(
+                    '表格第 %d 行有 %d 列，表头是 %d 列（列数不一致会把整行左移）'
+                    % (i + 1, len(row), len(headers)))
         t = self.doc.add_table(rows=1 + len(rows), cols=len(headers))
         t.style = self._grid_style()
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -527,6 +663,14 @@ class ReportBuilder:
                 for row in t.rows:
                     row.cells[j].width = Cm(w)
         self._row_props(t)
+        if keep_together:
+            # 小表不要跨页：除最后一行外，每行的段落都加 keepNext
+            for row in t.rows[:-1]:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        ppr = p._element.get_or_add_pPr()
+                        if ppr.find(qn('w:keepNext')) is None:
+                            ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
         return t
 
     @staticmethod
@@ -555,12 +699,37 @@ class ReportBuilder:
         整块正体，表 1 / 表 3 的 n₀ 列头就成了粗正体（用户 2026-09-23 抓到）。
         判据：表头里出现拉丁字母或小写希腊字母 → 是量符号，斜体；纯中文才正体。
         """
-        text = '' if text is None else str(text)
         base = {'size': font_size, 'bold': True}
-        if '/' in text:
-            sym, unit = text.split('/', 1)
+        # 片段列表表头：'ln(p/p^{⊖})' 这类形式按 '/' 切会切错位置，
+        # 允许直接给 [(片段, opts), …]；也接受纯字符串列表。
+        if isinstance(text, (list, tuple)):
+            for seg in text:
+                if isinstance(seg, (list, tuple)):
+                    seg_text = seg[0] if seg else ''
+                    seg_opts = seg[1] if len(seg) > 1 and isinstance(seg[1], dict) else {}
+                else:
+                    seg_text, seg_opts = seg, {}
+                opts = dict(base)
+                opts.update(seg_opts or {})
+                add_rich_text(p, seg_text, opts)
+            return
+        text = '' if text is None else str(text)
+        # '/' 可能是变量与单位的分隔符，也可能在 _{1/2} 里：
+        # 只在花括号外的第一个 '/' 处切（t_{1/2} / s、m_{Ni-1}/g 都正确）。
+        cut = None
+        depth = 0
+        for i, ch in enumerate(text):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth = max(0, depth - 1)
+            elif ch == '/' and depth == 0:
+                cut = i
+                break
+        if cut is not None:
+            sym, unit = text[:cut], text[cut:]
             add_rich_text(p, sym, dict(base, italic=True))
-            add_rich_text(p, '/' + unit, base)
+            add_rich_text(p, unit, base)
         elif re.search(r'[A-Za-zα-ω]', text):
             add_rich_text(p, text, dict(base, italic=True))
         else:

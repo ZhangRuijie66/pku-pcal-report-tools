@@ -66,3 +66,10 @@ Word 原生公式；「只报数值」的句子用普通文本（变量斜体、
 只有推导/代入计算才用公式对象。生成后必须跑
 `python ..\..\课程\.dsh\skills\pku-physical-chemistry-lab-report\check_italic.py <报告.docx>`
 （输出「共 0 处」才算完成）。
+
+## 2026-10-24 工程化更新
+
+- 导出报告时同目录写 `workspace.json`（配置、数据文件路径与 SHA256、取点、版本），便于以后复现；
+- 入口页「个人档案 / 年度数据目录」统一管理姓名/学号和本模块的数据目录；
+- PDF 预览在入口页「报告输出 / PDF 预览」，用本机 Word 转换。
+- 回归测试：`python tests/run_tests.py`；核心同步：`python _core/sync_core.py --check`。

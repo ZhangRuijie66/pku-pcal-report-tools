@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# canonical 版本：由 _core/sync_core.py 同步到各实验工具的 pcal/docxkit.py。
 """把一次 Analysis 的结果写成与“物理化学实验报告”模板同款的 .docx。"""
 from __future__ import annotations
 
@@ -157,7 +158,7 @@ def _split_runs_by_italic(text):
     return out
 
 
-def _split_caption_runs(text):
+def _split_caption_runs(text, next_body=None):
     """
     图题/表题里只把**量符号**排斜体，普通单词与编号保持正体：
         'A3'      → 正体 A3（分子编号）
@@ -166,6 +167,10 @@ def _split_caption_runs(text):
         'L−1'     → 正体 L（单位升）
         'A–c'     → 斜体 A、正体 –、斜体 c
         'A 类'    → 正体 A（类别标签）
+
+    next_body：紧随其后的上下标内容（题注切分时的「下标预览」）——
+    单字母 + 纯数字下标（N_{2}、O_{2}）是化学物种，字母正体；
+    单字母 + 字母下标（Q_{s}）才是变量，斜体。
     """
     out = []
     i, n = 0, len(text)
@@ -186,6 +191,10 @@ def _split_caption_runs(text):
                     it = False
                 elif nxt == ' ' and text[j + 1:j + 2] == '类':   # A 类
                     it = False
+                elif j >= n and next_body is not None:
+                    body = next_body.strip()
+                    if not body or not any(c.isalpha() for c in body):
+                        it = False              # N_{2}：化学式下标纯数字
             out.append([word, it])
             i = j
             continue
@@ -266,6 +275,19 @@ def _write_script(p, body, opts, sup):
         style_run(r, **o)
 
 
+def _rich_tokens(text):
+    """把含 _{..} / ^{..} 标记的文本切成 [(kind, body), …]，kind: t/sub/sup。"""
+    out, pos = [], 0
+    for m in _RICH_RE.finditer(text):
+        if m.start() > pos:
+            out.append(('t', text[pos:m.start()]))
+        out.append(('sub' if m.group(1) == '_' else 'sup', m.group(2)))
+        pos = m.end()
+    if pos < len(text):
+        out.append(('t', text[pos:]))
+    return out
+
+
 def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
     """
     把 'm_{Ni-1}/g'、'10^{-5}' 这类写法写成真正的 Word 下标 / 上标。
@@ -277,9 +299,29 @@ def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
     时本来就会自己缩小并升降，这里再乘一次系数会让它们小得看不清。
     """
     opts = dict(base_opts or {})
-    if caption:
-        opts['caption_italic'] = True
     text = _minus_signs(_scripts_to_markers(str(text)))
+    if caption:
+        # 题注：正斜体切分要看得到下标内容（N_{2} 是化学式 → 正体，Q_{s} 是变量 → 斜体）
+        toks = _rich_tokens(text)
+        for idx, (kind, body) in enumerate(toks):
+            if kind != 't':
+                sub = dict(opts)
+                # 交给 _write_script 按块判定：单字母变量 / 重复索引 i/j 斜体，
+                # 数字、单位、说明性缩写（sam、Ni）正体。不能在这里一律置 False，
+                # 否则 Q_{s} 的 s 会被排成正体（题注规范要求斜体）。
+                sub['italic'] = True
+                if sub_scale != 1.0:
+                    sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
+                _write_script(p, body, sub, sup=(kind == 'sup'))
+                continue
+            nxt = None
+            if idx + 1 < len(toks) and toks[idx + 1][0] != 't':
+                nxt = toks[idx + 1][1]
+            for chunk, italic in _split_caption_runs(body, next_body=nxt):
+                o = dict(opts)
+                o['italic'] = italic
+                style_run(p.add_run(chunk), **o)
+        return
     pos = 0
     for m in _RICH_RE.finditer(text):
         if m.start() > pos:
@@ -586,6 +628,12 @@ class ReportBuilder:
     def table(self, headers, rows, widths_cm=None, font_size=10.5,
               cell_margin_mm=0.9, keep_together=False):
         """表格默认用五号字（10.5 pt）；不自动换行，靠给定列宽排开。"""
+        rows = list(rows)
+        for i, row in enumerate(rows):
+            if len(row) != len(headers):
+                raise ValueError(
+                    '表格第 %d 行有 %d 列，表头是 %d 列（列数不一致会把整行左移）'
+                    % (i + 1, len(row), len(headers)))
         t = self.doc.add_table(rows=1 + len(rows), cols=len(headers))
         t.style = self._grid_style()
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -653,9 +701,14 @@ class ReportBuilder:
         """
         base = {'size': font_size, 'bold': True}
         # 片段列表表头：'ln(p/p^{⊖})' 这类形式按 '/' 切会切错位置，
-        # 允许直接给 [(片段, opts), …]，opts 里只写 italic 等覆盖项。
+        # 允许直接给 [(片段, opts), …]；也接受纯字符串列表。
         if isinstance(text, (list, tuple)):
-            for seg_text, seg_opts in text:
+            for seg in text:
+                if isinstance(seg, (list, tuple)):
+                    seg_text = seg[0] if seg else ''
+                    seg_opts = seg[1] if len(seg) > 1 and isinstance(seg[1], dict) else {}
+                else:
+                    seg_text, seg_opts = seg, {}
                 opts = dict(base)
                 opts.update(seg_opts or {})
                 add_rich_text(p, seg_text, opts)

@@ -34,6 +34,8 @@ WEB_DIR = os.path.join(HERE, 'web')
 LAB_DIR = os.path.dirname(HERE)          # …\物理化学实验
 PYTHON = sys.executable or 'python'
 LOG_PATH = os.path.join(LAB_DIR, '_tools', '启动日志.log')
+PROFILE_PATH = os.environ.get('PCAL_PROFILE') or os.path.join(LAB_DIR, 'profile.json')
+REPORT_DIR = os.path.join(LAB_DIR, '实验报告输出')
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 PORTAL_PORTS = (8700, 8730)              # 入口页优先用 8700，被占了往后找
 
@@ -383,6 +385,112 @@ def _module_payload():
     return out
 
 
+# ---------------------------------------------------------------- 报告与 PDF
+def _valid_report_path(path, ext):
+    if not path:
+        return None
+    real = os.path.abspath(path)
+    root = os.path.abspath(REPORT_DIR)
+    try:
+        if os.path.commonpath([real, root]) != root:
+            return None
+    except ValueError:
+        return None
+    if not real.lower().endswith(ext) or not os.path.isfile(real):
+        return None
+    return real
+
+
+def _reports_payload():
+    rows = []
+    if os.path.isdir(REPORT_DIR):
+        for folder in sorted(os.listdir(REPORT_DIR)):
+            fdir = os.path.join(REPORT_DIR, folder)
+            if not os.path.isdir(fdir):
+                continue
+            names = [n for n in os.listdir(fdir)
+                     if n.lower().endswith('.docx') and not n.startswith('~$')]
+            for name in names:
+                docx = os.path.join(fdir, name)
+                stem = os.path.splitext(docx)[0]
+                pdf = stem + '.pdf'
+                try:
+                    stat = os.stat(docx)
+                except OSError:
+                    continue
+                rows.append({
+                    'name': name,
+                    'folder': folder,
+                    'docx': docx,
+                    'pdf': pdf if os.path.exists(pdf) else None,
+                    'mtime': time.strftime('%Y-%m-%d %H:%M',
+                                           time.localtime(stat.st_mtime)),
+                    'size': stat.st_size,
+                })
+    rows.sort(key=lambda r: r['mtime'], reverse=True)
+    return {'ok': True, 'dir': REPORT_DIR, 'reports': rows[:200]}
+
+
+def _convert_pdf(payload):
+    docx = _valid_report_path((payload or {}).get('docx'), '.docx')
+    if not docx:
+        return {'ok': False, 'error': '报告路径无效'}, 400
+    try:
+        sys.path.insert(0, LAB_DIR)
+        from _core import pdf as pdf_export
+        pdf = pdf_export.convert(docx)
+    except Exception as exc:                     # noqa: BLE001
+        return {'ok': False, 'error': str(exc)}, 400
+    return {'ok': True, 'pdf': pdf,
+            'url': '/api/pdf/file?path=' + urllib.parse.quote(pdf)}, 200
+
+
+# ---------------------------------------------------------------- 个人档案
+def _load_profile():
+    data = {}
+    try:
+        with open(PROFILE_PATH, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    out = {k: str(data.get(k) or '').strip()
+           for k in ('student_name', 'student_id', 'group', 'group_no')}
+    dirs = data.get('data_dirs')
+    out['data_dirs'] = dirs if isinstance(dirs, dict) else {}
+    return out
+
+
+def _profile_payload():
+    modules = [{
+        'key': mod['key'], 'title': mod['title'], 'tool': mod.get('tool'),
+        'installed': _installed(mod),
+    } for mod in MODULES if mod.get('tool')]
+    return {'ok': True, 'profile': _load_profile(), 'modules': modules,
+            'path': PROFILE_PATH}
+
+
+def _save_profile(payload):
+    prof = payload.get('profile') if isinstance(payload, dict) else None
+    if not isinstance(prof, dict):
+        prof = {}
+    known = {mod['tool'] for mod in MODULES if mod.get('tool')}
+    dirs = prof.get('data_dirs')
+    clean_dirs = {}
+    if isinstance(dirs, dict):
+        for key, value in dirs.items():
+            if key in known and isinstance(value, str) and value.strip():
+                clean_dirs[key] = value.strip()
+    data = {k: str(prof.get(k) or '').strip()
+            for k in ('student_name', 'student_id', 'group', 'group_no')}
+    data['data_dirs'] = clean_dirs
+    with open(PROFILE_PATH, 'w', encoding='utf-8') as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write('\n')
+    return {'ok': True, 'profile': data, 'path': PROFILE_PATH}
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = 'PChemPortal/1.0'
@@ -418,6 +526,17 @@ class Handler(BaseHTTPRequestHandler):
                                    'lab_dir': LAB_DIR,
                                    'output_dir': os.path.join(LAB_DIR, '实验报告输出'),
                                    'modules': _module_payload()})
+            if u.path == '/api/profile':
+                return self._json(_profile_payload())
+            if u.path == '/api/reports':
+                return self._json(_reports_payload())
+            if u.path == '/api/pdf/file':
+                q = urllib.parse.parse_qs(u.query)
+                path = _valid_report_path((q.get('path') or [''])[0], '.pdf')
+                if not path:
+                    return self._json({'ok': False, 'error': 'PDF 不存在'}, 404)
+                with open(path, 'rb') as fh:
+                    return self._send(200, fh.read(), 'application/pdf')
             if u.path == '/api/start':
                 q = urllib.parse.parse_qs(u.query)
                 key = (q.get('key') or [''])[0]
@@ -433,7 +552,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'ok': False, 'error': str(exc)}, 400)
 
     def do_POST(self):
-        return self.do_GET()
+        u = urllib.parse.urlparse(self.path)
+        try:
+            if u.path == '/api/profile':
+                return self._json(_save_profile(self._body()))
+            if u.path == '/api/pdf':
+                result, code = _convert_pdf(self._body())
+                return self._json(result, code)
+            return self.do_GET()
+        except Exception as exc:  # noqa: BLE001
+            return self._json({'ok': False, 'error': str(exc)}, 400)
+
+    def _body(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        if not n:
+            return {}
+        return json.loads(self.rfile.read(n).decode('utf-8'))
 
     def _start(self, key, force):
         mod = next((m for m in MODULES if m['key'] == key), None)
@@ -490,6 +624,7 @@ def main():
     open_browser = True
     if '--no-browser' in argv:
         open_browser = False
+    warm_all = '--warm-all' in argv
     existing = find_portal_port()
     if existing:
         # 已经开着了：再点一次快捷方式只是把入口页重新打开，不再起一套服务
@@ -513,20 +648,22 @@ def main():
     STATE['httpd'] = httpd
     url = 'http://127.0.0.1:%d' % port
     print('  请在浏览器打开：%s' % url)
+    print('  模块按需启动：点卡片或「启动这个模块」时才拉起（--warm-all 可预启动全部）。')
     print('  停止服务：入口页点「停止全部服务」，或双击 停止服务.vbs。')
     print('  运行日志：%s' % LOG_PATH)
     print('=' * 60)
 
-    # 入口页与浏览器立即就绪；模块在后台线程并行拉起，
-    # 入口页每几秒轮询一次 /api/modules，卡片逐个变绿，不用干等。
-    def _launch(mod):
-        try:
-            _start_module(mod)
-        except Exception as exc:  # noqa: BLE001
-            print('  [FAIL] %s: %s' % (mod['title'], exc))
+    # 默认不预启动任何模块：点卡片时再由 /api/start 拉起，避免一次常驻 11 个进程。
+    # 保留 --warm-all 给需要“全部立刻可用”的场合。
+    if warm_all:
+        def _launch(mod):
+            try:
+                _start_module(mod)
+            except Exception as exc:  # noqa: BLE001
+                print('  [FAIL] %s: %s' % (mod['title'], exc))
 
-    for mod in [m for m in MODULES if _installed(m)]:
-        threading.Thread(target=_launch, args=(mod,), daemon=True).start()
+        for mod in [m for m in MODULES if _installed(m)]:
+            threading.Thread(target=_launch, args=(mod,), daemon=True).start()
 
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

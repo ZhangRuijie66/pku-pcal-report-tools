@@ -203,7 +203,8 @@
         </div>
     </div>
 
-    <script>
+    <script src="/static/draft.js"></script>
+<script>
         let currentState = null;
 
         async function fetchState() {
@@ -250,8 +251,8 @@
             }
         }
 
-        async function saveConfig() {
-            const config = {
+        function readConfig() {
+            return {
                 student_name: document.getElementById('student_name').value,
                 student_id: document.getElementById('student_id').value,
                 group: document.getElementById('group').value,
@@ -260,6 +261,24 @@
                 room_temp: parseFloat(document.getElementById('room_temp').value),
                 pressure: parseFloat(document.getElementById('pressure').value),
             };
+        }
+
+        function applyConfig(c) {
+            c = c || {};
+            ['student_name', 'student_id', 'group', 'group_no', 'date'].forEach(k => {
+                if (c[k] !== undefined && c[k] !== null) {
+                    document.getElementById(k).value = c[k];
+                }
+            });
+            ['room_temp', 'pressure'].forEach(k => {
+                if (c[k] !== undefined && c[k] !== null) {
+                    document.getElementById(k).value = c[k];
+                }
+            });
+        }
+
+        async function saveConfig() {
+            const config = readConfig();
 
             try {
                 const res = await fetch('/api/config', {
@@ -287,6 +306,7 @@
                 const data = await res.json();
                 if (data.ok) {
                     showStatus('报告已生成: ' + data.path, 'success');
+                    if (window.PcalDraft) PcalDraft.clear();
                 } else {
                     showStatus('生成失败: ' + data.error, 'error');
                 }
@@ -302,7 +322,21 @@
         }
 
         // 初始化
-        fetchState();
+        async function boot() {
+            await fetchState();
+            if (window.PcalDraft) {
+                await PcalDraft.init({
+                    key: 'pcal-draft-magnetic-v1',
+                    read: () => ({config: readConfig()}),
+                    apply: async (d) => {
+                        applyConfig(d.config || {});
+                        await saveConfig();
+                        await fetchState();
+                    },
+                });
+            }
+        }
+        boot();
     </script>
 </body>
 </html>

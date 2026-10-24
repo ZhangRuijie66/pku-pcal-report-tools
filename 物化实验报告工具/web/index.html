@@ -62,6 +62,18 @@ body{margin:0;background:var(--bg);color:var(--ink);
 .note ol{margin:6px 0 0 20px;padding:0}
 .note li{margin:3px 0}
 .note code{background:#f2f4f7;padding:1px 6px;border-radius:5px;font-size:12px}
+.profile-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px}
+.profile-fields label,.profile-dirs label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink2)}
+.profile-fields input,.profile-dirs input{border:1px solid var(--line);border-radius:8px;
+  padding:6px 9px;font:inherit;color:var(--ink);background:#fff}
+.profile-dirs{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:8px 18px;margin-top:12px}
+.profile-dirs .dir{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center}
+.profile-dirs .dir span{font-size:12.5px;color:var(--ink2)}
+details.note summary{cursor:pointer;font-weight:600;color:var(--ink)}
+.report{display:flex;gap:12px;align-items:center;justify-content:space-between;
+  border-top:1px solid var(--line);padding:9px 0;font-size:13px}
+.report .name{font-weight:600}
+.report .meta{color:var(--ink2);font-size:12px;margin-top:2px}
 .toast{position:fixed;right:18px;bottom:18px;background:#1f2328;color:#fff;padding:10px 16px;
   border-radius:9px;opacity:0;transform:translateY(8px);transition:.25s;z-index:60;max-width:62ch}
 .toast.on{opacity:1;transform:none}
@@ -92,12 +104,45 @@ body{margin:0;background:var(--bg);color:var(--ink);
     <button class="btn danger" id="btnStop">停止全部服务</button>
   </div>
 
+  <details class="note" id="profilePanel">
+    <summary>个人档案 / 年度数据目录</summary>
+    <p class="status" style="margin:8px 0 0">
+      这里的姓名、学号、组别、组号会覆盖各模块 <code>settings.json</code> 里的同名字段；
+      各模块数据目录留空时使用模块自己的默认值。保存后刷新对应模块页面即可生效。
+    </p>
+    <div class="profile-fields">
+      <label>姓名<input id="p_student_name" autocomplete="name"></label>
+      <label>学号<input id="p_student_id" autocomplete="off"></label>
+      <label>组别<input id="p_group" autocomplete="off"></label>
+      <label>组号<input id="p_group_no" autocomplete="off"></label>
+    </div>
+    <div class="profile-dirs" id="profileDirs"></div>
+    <div class="bar" style="margin:12px 0 0">
+      <button class="btn primary" id="btnProfileSave">保存档案</button>
+      <span class="status" id="profilePath"></span>
+    </div>
+  </details>
+
+  <details class="note" id="reportPanel">
+    <summary>报告输出 / PDF 预览</summary>
+    <p class="status" style="margin:8px 0 0">
+      生成 docx 后在这里点「预览 PDF」；首次用本机 Word 转换，约 10–30 秒（Word 启动），
+      之后会复用同目录的 PDF。缺少 Word 时会给出提示，可直接用 Word 另存为 PDF。
+    </p>
+    <div class="bar" style="margin:10px 0 0">
+      <button class="btn" id="btnReportsRefresh">刷新列表</button>
+      <span class="status" id="reportCount"></span>
+    </div>
+    <div id="reportList"></div>
+  </details>
+
   <div class="grid" id="grid"></div>
 
   <div class="note">
     <h3>怎么用</h3>
     <ol>
-      <li>点上面任意一张<b>绿色圆点</b>的卡片，就进入该实验的交互界面（在新标签页打开）。</li>
+      <li>点卡片上的<b>「启动这个模块」</b>（首次约 2–4 秒，启动后会自动打开实验界面）；
+          已经在运行的模块直接点<b>「进入实验界面」</b>。</li>
       <li>在实验界面里选好数据文件夹 → 核对取点 → 「一键生成报告 (.docx)」，
           报告写到 <code id="noteOutDir">实验报告输出\</code> 里（每份报告一个子文件夹，
           全部实验共用这一个目录）。</li>
@@ -183,7 +228,7 @@ function render(data) {
   $('grid').innerHTML = data.modules.map(card).join('');
   $('status').textContent = `${live} 个模块可用 · ${new Date().toLocaleTimeString()}`;
   document.querySelectorAll('[data-start]').forEach(b =>
-    b.addEventListener('click', () => start(b.dataset.start, false)));
+    b.addEventListener('click', () => start(b.dataset.start, false, true)));
   document.querySelectorAll('[data-stop]').forEach(b =>
     b.addEventListener('click', () => stop(b.dataset.stop)));
 }
@@ -193,11 +238,19 @@ async function load() {
   if (!j.ok) return toast(j.error || '读取失败');
   render(j);
 }
-async function start(key, force) {
+async function start(key, force, openWhenReady) {
+  const win = openWhenReady ? window.open('', '_blank') : null;
   $('status').textContent = '正在启动…';
   const j = await api('/api/start?key=' + encodeURIComponent(key) + (force ? '&force=1' : ''));
-  if (!j.ok) { toast('启动失败：' + (j.error || ''), 6000); }
-  else { toast('已启动'); }
+  if (!j.ok) {
+    if (win) win.close();
+    toast('启动失败：' + (j.error || ''), 6000);
+  } else {
+    const m = (j.modules || []).find(x => x.key === key);
+    if (win && m && m.url) win.location = m.url;
+    else if (win) win.close();
+    toast('已启动');
+  }
   await load();
 }
 async function stop(key) {
@@ -205,6 +258,101 @@ async function stop(key) {
   toast('已停止');
   await load();
 }
+
+async function loadProfile() {
+  const j = await api('/api/profile');
+  if (!j.ok) return toast(j.error || '读取个人档案失败');
+  const p = j.profile || {};
+  ['student_name', 'student_id', 'group', 'group_no'].forEach(k => {
+    const el = $('p_' + k);
+    if (el) el.value = p[k] || '';
+  });
+  const dirs = p.data_dirs || {};
+  $('profileDirs').innerHTML = (j.modules || []).map(m => {
+    const v = dirs[m.tool] || '';
+    return `<label class="dir"><span>${esc(m.title)}</span>
+      <input data-tool="${esc(m.tool)}" value="${esc(v)}"
+             placeholder="留空 = 用模块自己的默认目录"></label>`;
+  }).join('');
+  $('profilePath').textContent = '配置文件：' + (j.path || '—');
+}
+
+async function saveProfile() {
+  const profile = {
+    student_name: $('p_student_name').value.trim(),
+    student_id: $('p_student_id').value.trim(),
+    group: $('p_group').value.trim(),
+    group_no: $('p_group_no').value.trim(),
+    data_dirs: {},
+  };
+  document.querySelectorAll('#profileDirs input[data-tool]').forEach(inp => {
+    const v = inp.value.trim();
+    if (v) profile.data_dirs[inp.dataset.tool] = v;
+  });
+  const r = await fetch('/api/profile', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile }),
+  });
+  const j = await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+  if (!j.ok) return toast('保存失败：' + (j.error || ''));
+  toast('档案已保存；刷新模块页面后生效', 5000);
+  await loadProfile();
+}
+
+async function loadReports() {
+  const j = await api('/api/reports');
+  if (!j.ok) return;
+  $('reportCount').textContent = `${(j.reports || []).length} 份 docx · ${j.dir || ''}`;
+  if (!(j.reports || []).length) {
+    $('reportList').innerHTML = '<p class="status">实验报告输出目录里还没有 docx。</p>';
+    return;
+  }
+  $('reportList').innerHTML = j.reports.map(r => `
+    <div class="report">
+      <div>
+        <div class="name">${esc(r.name)}</div>
+        <div class="meta">${esc(r.folder)} · ${esc(r.mtime)} · ${Math.round(r.size / 1024)} KB${r.pdf ? ' · PDF 已生成' : ''}</div>
+      </div>
+      <button class="btn" data-pdf="${esc(r.docx)}">预览 PDF</button>
+    </div>`).join('');
+  document.querySelectorAll('[data-pdf]').forEach(b =>
+    b.addEventListener('click', () => previewPdf(b.dataset.pdf, b)));
+}
+
+async function previewPdf(docx, btn) {
+  const win = window.open('', '_blank');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '转换中…';
+  try {
+    const r = await fetch('/api/pdf', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docx }),
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      if (win) win.close();
+      toast('PDF 转换失败：' + (j.error || ''), 9000);
+    } else if (win) {
+      win.location = j.url;
+    } else {
+      toast('PDF 已生成：' + j.pdf, 6000);
+    }
+  } catch (e) {
+    if (win) win.close();
+    toast('PDF 转换失败：' + e.message, 9000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+$('btnReportsRefresh').addEventListener('click', loadReports);
+loadReports();
+setInterval(() => { if (!document.hidden) loadReports(); }, 20000);
+
+$('btnProfileSave').addEventListener('click', saveProfile);
+loadProfile();
 
 $('btnAll').addEventListener('click', async () => {
   const j = await api('/api/modules');

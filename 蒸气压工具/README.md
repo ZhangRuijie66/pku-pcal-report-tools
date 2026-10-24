@@ -93,3 +93,11 @@ python run.py --test
     ├─ docxkit.py / omml.py   排版（与本套件其它工具同源）
     └─ server.py              本地网页服务（只监听 127.0.0.1）
 ```
+
+## 2026-10-24 工程化更新
+
+- 导出报告时同目录写 `workspace.json`（配置、数据文件路径与 SHA256、取点、版本），便于以后复现；
+- 入口页「个人档案 / 年度数据目录」统一管理姓名/学号和本模块的数据目录；
+- PDF 预览在入口页「报告输出 / PDF 预览」，用本机 Word 转换。
+- 编辑中的内容会自动存草稿，刷新页面会提示恢复；
+- 回归测试：`python tests/run_tests.py`；核心同步：`python _core/sync_core.py --check`。

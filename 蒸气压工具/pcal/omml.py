@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# canonical 版本：由 _core/sync_core.py 同步到各实验工具的 pcal/omml.py。
 """
 极简 LaTeX -> OMML（Office Math Markup Language）转换器。
 
@@ -35,6 +36,7 @@ SYMBOLS = {
     r'\approx': '≈', r'\equiv': '≡', r'\propto': '∝', r'\infty': '∞',
     r'\rightarrow': '→', r'\to': '→', r'\leftarrow': '←', r'\Rightarrow': '⇒',
     r'\partial': '∂', r'\nabla': '∇', r'\prime': '′',
+    r'\ominus': '⊖', r'\oplus': '⊕', r'\circ': '∘',
     r'\ldots': '…', r'\cdots': '⋯', r'\dots': '…',
     r'\degree': '°', r'\circ': '∘', r'\angle': '∠',
     r'\sum': '∑', r'\prod': '∏', r'\int': '∫',
@@ -358,7 +360,7 @@ UPRIGHT_SUBSCRIPTS = {
     'Ni', 'Fe', 'Cu', 'Zn', 'Al', 'Ca', 'Mg', 'Na', 'Cl', 'Br', 'Ag', 'Pt', 'Hg', 'Pb',
     # 英文缩写
     'cot', 'tot', 'sam', 'Ni-1', 'Ni-2', 'max', 'min', 'out', 'in',
-    # 相变说明性下标（Δ_vap H_m 一类，蒸气压实验）
+    # 相变说明性下标（Δ_vap H_m 一类）
     'vap', 'fus', 'sub',
 }
 
@@ -395,20 +397,39 @@ def _simple_sub_xml(txt):
         s = m.group(0)
         if not s.strip():
             continue
-        sty = 'i' if (s.isalpha() and len(s) == 1) else 'p'
+        # 重复索引 i/j（h_{ii}、ε_{ij} 这类）是变量本身，排斜体；
+        # 其余多字母下标是说明性的，排正体（sam / tot / vap …）。
+        if s.isalpha() and (len(s) == 1 or all(c in 'ij' for c in s)):
+            sty = 'i'
+        else:
+            sty = 'p'
         out.append(_mrun(s, sty))
     return ''.join(out) or None
 
 
 # ---------------------------------------------------------------- 单位
 # 单位按排版规范要用正体；这里列出本报告会用到的单位符号。
-_UNIT_MULTI = ('mol', 'kJ', 'Pa', 'kPa', 'MPa', 'mL', 'kg', 'min', 'cal', 'atm')
+_UNIT_MULTI = ('mol', 'kJ', 'Pa', 'kPa', 'MPa', 'mL', 'kg', 'min', 'cal', 'atm',
+               'cm', 'dm', 'mm', 'pF')
 # 单字母单位。只收不会与常用物理量变量混淆的：
 # 不收 V/W/N/C/A（既可能是单位也可能是变量），也不收 k/c（可能是变量）。
-_UNIT_SINGLE = {'J', 'g', 'K', 's', 'm', 'L', 'h', 'l', 'N', 'A'}
+_UNIT_SINGLE = {'J', 'g', 'K', 's', 'm', 'L', 'h', 'l', 'N', 'A', 'S', 'D'}
 _UNIT_TAIL = re.compile(r'(?:\^\{[^}]*\}|_\{[^}]*\})*')
 # 状态符号 (s) (l) (g) (aq)
 _STATE = ('(s)', '(l)', '(g)', '(aq)')
+
+
+def _tail_is_symbolic(s, k):
+    """单位后面若挂着「符号性上标」（⊖、∘、∞ 这类非数值指数），
+    它就不是单位，而是带标准态/无穷记号的变量（如平衡常数 K^{⊖}）。
+    数值指数（-1、2）仍是单位（mol^{-1}、m^{2}）。"""
+    m = re.match(r'\^\{([^}]*)\}', s[k:])
+    if not m:
+        return False
+    body = m.group(1).strip()
+    if not body:
+        return False
+    return not re.fullmatch(r'[+-]?[0-9.]+', body)
 
 
 def _unit_token(s, i):
@@ -418,11 +439,13 @@ def _unit_token(s, i):
             # 后面必须紧跟分隔符 / 上下标 / 行尾，避免把 'molten' 之类切开
             k = i + len(u)
             if k >= len(s) or s[k] in ' \t\\^_.,;)}+-=·':
-                return len(u)
+                if not _tail_is_symbolic(s, k):
+                    return len(u)
     if i < len(s) and s[i] in _UNIT_SINGLE:
         k = i + 1
         if k >= len(s) or s[k] in ' \t\\^_.,;)}+-=·':
-            return 1
+            if not _tail_is_symbolic(s, k):
+                return 1
     return 0
 
 
