@@ -28,6 +28,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # 每个工具额外需要的第三方库（缺了就开个窗口 pip 安装）
 DEPS = {
     '化学动力学工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
+    '蒸气压工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
     '高斯计算工具': ['rdkit', 'paramiko'],
 }
 DEFAULT_DEPS = ['numpy', 'scipy', 'matplotlib', 'docx']
