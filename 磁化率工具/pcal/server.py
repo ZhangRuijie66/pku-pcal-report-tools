@@ -2,6 +2,7 @@
 """磁化率测定实验报告生成 —— 本地网页服务。"""
 from __future__ import annotations
 
+import io
 import json
 import os
 import socket
@@ -38,13 +39,13 @@ PERSIST_KEYS = ['student_name', 'student_id', 'group', 'group_no',
 
 def default_config():
     return {
-        'student_name': '张瑞杰',
-        'student_id': '2400011877',
-        'group': '3',
-        'group_no': '8',
-        'date': '2026-10-24',
-        'room_temp': 22.0,
-        'pressure': 101.3,
+        'student_name': '',
+        'student_id': '',
+        'group': '',
+        'group_no': '',
+        'date': '',
+        'room_temp': None,
+        'pressure': None,
         'data_dir': '',
     }
 
@@ -156,6 +157,33 @@ def _export(cfg, data, progress=None):
     return out_path, an
 
 
+# ---------------------------------------------------------------- 绘图预览
+def _placeholder_png():
+    fig, ax = plotting.plt.subplots(figsize=(5, 3), dpi=100)
+    ax.text(0.5, 0.5, '暂无可绘制的数据', ha='center', va='center',
+            fontsize=14, color='#98a2b3')
+    ax.axis('off')
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight')
+    plotting.plt.close(fig)
+    return buf.getvalue()
+
+
+def _preview_png(kind, chart):
+    if not chart:
+        return _placeholder_png()
+    buf = io.BytesIO()
+    if kind == 'mu':
+        plotting.plot_magnetic_moment(chart, buf)
+    elif kind == 'n':
+        plotting.plot_unpaired_electrons(chart, buf)
+    elif kind == 'chi_m':
+        plotting.plot_molar_susceptibility(chart, buf)
+    else:
+        return _placeholder_png()
+    return buf.getvalue() or _placeholder_png()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
@@ -188,6 +216,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _png(self, data):
+        self.send_response(200)
+        self.send_header('Content-Type', 'image/png')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -199,6 +235,11 @@ class Handler(BaseHTTPRequestHandler):
             cfg = default_config_with_saved(load_settings())
             an = _analysis(cfg)
             self._json(_summary(an))
+        elif path == '/api/preview':
+            cfg = default_config_with_saved(load_settings())
+            an = _analysis(cfg)
+            kind = (query.get('kind') or ['chi_m'])[0]
+            self._png(_preview_png(kind, an.get('chart') or []))
         elif path == '/api/export':
             cfg = default_config_with_saved(load_settings())
             data = _current_data()
@@ -208,6 +249,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 traceback.print_exc()
                 self._json({'ok': False, 'error': str(e)}, 500)
+        elif path.startswith('/static/'):
+            self._html(path[len('/static/'):])
         elif path.startswith('/web/'):
             self._html(path[1:])
         else:
@@ -231,12 +274,21 @@ class Handler(BaseHTTPRequestHandler):
                     cfg[key] = value
             save_settings(cfg)
             self._json({'ok': True, 'config': cfg})
-        elif path == '/api/data':
-            data = payload.get('data', magnetic.sample_data())
+        elif path == '/api/sample':
+            data = magnetic.sample_data()
             save_data(DATA_FILE, data)
             cfg = default_config_with_saved(load_settings())
             an = _analysis(cfg, data, force=True)
             self._json(_summary(an))
+        elif path == '/api/data':
+            try:
+                data = payload.get('data', magnetic.sample_data())
+                save_data(DATA_FILE, data)
+                cfg = default_config_with_saved(load_settings())
+                an = _analysis(cfg, data, force=True)
+                self._json(_summary(an))
+            except Exception as exc:                 # noqa: BLE001
+                self._json({'ok': False, 'error': '数据无法计算：%s' % exc}, 400)
         elif path == '/api/export':
             cfg = default_config_with_saved(load_settings())
             for key, value in payload.get('config', {}).items():

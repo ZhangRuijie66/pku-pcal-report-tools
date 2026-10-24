@@ -1,342 +1,149 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>磁化率的测定 - 实验报告生成工具</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-            background: #f5f5f5;
-            color: #333;
-            line-height: 1.6;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px 0;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        header h1 { font-size: 2em; margin-bottom: 10px; }
-        header p { opacity: 0.9; }
-        .card {
-            background: white;
-            border-radius: 8px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        .card h2 {
-            color: #667eea;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #f0f0f0;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-        }
-        .form-group input, .form-group select {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        .form-group input:focus, .form-group select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        .form-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-        }
-        .btn {
-            display: inline-block;
-            padding: 12px 30px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-size: 16px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .btn:hover {
-            background: #5568d3;
-            transform: translateY(-2px);
-        }
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        .btn-secondary {
-            background: #6c757d;
-        }
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-        .result-box {
-            background: #f8f9fa;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            margin-top: 20px;
-            white-space: pre-wrap;
-            font-family: "Consolas", monospace;
-            font-size: 13px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        .status {
-            padding: 10px 15px;
-            border-radius: 4px;
-            margin-bottom: 15px;
-        }
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .hint {
-            font-size: 12px;
-            color: #666;
-            margin-top: 5px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }
-        table th, table td {
-            padding: 10px;
-            text-align: left;
-            border: 1px solid #ddd;
-        }
-        table th {
-            background: #f8f9fa;
-            font-weight: 600;
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>磁化率的测定 · 报告生成器</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --text:#1d2430; --sub:#5b6472;
+  --accent:#1f6feb; --accent2:#0b4fbf; --ok:#1a7f37; --warn:#b45309; --err:#b42318;
+  --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.06),0 6px 18px rgba(16,24,40,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei","Segoe UI",system-ui,sans-serif}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;padding:10px 18px;
+  background:#fff;border-bottom:1px solid var(--line);box-shadow:0 1px 2px rgba(16,24,40,.04)}
+header h1{font-size:16px;margin:0;font-weight:700;white-space:nowrap}
+header .sub{color:var(--sub);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header .grow{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 11px;
+  border:1px solid var(--line);background:#fff;border-radius:8px;color:var(--text);
+  font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#c9d1da;background:#fafbfc}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+main{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;padding:14px 18px 40px;align-items:start}
+.panel{display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px}
+.card h2{font-size:13px;margin:0 0 8px;color:var(--sub);font-weight:700;letter-spacing:.02em}
+.field{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.field>label{font-size:12px;color:var(--sub)}
+.field input[type=text],.field input[type=number],.field select{
+  width:100%;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:7px;
+  font:inherit;background:#fff;color:var(--text)}
+.field input:focus,.field select:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btnrow{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
+.hint{color:var(--sub);font-size:12px;margin:6px 0 0;line-height:1.55}
+.hint code{background:#f1f3f5;border-radius:4px;padding:0 4px;word-break:break-all}
+.content{display:flex;flex-direction:column;gap:14px;min-width:0}
+.chartbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.chartbar select{padding:5px 8px;border:1px solid var(--line);border-radius:7px;font:inherit;background:#fff;max-width:240px}
+.chartbox{background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px;min-height:300px;display:flex;align-items:center;justify-content:center;overflow:auto}
+.chartbox img{max-width:100%;max-height:520px;display:block}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+th{background:#f7f8fa;color:var(--sub);font-weight:600}
+.scroll{overflow-x:auto}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fafbfc}
+.stat .k{font-size:12px;color:var(--sub)}
+.stat .v{font-size:19px;font-weight:700;margin-top:2px}
+.pre{white-space:pre-wrap;font:12.5px/1.65 Consolas,"Courier New",monospace;background:#fafbfc;
+  border:1px solid var(--line);border-radius:8px;padding:12px;max-height:420px;overflow:auto;margin:0}
+.muted{color:var(--sub)}
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:center;justify-content:center;z-index:50}
+.overlay.show{display:flex}
+.overlay .box{background:#fff;border-radius:12px;padding:18px 22px;display:flex;align-items:center;gap:12px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.spin{width:18px;height:18px;border:3px solid #dbe3ee;border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#111827;color:#fff;
+  padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (max-width:1150px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
+</style>
 </head>
 <body>
-    <header>
-        <h1>磁化率的测定</h1>
-        <p>古埃磁天平法测定固体物质的磁化率</p>
-    </header>
+<header>
+  <h1>磁化率的测定 · 报告生成器</h1>
+  <span class="sub" id="status">正在初始化…</span>
+  <span class="grow"></span>
+  <a class="btn" id="btnHome" href="/" style="display:none">← 返回入口</a>
+  <button class="btn" id="btnSaveDefault">存为默认</button>
+  <button class="btn" id="btnRecalc">重新计算</button>
+  <button class="btn primary" id="btnExport">一键生成报告 (.docx)</button>
+</header>
 
-    <div class="container">
-        <div class="card">
-            <h2>封面信息</h2>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>姓名</label>
-                    <input type="text" id="student_name" value="张瑞杰">
-                </div>
-                <div class="form-group">
-                    <label>学号</label>
-                    <input type="text" id="student_id" value="2400011877">
-                </div>
-                <div class="form-group">
-                    <label>组别</label>
-                    <input type="text" id="group" value="3">
-                </div>
-                <div class="form-group">
-                    <label>组号</label>
-                    <input type="text" id="group_no" value="8">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>实验日期</label>
-                    <input type="text" id="date" value="2026-10-24">
-                </div>
-                <div class="form-group">
-                    <label>室温 / ℃</label>
-                    <input type="number" id="room_temp" value="22.0" step="0.1">
-                </div>
-                <div class="form-group">
-                    <label>大气压强 / kPa</label>
-                    <input type="number" id="pressure" value="101.3" step="0.1">
-                </div>
-            </div>
-        </div>
+<main>
+  <aside class="panel">
+    <section class="card">
+      <h2>数据</h2>
+      <div class="btnrow">
+        <button class="btn" id="btnSample">载入示例数据</button>
+        <button class="btn" id="btnSaveData">保存数据</button>
+      </div>
+      <div class="field">
+        <label>导入 JSON 数据</label>
+        <input type="file" id="fileInput" accept=".json" style="padding:4px 0">
+      </div>
+      <p class="hint">数据保存在 <code id="dataFile">—</code>，可随工具一起拷走。
+        JSON 结构：<code>temperature_C</code> + <code>tube</code> /
+        <code>mohr_salt</code> / 各样品，每项含 <code>m_zero</code>、<code>m_field</code>。</p>
+    </section>
 
-        <div class="card">
-            <h2>实验数据</h2>
-            <div class="form-group">
-                <label>数据文件</label>
-                <input type="file" id="data_file" accept=".json">
-                <div class="hint">支持 JSON 格式的数据文件</div>
-            </div>
-            <button class="btn btn-secondary" onclick="loadSampleData()">载入示例数据</button>
-        </div>
+    <section class="card">
+      <h2>封面 / 实验条件</h2>
+      <div class="grid2">
+        <div class="field"><label>姓名</label><input type="text" id="student_name"></div>
+        <div class="field"><label>学号</label><input type="text" id="student_id"></div>
+        <div class="field"><label>组别</label><input type="text" id="group"></div>
+        <div class="field"><label>组号</label><input type="text" id="group_no"></div>
+        <div class="field"><label>实验日期</label><input type="text" id="date"></div>
+        <div class="field"><label>室温 /℃</label><input type="number" step="0.1" id="room_temp"></div>
+        <div class="field"><label>大气压强 /kPa</label><input type="number" step="0.1" id="pressure"></div>
+      </div>
+      <p class="hint">姓名/学号也可以由入口页「个人档案」统一填写；这里「存为默认」只影响本模块。</p>
+    </section>
+  </aside>
 
-        <div class="card">
-            <h2>操作</h2>
-            <button class="btn" onclick="generateReport()">生成报告</button>
-            <button class="btn btn-secondary" onclick="saveConfig()">保存配置</button>
-            <div id="status"></div>
-        </div>
+  <section class="content">
+    <section class="card">
+      <h2>结果摘要</h2>
+      <div class="summary" id="summary"><span class="muted">—</span></div>
+    </section>
 
-        <div class="card">
-            <h2>计算结果</h2>
-            <div id="results" class="result-box">
-                点击"载入示例数据"或上传数据文件后，计算结果将显示在这里。
-            </div>
-        </div>
-    </div>
+    <section class="card">
+      <h2>各样品磁化率与磁矩</h2>
+      <div class="scroll"><table id="dataTable"></table></div>
+    </section>
 
-    <script src="/static/draft.js"></script>
-<script>
-        let currentState = null;
+    <section class="card">
+      <h2>对比图</h2>
+      <div class="chartbar">
+        <select id="chartKind">
+          <option value="chi_m">摩尔磁化率 χ_m</option>
+          <option value="mu">分子磁矩 μ</option>
+          <option value="n">未成对电子数 n</option>
+        </select>
+        <span class="hint" id="chartHint"></span>
+      </div>
+      <div class="chartbox"><img id="chart" alt="磁化率对比图"></div>
+    </section>
 
-        async function fetchState() {
-            try {
-                const res = await fetch('/api/state');
-                const data = await res.json();
-                currentState = data;
-                updateUI(data);
-            } catch (e) {
-                console.error('获取状态失败:', e);
-            }
-        }
+    <section class="card">
+      <h2>计算明细</h2>
+      <pre class="pre" id="formatted">—</pre>
+    </section>
+  </section>
+</main>
 
-        function updateUI(state) {
-            if (!state || !state.ok) return;
+<div class="toast" id="toast"></div>
+<div class="overlay" id="overlay"><div class="box"><div class="spin"></div><span id="overlayText">处理中…</span></div></div>
 
-            // 更新配置
-            const cfg = state.config || {};
-            document.getElementById('student_name').value = cfg.student_name || '';
-            document.getElementById('student_id').value = cfg.student_id || '';
-            document.getElementById('group').value = cfg.group || '';
-            document.getElementById('group_no').value = cfg.group_no || '';
-            document.getElementById('date').value = cfg.date || '';
-            document.getElementById('room_temp').value = cfg.room_temp || '';
-            document.getElementById('pressure').value = cfg.pressure || '';
-
-            // 更新结果
-            if (state.formatted) {
-                document.getElementById('results').textContent = state.formatted;
-            }
-        }
-
-        async function loadSampleData() {
-            showStatus('正在载入示例数据...', 'info');
-            try {
-                const res = await fetch('/api/state');
-                const data = await res.json();
-                if (data.ok) {
-                    showStatus('示例数据已载入', 'success');
-                    updateUI(data);
-                }
-            } catch (e) {
-                showStatus('载入失败: ' + e.message, 'error');
-            }
-        }
-
-        function readConfig() {
-            return {
-                student_name: document.getElementById('student_name').value,
-                student_id: document.getElementById('student_id').value,
-                group: document.getElementById('group').value,
-                group_no: document.getElementById('group_no').value,
-                date: document.getElementById('date').value,
-                room_temp: parseFloat(document.getElementById('room_temp').value),
-                pressure: parseFloat(document.getElementById('pressure').value),
-            };
-        }
-
-        function applyConfig(c) {
-            c = c || {};
-            ['student_name', 'student_id', 'group', 'group_no', 'date'].forEach(k => {
-                if (c[k] !== undefined && c[k] !== null) {
-                    document.getElementById(k).value = c[k];
-                }
-            });
-            ['room_temp', 'pressure'].forEach(k => {
-                if (c[k] !== undefined && c[k] !== null) {
-                    document.getElementById(k).value = c[k];
-                }
-            });
-        }
-
-        async function saveConfig() {
-            const config = readConfig();
-
-            try {
-                const res = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({config})
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    showStatus('配置已保存', 'success');
-                }
-            } catch (e) {
-                showStatus('保存失败: ' + e.message, 'error');
-            }
-        }
-
-        async function generateReport() {
-            showStatus('正在生成报告...', 'info');
-            try {
-                const res = await fetch('/api/export', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({})
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    showStatus('报告已生成: ' + data.path, 'success');
-                    if (window.PcalDraft) PcalDraft.clear();
-                } else {
-                    showStatus('生成失败: ' + data.error, 'error');
-                }
-            } catch (e) {
-                showStatus('生成失败: ' + e.message, 'error');
-            }
-        }
-
-        function showStatus(msg, type) {
-            const el = document.getElementById('status');
-            el.className = 'status ' + type;
-            el.textContent = msg;
-        }
-
-        // 初始化
-        async function boot() {
-            await fetchState();
-            if (window.PcalDraft) {
-                await PcalDraft.init({
-                    key: 'pcal-draft-magnetic-v1',
-                    read: () => ({config: readConfig()}),
-                    apply: async (d) => {
-                        applyConfig(d.config || {});
-                        await saveConfig();
-                        await fetchState();
-                    },
-                });
-            }
-        }
-        boot();
-    </script>
+<script src="/static/draft.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

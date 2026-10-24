@@ -21,14 +21,15 @@ class DraftIntegrationTests(unittest.TestCase):
             for call in ('PcalDraft.init(', 'PcalDraft.save()', 'PcalDraft.clear()'):
                 self.assertIn(call, js, '%s 缺少 %s' % (tool, call))
 
-    def test_magnetic_inline_script_uses_draft(self):
+    def test_magnetic_uses_standard_template_and_draft(self):
         tool = '磁化率工具'
         html = (REPO_ROOT / tool / 'web' / 'index.html').read_text(encoding='utf-8')
+        js = (REPO_ROOT / tool / 'web' / 'app.js').read_text(encoding='utf-8')
         self.assertIn('/static/draft.js', html)
-        self.assertIn('PcalDraft.init(', html)
-        self.assertIn('PcalDraft.clear()', html)
-        self.assertIn('function readConfig()', html)
-        self.assertIn('function applyConfig(', html)
+        self.assertIn('/static/app.js', html)
+        for marker in ('PcalDraft.init(', 'PcalDraft.save()', 'PcalDraft.clear()',
+                       'function readConfig()', 'function fillConfig('):
+            self.assertIn(marker, js)
 
     def test_shared_draft_has_safety_guards(self):
         src = (REPO_ROOT / '_core' / 'web_draft.js').read_text(encoding='utf-8')
