@@ -88,8 +88,12 @@ MODULES = [
         'sample': '3 紫外光谱搭建',
     },
     {
-        'key': 'electro', 'title': '电化学实验', 'tool': None, 'port': 8801,
-        'desc': '电动势的测定与电极电势。', 'tags': ['电动势'], 'sample': None,
+        'key': 'electro', 'title': '电化学（循环伏安法）', 'tool': '电化学工具',
+        'port': 8801,
+        'desc': 'CHI 工作站测 N₂/甲醇体系的 CV 曲线：铂电极电化学活性面积、'
+                'ORR/MOR 起始电位，并由扣空白的 ORR+MOR 曲线得到 DMFC 单池的'
+                '极化曲线与最大输出功率。',
+        'tags': ['循环伏安', 'ORR / MOR', 'DMFC 极化曲线'], 'sample': None,
     },
     {
         'key': 'kinetics', 'title': '化学反应动力学探究', 'tool': '化学动力学工具',
