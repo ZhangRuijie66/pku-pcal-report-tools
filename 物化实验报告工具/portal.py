@@ -56,9 +56,12 @@ MODULES = [
         'sample': '2 溶解热',
     },
     {
-        'key': 'conductivity', 'title': '电导率的测定', 'tool': None, 'port': 8751,
-        'desc': '电导率仪测弱电解质电导率，求电离度与电离平衡常数。',
-        'tags': ['电导率', '电离度'], 'sample': None,
+        'key': 'conductivity', 'title': '电解质溶液电导率的测定', 'tool': '电导率工具',
+        'port': 8751,
+        'desc': 'KCl 标定后测 NaNO₃/NaAc/HNO₃/HAc 各 5 个浓度的电导率；'
+                'Kohlrausch 拟合外推 Λm∞，离子独立运动定律得 Λm∞(HAc)，'
+                '求平均法与拟合直线法两种方法求 HAc 的标准电离平衡常数。',
+        'tags': ['电导率', 'Kohlrausch 拟合', 'K° 两种方法'], 'sample': None,
     },
     {
         'key': 'vapor', 'title': '液体饱和蒸气压的测定', 'tool': '蒸气压工具',
