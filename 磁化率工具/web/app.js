@@ -110,9 +110,9 @@ function renderTable(s) {
 }
 
 const CHART_HINT = {
-  chi_m: '各样品摩尔磁化率，单位 10⁻⁶ m³·mol⁻¹',
-  mu: '只画有永久磁矩的样品；反磁性样品不出现在图中',
-  n: '由 μ 反推的未成对电子数；反磁性样品不出现',
+  chi_m: '各样品摩尔磁化率横向散点；灰色点表示 χ_m < 0（反磁）',
+  mu: '反磁性样品没有永久磁矩，以空心点记作 0',
+  n: '由 μ 反推的未成对电子数；反磁性样品以空心点记作 0',
 };
 function drawChart() {
   const kind = $('chartKind').value;

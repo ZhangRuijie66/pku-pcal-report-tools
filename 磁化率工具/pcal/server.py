@@ -32,6 +32,7 @@ from pcal.analysis import run_analysis, format_results
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
 LOCK = threading.Lock()
+PREVIEW_LOCK = threading.Lock()          # matplotlib 不是线程安全的，预览图串行生成
 
 PERSIST_KEYS = ['student_name', 'student_id', 'group', 'group_no',
                 'date', 'room_temp', 'pressure']
@@ -174,11 +175,11 @@ def _preview_png(kind, chart):
         return _placeholder_png()
     buf = io.BytesIO()
     if kind == 'mu':
-        plotting.plot_magnetic_moment(chart, buf)
+        plotting.plot_magnetic_moment(chart, buf, dpi=plotting.DPI_PREVIEW)
     elif kind == 'n':
-        plotting.plot_unpaired_electrons(chart, buf)
+        plotting.plot_unpaired_electrons(chart, buf, dpi=plotting.DPI_PREVIEW)
     elif kind == 'chi_m':
-        plotting.plot_molar_susceptibility(chart, buf)
+        plotting.plot_molar_susceptibility(chart, buf, dpi=plotting.DPI_PREVIEW)
     else:
         return _placeholder_png()
     return buf.getvalue() or _placeholder_png()
@@ -239,7 +240,9 @@ class Handler(BaseHTTPRequestHandler):
             cfg = default_config_with_saved(load_settings())
             an = _analysis(cfg)
             kind = (query.get('kind') or ['chi_m'])[0]
-            self._png(_preview_png(kind, an.get('chart') or []))
+            with PREVIEW_LOCK:
+                png = _preview_png(kind, an.get('chart') or [])
+            self._png(png)
         elif path == '/api/export':
             cfg = default_config_with_saved(load_settings())
             data = _current_data()

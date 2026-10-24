@@ -33,6 +33,13 @@ class MagnetUiTests(unittest.TestCase):
                        'def _preview_png(', 'def _placeholder_png('):
             self.assertIn(marker, src)
 
+    def test_charts_are_scatter_not_bar(self):
+        src = (TOOL / 'pcal' / 'plotting.py').read_text(encoding='utf-8')
+        self.assertIn('ax.scatter(', src)
+        self.assertNotIn('ax.bar(', src)
+        self.assertIn('DPI_PREVIEW', src)
+        self.assertIn('反磁性样品', src)
+
 
 if __name__ == '__main__':
     unittest.main()
