@@ -29,6 +29,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 DEPS = {
     '化学动力学工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
     '蒸气压工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
+    '偶极矩工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
     '高斯计算工具': ['rdkit', 'paramiko'],
 }
 DEFAULT_DEPS = ['numpy', 'scipy', 'matplotlib', 'docx']

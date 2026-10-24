@@ -114,6 +114,14 @@ MODULES = [
         'tags': ['环己烷-乙醇', '折射率工作曲线', '最低恒沸点'],
         'sample': None,
     },
+    {
+        'key': 'dipole', 'title': '稀溶液法测定极性分子的偶极矩', 'tool': '偶极矩工具',
+        'port': 8831,
+        'desc': '桥法测正丁醇/环己烷溶液的电容与密度，Hedestrand 外推求总摩尔'
+                '极化度，结合摩尔折射度得偶极矩 μ。',
+        'tags': ['偶极矩', '摩尔极化度', 'Hedestrand'],
+        'sample': None,
+    },
 ]
 
 STATE = {
