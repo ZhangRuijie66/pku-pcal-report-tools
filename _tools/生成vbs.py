@@ -119,5 +119,6 @@ for folder, name in [(u'物化实验报告工具', u'统一入口'),
                      (u'电导率工具', u'电解质溶液电导率的测定'),
                      (u'蒸气压工具', u'液体饱和蒸气压'),
                      (u'偶极矩工具', u'偶极矩的测定'),
+                     (u'磁化率工具', u'磁化率的测定'),
                      (u'高斯计算工具', u'高斯计算（TD-DFT）')]:
     write(os.path.join(folder, u'启动.vbs'), THIN.replace('%NAME%', name))

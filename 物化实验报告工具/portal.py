@@ -39,6 +39,7 @@ PORTAL_PORTS = (8700, 8730)              # 入口页优先用 8700，被占了�
 
 # ---------------------------------------------------------------- 实验模块登记表
 # ok=True 的模块会随入口一起启动；其余在入口页上显示为「即将支持」。
+# 顺序 = 讲义实验编号顺序（实验一 ~ 实验十一）。
 MODULES = [
     {
         'key': 'combustion', 'title': '燃烧热的测定', 'tool': '燃烧热工具',
@@ -56,55 +57,11 @@ MODULES = [
         'sample': '2 溶解热',
     },
     {
-        'key': 'conductivity', 'title': '电解质溶液电导率的测定', 'tool': '电导率工具',
-        'port': 8751,
-        'desc': 'KCl 标定后测 NaNO₃/NaAc/HNO₃/HAc 各 5 个浓度的电导率；'
-                'Kohlrausch 拟合外推 Λm∞，离子独立运动定律得 Λm∞(HAc)，'
-                '求平均法与拟合直线法两种方法求 HAc 的标准电离平衡常数。',
-        'tags': ['电导率', 'Kohlrausch 拟合', 'K° 两种方法'], 'sample': None,
-    },
-    {
         'key': 'vapor', 'title': '液体饱和蒸气压的测定', 'tool': '蒸气压工具',
         'port': 8761,
         'desc': '动态法测水、静态法测环己烷的沸点–压力数据；克拉贝龙-克劳修斯'
                 '拟合求常压沸点、摩尔蒸发焓、摩尔蒸发熵，并与楚顿规则比较。',
         'tags': ['饱和蒸气压', '克拉贝龙-克劳修斯', '楚顿规则'], 'sample': None,
-    },
-    {
-        'key': 'adsorption', 'title': '溶液表面吸附的测定', 'tool': '表面吸附工具',
-        'port': 8771,
-        'desc': '最大气泡压力法与吊片法测正丁醇溶液的表面张力；'
-                '由 γ–lg c（或 γ–ln c）线性区斜率求饱和吸附量 Γ∞、分子面积 q 与浓度修正 q_c。',
-        'tags': ['表面张力', 'Gibbs 吸附', 'Γ∞ / q_c'],
-        'sample': None,
-    },
-    {
-        'key': 'magnetic', 'title': '磁化率的测定', 'tool': None, 'port': 8781,
-        'desc': '古埃磁天平测磁化率，推算未成对电子数。',
-        'tags': ['磁化率'], 'sample': None,
-    },
-    {
-        'key': 'uv', 'title': '紫外可见吸收光谱仪搭建', 'tool': '紫外光谱工具', 'port': 8791,
-        'desc': '自建紫外可见光谱仪：氘灯标定 pixel–波长，测 6 种共轭分子的吸收光谱，'
-                '求 λmax 与摩尔消光系数，并用一维势箱模型验证。',
-        'tags': ['光谱搭建', '朗伯-比尔定律', '一维势箱'],
-        'sample': '3 紫外光谱搭建',
-    },
-    {
-        'key': 'electro', 'title': '电化学（循环伏安法）', 'tool': '电化学工具',
-        'port': 8801,
-        'desc': 'CHI 工作站测 N₂/甲醇体系的 CV 曲线：铂电极电化学活性面积、'
-                'ORR/MOR 起始电位，并由扣空白的 ORR+MOR 曲线得到 DMFC 单池的'
-                '极化曲线与最大输出功率。',
-        'tags': ['循环伏安', 'ORR / MOR', 'DMFC 极化曲线'], 'sample': None,
-    },
-    {
-        'key': 'kinetics', 'title': '化学反应动力学探究', 'tool': '化学动力学工具',
-        'port': 8811,
-        'desc': '数智旋光仪监测蔗糖水解；积分法判定反应级数，求速率常数、半衰期，'
-                '并由 k₁–c(H⁺) 关系确定氢离子反应级数。',
-        'tags': ['蔗糖水解', '一级反应', 'k₁ / t₁/₂'],
-        'sample': None,
     },
     {
         'key': 'phase', 'title': '双液体系沸点-成分图的绘制', 'tool': '双液系工具',
@@ -115,12 +72,57 @@ MODULES = [
         'sample': None,
     },
     {
+        'key': 'kinetics', 'title': '化学反应动力学探究', 'tool': '化学动力学工具',
+        'port': 8811,
+        'desc': '数智旋光仪监测蔗糖水解；积分法判定反应级数，求速率常数、半衰期，'
+                '并由 k₁–c(H⁺) 关系确定氢离子反应级数。',
+        'tags': ['蔗糖水解', '一级反应', 'k₁ / t₁/₂'],
+        'sample': None,
+    },
+    {
+        'key': 'adsorption', 'title': '溶液表面吸附的测定', 'tool': '表面吸附工具',
+        'port': 8771,
+        'desc': '最大气泡压力法与吊片法测正丁醇溶液的表面张力；'
+                '由 γ–lg c（或 γ–ln c）线性区斜率求饱和吸附量 Γ∞、分子面积 q 与浓度修正 q_c。',
+        'tags': ['表面张力', 'Gibbs 吸附', 'Γ∞ / q_c'],
+        'sample': None,
+    },
+    {
+        'key': 'conductivity', 'title': '电解质溶液电导率的测定', 'tool': '电导率工具',
+        'port': 8751,
+        'desc': 'KCl 标定后测 NaNO₃/NaAc/HNO₃/HAc 各 5 个浓度的电导率；'
+                'Kohlrausch 拟合外推 Λm∞，离子独立运动定律得 Λm∞(HAc)，'
+                '求平均法与拟合直线法两种方法求 HAc 的标准电离平衡常数。',
+        'tags': ['电导率', 'Kohlrausch 拟合', 'K° 两种方法'], 'sample': None,
+    },
+    {
+        'key': 'electro', 'title': '电化学（循环伏安法）', 'tool': '电化学工具',
+        'port': 8801,
+        'desc': 'CHI 工作站测 N₂/甲醇体系的 CV 曲线：铂电极电化学活性面积、'
+                'ORR/MOR 起始电位，并由扣空白的 ORR+MOR 曲线得到 DMFC 单池的'
+                '极化曲线与最大输出功率。',
+        'tags': ['循环伏安', 'ORR / MOR', 'DMFC 极化曲线'], 'sample': None,
+    },
+    {
         'key': 'dipole', 'title': '稀溶液法测定极性分子的偶极矩', 'tool': '偶极矩工具',
         'port': 8831,
         'desc': '桥法测正丁醇/环己烷溶液的电容与密度，Hedestrand 外推求总摩尔'
                 '极化度，结合摩尔折射度得偶极矩 μ。',
         'tags': ['偶极矩', '摩尔极化度', 'Hedestrand'],
         'sample': None,
+    },
+    {
+        'key': 'magnetic', 'title': '磁化率的测定', 'tool': '磁化率工具', 'port': 8781,
+        'desc': '古埃磁天平法测定固体物质的磁化率，计算摩尔磁化率、分子磁矩，'
+                '并估算未成对电子数。',
+        'tags': ['磁化率', '古埃磁天平', '未成对电子数'], 'sample': None,
+    },
+    {
+        'key': 'uv', 'title': '紫外可见吸收光谱仪搭建', 'tool': '紫外光谱工具', 'port': 8791,
+        'desc': '自建紫外可见光谱仪：氘灯标定 pixel–波长，测 6 种共轭分子的吸收光谱，'
+                '求 λmax 与摩尔消光系数，并用一维势箱模型验证。',
+        'tags': ['光谱搭建', '朗伯-比尔定律', '一维势箱'],
+        'sample': '3 紫外光谱搭建',
     },
 ]
 
@@ -253,29 +255,49 @@ def _installed(mod):
 
 
 def _start_module(mod, force_new_port=False):
-    """拉起一个模块的子进程，返回状态字典。"""
+    """拉起一个模块的子进程，返回状态字典。
+
+    并行启动下允许多个线程同时调用：进程正在启动（还没通过健康检查）时，
+    后到的调用只等待并复用同一个进程，绝不重复拉起。
+    """
     d = _module_dir(mod)
     if not _installed(mod):
         return {'ok': False, 'installed': False, 'port': None, 'error': '模块尚未安装'}
 
     key = mod['key']
+
+    # 已有本入口拉起的进程：健康直接复用；还在启动就等它，死了才重新拉起
     with STATE['lock']:
         st = STATE['modules'].get(key)
-        # 已经由本入口拉起来且进程还活着 → 直接用
-        if st and st.get('proc') and st['proc'].poll() is None and not force_new_port:
-            if _healthy(st['port']):
-                return st
-        # 端口上已经有别的服务（比如用户自己双击了该模块的 启动.cmd）→ 直接复用
-        if not force_new_port and _port_open(mod['port']) and _healthy(mod['port']):
-            st = {'ok': True, 'installed': True, 'port': mod['port'], 'proc': None,
-                  'external': True, 'error': ''}
-            STATE['modules'][key] = st
+    if st and st.get('proc') and not force_new_port:
+        if _healthy(st['port'], 0.6):
             return st
+        if st['proc'].poll() is None:
+            deadline = time.time() + 8
+            while time.time() < deadline and st['proc'].poll() is None:
+                time.sleep(0.4)
+                if _healthy(st['port'], 0.6):
+                    st['ok'] = True
+                    st['error'] = ''
+                    return st
+            if st['proc'].poll() is None:
+                return {**st, 'ok': False, 'error': '模块正在启动中…'}
+            with STATE['lock']:
+                if STATE['modules'].get(key) is st:
+                    STATE['modules'].pop(key, None)
+            st = None
 
-        port = _free_port(mod['port']) if not force_new_port else _free_port(mod['port'])
-        if not port:
-            return {'ok': False, 'installed': True, 'port': None,
-                    'error': '找不到空闲端口'}
+    # 端口上已经有健康服务（比如用户自己双击了该模块的 启动.vbs）→ 直接复用
+    if not force_new_port and _port_open(mod['port']) and _healthy(mod['port']):
+        st = {'ok': True, 'installed': True, 'port': mod['port'], 'proc': None,
+              'external': True, 'error': ''}
+        STATE['modules'][key] = st
+        return st
+
+    port = _free_port(mod['port']) if not force_new_port else _free_port(mod['port'])
+    if not port:
+        return {'ok': False, 'installed': True, 'port': None,
+                'error': '找不到空闲端口'}
 
     creationflags = 0
     if os.name == 'nt':
@@ -284,29 +306,33 @@ def _start_module(mod, force_new_port=False):
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUNBUFFERED'] = '1'      # 输出要实时进日志，不然攒到退出才写
-    try:
-        proc = subprocess.Popen(
-            [PYTHON, os.path.join(d, 'run.py'), '--port', str(port), '--no-browser'],
-            cwd=d, env=env, creationflags=creationflags,
-            stdin=subprocess.DEVNULL, stdout=_log_handle(), stderr=subprocess.STDOUT)
-    except OSError as exc:
-        return {'ok': False, 'installed': True, 'port': None, 'error': str(exc)}
+    with STATE['lock']:
+        st = STATE['modules'].get(key)
+        if st and st.get('proc') and st['proc'].poll() is None and not force_new_port:
+            return st                  # 另一个线程刚拉起，直接用它的
+        try:
+            proc = subprocess.Popen(
+                [PYTHON, os.path.join(d, 'run.py'), '--port', str(port), '--no-browser'],
+                cwd=d, env=env, creationflags=creationflags,
+                stdin=subprocess.DEVNULL, stdout=_log_handle(), stderr=subprocess.STDOUT)
+        except OSError as exc:
+            return {'ok': False, 'installed': True, 'port': None, 'error': str(exc)}
+        st = {'ok': False, 'installed': True, 'port': port, 'proc': proc,
+              'external': False, 'error': '正在启动…'}
+        STATE['modules'][key] = st
 
     deadline = time.time() + 40
     while time.time() < deadline:
         if proc.poll() is not None:
-            return {'ok': False, 'installed': True, 'port': port,
-                    'error': '模块进程启动后立即退出（返回码 %s）' % proc.returncode}
+            st['error'] = '模块进程启动后立即退出（返回码 %s）' % proc.returncode
+            return st
         if _healthy(port, 0.6):
-            st = {'ok': True, 'installed': True, 'port': port, 'proc': proc,
-                  'external': False, 'error': ''}
-            with STATE['lock']:
-                STATE['modules'][key] = st
+            st['ok'] = True
+            st['error'] = ''
             print('  [OK]   %-12s %s' % (mod['title'], 'http://127.0.0.1:%d' % port))
             return st
         time.sleep(0.35)
-    return {'ok': False, 'installed': True, 'port': port, 'proc': proc,
-            'error': '启动超时（40 s 内没有响应）'}
+    return {**st, 'ok': False, 'error': '启动超时（40 s 内没有响应）'}
 
 
 def _stop_all(kill_external=False):
@@ -481,11 +507,6 @@ def main():
     print('=' * 60)
     print('  物化实验报告工具 —— 统一入口')
     print('  入口页：http://127.0.0.1:%d' % port)
-    print('  正在启动各实验模块（首次启动约需几秒）…')
-    print('-' * 60)
-    for mod in MODULES:
-        if _installed(mod):
-            _start_module(mod)
     print('-' * 60)
 
     httpd = ThreadingHTTPServer(('127.0.0.1', port), Handler)
@@ -495,8 +516,20 @@ def main():
     print('  停止服务：入口页点「停止全部服务」，或双击 停止服务.vbs。')
     print('  运行日志：%s' % LOG_PATH)
     print('=' * 60)
+
+    # 入口页与浏览器立即就绪；模块在后台线程并行拉起，
+    # 入口页每几秒轮询一次 /api/modules，卡片逐个变绿，不用干等。
+    def _launch(mod):
+        try:
+            _start_module(mod)
+        except Exception as exc:  # noqa: BLE001
+            print('  [FAIL] %s: %s' % (mod['title'], exc))
+
+    for mod in [m for m in MODULES if _installed(m)]:
+        threading.Thread(target=_launch, args=(mod,), daemon=True).start()
+
     if open_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
