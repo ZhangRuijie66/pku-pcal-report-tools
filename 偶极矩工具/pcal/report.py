@@ -530,11 +530,11 @@ def _sec_error(rb, r):
              '不妨估计一下电容测量误差的影响：假设每个电容测量值有 %s pF 的'
              '误差（' % k(cc['sigma_c'], 2), ('t', "σ_{C'}", ITALIC),
              ' = %s pF），则：' % k(cc['sigma_c'], 2)], keep_next=True)
-    rb.equation(r"σ_{C_{分}}=σ_{C'}\times\sqrt{(1+\frac{1}{ε_{环}-1})^{2}}"
+    rb.equation(r"σ_{C_{分}}=σ_{C'}\times\sqrt{(1+\frac{1}{ε_{环}-1})^{2}"
                 r"+(\frac{1}{ε_{环}-1})^{2}}=%s\ pF" % k(cc['s_Cdist'], 3))
     rb.equation(r"σ_{C₀}=σ_{C'}\times\sqrt{2\times(\frac{1}{ε_{环}-1})^{2}}"
                 r"=%s\ pF" % k(cc['s_C0'], 3))
-    rb.equation(r"σ_{ε}=\sqrt{(\frac{σ_{C'}}{C₀})^{2}+(\frac{σ_{C_{分}}}{C₀})^{2}}"
+    rb.equation(r"σ_{ε}=\sqrt{(\frac{σ_{C'}}{C₀})^{2}+(\frac{σ_{C_{分}}}{C₀})^{2}"
                 r"+(\frac{(C'_{样}-C_{分})σ_{C₀}}{C₀^{2}})^{2}}=%s"
                 % k(cc['s_eps'], 3))
     rb.para(["式中 ", ('t', "C'_{样}", ITALIC), ' 取 1 号溶液的值。'
