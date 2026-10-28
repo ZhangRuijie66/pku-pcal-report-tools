@@ -437,13 +437,41 @@ def _q_text(rb, m):
 def _sec_bubble(rb, m, axis, png_curve, png_fit):
     rb.heading('3.1 最大气泡压力法', 2)
     rb.heading('3.1.1 原始数据记录', 3)
-    rb.para([
-        '最大气泡压力法的全部数据均在 %.2f ℃ 下测得。加压前先读取压力计零点，'
-        '三次读数的左侧液柱 ' % m['temperature'], ('t', 'h_{left}', ITALIC),
-        ' 和右侧液柱 ', ('t', 'h_{right}', ITALIC),
-        ' 如表1所示。由于三次读数相同，零点差 ',
-        ('t', 'Δh_{0}', ITALIC), ' 的不确定度只来自仪器读数误差。',
-    ])
+    hi = m.get('height') or {}
+    mode = hi.get('mode') or 'both'
+    side_lr = (mode in ('left', 'right')) and bool(hi.get('sum'))
+    if side_lr:
+        read_side = '左' if mode == 'left' else '右'
+        calc_side = '右' if mode == 'left' else '左'
+        sub_read = 'left' if mode == 'left' else 'right'
+        sub_calc = 'right' if mode == 'left' else 'left'
+        rb.para([
+            '最大气泡压力法的全部数据均在 %.2f ℃ 下测得。压差计两臂等截面、'
+            '管内液体总量恒定，两臂液面高度之和为常数 ' % m['temperature'],
+            ('t', 'S', ITALIC), ' = %.2f cm，故实验时只读取%s侧液柱 ' % (hi['sum'], read_side),
+            ('t', 'h_{%s}' % sub_read, ITALIC), '，%s侧按 ' % calc_side,
+            ('t', 'h_{%s} = S - h_{%s}' % (sub_calc, sub_read), ITALIC),
+            ' 换算，表1~表3 中该侧数据均为换算值。加压前先读取压力计零点，'
+            '三次读数的两侧液柱如表1所示；零点差 ',
+            ('t', 'Δh_{0}', ITALIC),
+            ' 的不确定度来自读数误差与 ',
+            ('t', 'S', ITALIC), ' 的定值误差。',
+        ])
+    else:
+        rb.para([
+            '最大气泡压力法的全部数据均在 %.2f ℃ 下测得。加压前先读取压力计零点，'
+            '三次读数的左侧液柱 ' % m['temperature'], ('t', 'h_{left}', ITALIC),
+            ' 和右侧液柱 ', ('t', 'h_{right}', ITALIC),
+            ' 如表1所示。由于三次读数相同，零点差 ',
+            ('t', 'Δh_{0}', ITALIC), ' 的不确定度只来自仪器读数误差。',
+        ])
+        if hi.get('fallback') and hi.get('filled'):
+            rb.para([
+                '表1~表3 中另有 %d 个液柱读数只记录了一侧，另一侧按两臂液面高度之和 '
+                % hi['filled'],
+                ('t', 'S', ITALIC), ' = %.2f cm 换算补全（' % hi['sum'],
+                ('t', 'h_{other} = S - h', ITALIC), '）。',
+            ])
     _zero_table(rb, m)
     rb.para([
         '取单次读数的不确定度 ', ('t', 'σ_{h}', ITALIC),
@@ -455,6 +483,15 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
                 r'\qquad \sigma_{\Delta h}='
                 r'\sqrt{\sigma_{h,left}^{2}+\sigma_{h,right}^{2}'
                 r'+\sigma_{\Delta h_{0}}^{2}}')
+    if side_lr:
+        rb.para([
+            '只读一侧时高度差为 ', ('t', 'Δh = S - 2h_{%s}' % sub_read, ITALIC),
+            '，同一读数在 Δh 中用两次、灵敏度加倍，故不确定度改写为（',
+            ('t', 'σ_{S}', ITALIC), ' 按单次读数误差计）：',
+        ], keep_next=True)
+        rb.equation(r'\sigma_{\Delta h}=\sqrt{4\sigma_{h,%s}^{2}'
+                    r'+\sigma_{S}^{2}+\sigma_{\Delta h_{0}}^{2}}' % sub_read)
+        rb.para('第 3.1 节其余计算与两侧同时读数时完全相同。')
     rb.para([
         '纯水的液柱高度及高度差列于表2。高度差按下式计算：',
     ], keep_next=True)

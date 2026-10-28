@@ -6,10 +6,12 @@ const COVER_FIELDS = ['student_name', 'student_id', 'group', 'group_no',
   'date', 'room_temp', 'pressure'];
 const DATA_FIELDS = ['temperature_bubble', 'temperature_plate', 'gamma_water',
   'sigma_read', 'sigma_plate'];
-const PROC_FIELDS = ['conc_axis', 'zero_correction'];
+const PROC_FIELDS = ['conc_axis', 'zero_correction', 'height_mode'];
 
 let STATE = null;
 let DATA = null;
+let HMODE = 'both';      // 液柱读数方式：both / left / right
+let HSUM_AUTO = null;    // 后端由现有读数估计的两臂高度之和 / cm
 
 /* ---------------------------------------------------------------- 小工具 */
 function toast(msg, ms = 2800) {
@@ -57,14 +59,49 @@ async function api(path, opts) {
   return data;
 }
 
+/* ---------------------------------------------------------------- 液柱高度换算 */
+function derivedSide() {
+  return HMODE === 'left' ? 'right' : (HMODE === 'right' ? 'left' : null);
+}
+function sumValue() {
+  const raw = ($('height_sum') || {}).value;
+  const v = parseFloat(raw);
+  if (raw !== '' && raw !== undefined && isFinite(v) && v > 0) return v;
+  return (HSUM_AUTO != null && isFinite(HSUM_AUTO) && HSUM_AUTO > 0) ? HSUM_AUTO : null;
+}
+function rnd(v) { return Math.round(v * 1e4) / 1e4; }
+function autoValue(srcValue) {
+  const total = sumValue();
+  const v = srcValue === '' || srcValue == null ? null : Number(srcValue);
+  if (total == null || v == null || isNaN(v)) return '';
+  return rnd(total - v);
+}
+
 /* ---------------------------------------------------------------- 表单 */
 function fillConfig(c) {
   COVER_FIELDS.concat(PROC_FIELDS).forEach((k) => {
     const el = $(k);
     if (!el) return;
     if (k === 'zero_correction') el.value = c[k] ? '1' : '0';
-    else el.value = (c[k] === null || c[k] === undefined) ? '' : c[k];
+    else if (k === 'height_sum') {
+      const v = Number(c[k]);
+      el.value = (c[k] == null || !isFinite(v) || v === 0) ? '' : v;
+    } else el.value = (c[k] === null || c[k] === undefined) ? '' : c[k];
   });
+  HMODE = ($('height_mode').value || 'both');
+  updateSumPlaceholder();
+}
+function updateSumPlaceholder() {
+  const el = $('height_sum');
+  if (!el) return;
+  el.placeholder = (HSUM_AUTO != null && isFinite(HSUM_AUTO))
+    ? '自动估计 ' + Number(HSUM_AUTO).toFixed(2)
+    : '留空 = 自动估计';
+  const d = derivedSide();
+  const missing = !!(d && sumValue() == null);
+  el.classList.toggle('need', missing);
+  const hint = $('heightHint');
+  if (hint) hint.style.color = missing ? 'var(--err)' : '';
 }
 function readConfig() {
   const cfg = {};
@@ -76,6 +113,8 @@ function readConfig() {
   });
   cfg.conc_axis = $('conc_axis').value;
   cfg.zero_correction = $('zero_correction').value === '1';
+  cfg.height_mode = $('height_mode').value || 'both';
+  cfg.height_sum = $('height_sum').value === '' ? 0 : Number($('height_sum').value);
   return cfg;
 }
 function fillData(d) {
@@ -88,12 +127,14 @@ function fillData(d) {
   renderTrio('water');
   renderRows('bubble');
   renderRows('plate');
+  updateSumPlaceholder();
 }
 
 function readTrio(kind) {
   const elId = kind === 'zero' ? 'zeroTable' : 'waterTable';
   const left = [], right = [];
   document.querySelectorAll('#' + elId + ' input[data-side]').forEach((inp) => {
+    if (inp.disabled) return;                 // 自动换算的一侧不当作实测值
     const v = inp.value === '' ? null : Number(inp.value);
     const arr = inp.dataset.side === 'left' ? left : right;
     const i = Number(inp.dataset.i);
@@ -112,10 +153,10 @@ function readRows(kind) {
     if (kind === 'bubble') {
       const left = [], right = [];
       tr.querySelectorAll('input[data-f="left"]').forEach((inp) => {
-        if (inp.value !== '') left.push(Number(inp.value));
+        if (!inp.disabled && inp.value !== '') left.push(Number(inp.value));
       });
       tr.querySelectorAll('input[data-f="right"]').forEach((inp) => {
-        if (inp.value !== '') right.push(Number(inp.value));
+        if (!inp.disabled && inp.value !== '') right.push(Number(inp.value));
       });
       const fit = tr.querySelector('input[data-f="fit"]');
       rows.push({ c, left, right, fit: !!(fit && fit.checked) });
@@ -151,18 +192,28 @@ function inputCell(kind, field, i, value, extra) {
     (value == null || isNaN(value) ? '' : esc(value)) + '"></td>';
 }
 
+/* 由另一侧按 S 换算出来的单元格：灰底、不可编辑、不进数据 */
+function autoCell(attrs, value) {
+  return '<td><input type="number" step="any" disabled class="auto"' +
+    attrs + ' value="' + (value === '' || value == null ? '' : esc(value)) + '"></td>';
+}
+
 function renderTrio(kind) {
   const el = kind === 'zero' ? $('zeroTable') : $('waterTable');
   const key = kind === 'zero' ? 'zero' : 'water_bubble';
   const obj = (DATA && DATA[key]) || {};
   const left = obj.left || [], right = obj.right || [];
+  const dside = derivedSide();
   let html = '<thead><tr><th>组别</th><th>h_left / cm</th><th>h_right / cm</th></tr></thead><tbody>';
   for (let i = 0; i < 3; i += 1) {
-    html += '<tr data-trio="' + i + '"><td>' + (i + 1) + '</td>' +
-      '<td><input type="number" step="any" data-side="left" data-i="' + i +
-      '" value="' + (left[i] == null ? '' : esc(left[i])) + '"></td>' +
-      '<td><input type="number" step="any" data-side="right" data-i="' + i +
-      '" value="' + (right[i] == null ? '' : esc(right[i])) + '"></td></tr>';
+    const cells = ['left', 'right'].map((side) => {
+      const attrs = ' data-side="' + side + '" data-i="' + i + '"';
+      if (side === dside) return autoCell(attrs, autoValue(side === 'right' ? left[i] : right[i]));
+      const v = side === 'left' ? left[i] : right[i];
+      return '<td><input type="number" step="any"' + attrs + ' value="' +
+        (v == null ? '' : esc(v)) + '"></td>';
+    }).join('');
+    html += '<tr data-trio="' + i + '"><td>' + (i + 1) + '</td>' + cells + '</tr>';
   }
   el.innerHTML = html + '</tbody>';
 }
@@ -170,6 +221,7 @@ function renderTrio(kind) {
 function renderRows(kind) {
   const tbl = kind === 'bubble' ? $('bubbleTable') : $('plateTable');
   const rows = (DATA && DATA[kind]) || [];
+  const dside = derivedSide();
   let html;
   if (kind === 'bubble') {
     html = '<thead><tr><th>#</th><th>c / (mol·dm⁻³)</th>' +
@@ -177,10 +229,18 @@ function renderRows(kind) {
       '<th>h_r1</th><th>h_r2</th><th>h_r3</th><th>拟合</th><th></th></tr></thead><tbody>';
     rows.forEach((r, i) => {
       const left = r.left || [], right = r.right || [];
+      const cell = (side, j) => {
+        if (side === dside) {
+          const src = side === 'right' ? left[j] : right[j];
+          return autoCell(' data-kind="bubble" data-f="' + side + '" data-i="' + j + '"',
+            autoValue(src));
+        }
+        return inputCell('bubble', side, j, side === 'left' ? left[j] : right[j]);
+      };
       html += '<tr data-row="' + i + '"><td>' + (i + 1) + '</td>' +
         inputCell('bubble', 'c', i, r.c) +
-        [0, 1, 2].map((j) => inputCell('bubble', 'left', j, left[j])).join('') +
-        [0, 1, 2].map((j) => inputCell('bubble', 'right', j, right[j])).join('') +
+        [0, 1, 2].map((j) => cell('left', j)).join('') +
+        [0, 1, 2].map((j) => cell('right', j)).join('') +
         '<td><input type="checkbox" data-f="fit"' + (r.fit ? ' checked' : '') + '></td>' +
         '<td><button class="btn mini" data-del="bubble" data-i="' + i + '">删</button></td></tr>';
     });
@@ -197,6 +257,32 @@ function renderRows(kind) {
     });
   }
   tbl.innerHTML = html + '</tbody>';
+}
+
+/* 输入已测一侧时，实时刷新同一行的换算值 */
+function syncDerivedInRow(row) {
+  const dside = derivedSide();
+  if (!dside) return;
+  const src = dside === 'right' ? 'left' : 'right';
+  const sideInp = row.querySelector('input[data-side="' + src + '"]');
+  if (sideInp) {
+    const dst = row.querySelector('input[data-side="' + dside + '"]');
+    if (dst) dst.value = autoValue(sideInp.value);
+    return;
+  }
+  row.querySelectorAll('input[data-f="' + src + '"]').forEach((si) => {
+    const di = row.querySelector('input[data-f="' + dside +
+      '"][data-i="' + si.dataset.i + '"]');
+    if (di) di.value = autoValue(si.value);
+  });
+}
+
+function refreshTables() {
+  renderTrio('zero');
+  renderTrio('water');
+  renderRows('bubble');
+  renderRows('plate');
+  updateSumPlaceholder();
 }
 
 /* ---------------------------------------------------------------- 结果 */
@@ -245,6 +331,7 @@ function renderWarnings(s) {
 
 function renderState(s) {
   STATE = s;
+  HSUM_AUTO = (s.height && s.height.estimate != null) ? s.height.estimate : null;
   fillConfig(s.config);
   fillData(s.data);
   $('dataFile').textContent = s.data_file || '';
@@ -306,6 +393,7 @@ async function recalc() {
       body: JSON.stringify({ config: readConfig(), data: readData() }),
     });
     STATE = s;
+    HSUM_AUTO = (s.height && s.height.estimate != null) ? s.height.estimate : null;
     fillConfig(s.config);
     fillData(s.data);
     renderResults(s);
@@ -412,6 +500,7 @@ function addRow(kind) {
   }
   DATA = d;
   renderRows(kind);
+  updateSumPlaceholder();
 }
 
 function deleteRow(kind, i) {
@@ -420,6 +509,59 @@ function deleteRow(kind, i) {
   rows.splice(i, 1);
   DATA = d;
   renderRows(kind);
+}
+
+/* 从当前表格里两侧都填了的读数估一个 S（切换读数方式时用，免得丢 S） */
+function estimateSumFromDom() {
+  const sums = [];
+  const push = (a, b) => {
+    if (a && b && a.value !== '' && b.value !== '') {
+      const v = Number(a.value) + Number(b.value);
+      if (isFinite(v)) sums.push(v);
+    }
+  };
+  document.querySelectorAll('#zeroTable tr, #waterTable tr').forEach((tr) => {
+    push(tr.querySelector('input[data-side="left"]'),
+      tr.querySelector('input[data-side="right"]'));
+  });
+  document.querySelectorAll('#bubbleTable tbody tr').forEach((tr) => {
+    for (let j = 0; j < 3; j += 1) {
+      push(tr.querySelector('input[data-f="left"][data-i="' + j + '"]'),
+        tr.querySelector('input[data-f="right"][data-i="' + j + '"]'));
+    }
+  });
+  if (!sums.length) return null;
+  sums.sort((a, b) => a - b);
+  return rnd(sums[Math.floor(sums.length / 2)]);
+}
+
+function onModeChange() {
+  const next = $('height_mode').value || 'both';
+  // 先把当前表格里两侧都有的读数综合出来的 S 固化下来，避免切换后无从换算
+  const guess = estimateSumFromDom();
+  if ($('height_sum').value === '' && guess != null) $('height_sum').value = guess;
+  DATA = readData();               // 旧模式下可编辑的读数先落盘
+  HMODE = next;
+  refreshTables();
+  recalc();
+  persistConfig();
+  if (HMODE !== 'both') {
+    const ok = sumValue() != null;
+    toast(ok
+      ? '已切换：' + (HMODE === 'left' ? '右侧' : '左侧') + '液柱由 S 自动换算（灰色列不用填）'
+      : '已切换，但还缺两臂高度总和 S：请在右侧填入，否则算不出 Δh', 5000);
+  }
+}
+
+/* 读数方式与 S 影响能否复算，静默写回 settings.json，免得下次打开模式丢了 */
+async function persistConfig() {
+  try {
+    await api('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: readConfig() }),
+    });
+  } catch (e) { /* 静默 */ }
 }
 
 /* ---------------------------------------------------------------- 绑定 */
@@ -433,6 +575,20 @@ function bindUI() {
   $('btnAddBubble').onclick = () => addRow('bubble');
   $('btnAddPlate').onclick = () => addRow('plate');
   $('chartKind').onchange = drawChart;
+  $('height_mode').onchange = onModeChange;
+  $('height_sum').onchange = () => {
+    DATA = readData();
+    refreshTables();
+    recalc();
+    persistConfig();
+  };
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if (!t.matches || !t.matches('input[data-side], input[data-f="left"], input[data-f="right"]')) return;
+    if (t.disabled) return;
+    const row = t.closest('tr');
+    if (row) syncDerivedInRow(row);
+  });
   document.querySelectorAll('table').forEach((tbl) => {
     tbl.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-del]');

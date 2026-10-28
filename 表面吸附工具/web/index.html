@@ -35,6 +35,7 @@ main{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;padding:14p
   width:100%;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:7px;
   font:inherit;background:#fff;color:var(--text)}
 .field input:focus,.field select:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)}
+.field input.need{border-color:var(--err);background:#fff5f5}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .btnrow{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
@@ -53,6 +54,8 @@ td input[type=number]{width:100%;min-width:58px;padding:3px 4px;border:1px solid
   border-radius:5px;font:inherit;text-align:center;background:#fff}
 td input[type=number]:focus{outline:2px solid rgba(31,111,235,.16);border-color:var(--accent)}
 td input[type=checkbox]{transform:scale(1.05)}
+td input.auto{background:#f1f3f5;color:var(--sub);border-style:dashed;cursor:default}
+td input.auto:focus{outline:none;border-color:var(--line)}
 .scroll{overflow-x:auto}
 .pill{display:inline-block;padding:1px 8px;border-radius:999px;background:#eef4ff;color:var(--accent2);font-size:12px}
 .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
@@ -131,6 +134,21 @@ td input[type=checkbox]{transform:scale(1.05)}
           </select>
         </div>
       </div>
+      <div class="grid2">
+        <div class="field"><label>液柱读数方式</label>
+          <select id="height_mode">
+            <option value="both">左右两侧都读</option>
+            <option value="left">只读左侧（右侧自动算）</option>
+            <option value="right">只读右侧（左侧自动算）</option>
+          </select>
+        </div>
+        <div class="field"><label>两臂高度总和 S / cm</label>
+          <input type="number" step="0.01" id="height_sum" placeholder="留空 = 自动估计">
+        </div>
+      </div>
+      <p class="hint" id="heightHint">U 型压差计两臂等截面、管内液体总量固定，故
+        h<sub>left</sub> + h<sub>right</sub> 为常数 S。选「只读一侧」后，另一侧按
+        S − 已测值 换算，表格中该列变灰、不用再填。</p>
       <p class="hint">扣零点时 Δh = h_right − h_left − Δh₀，纯水与溶液用同一个零点；
         两种口径的 Γ∞ 只差约 2%，报告会自动按所选口径写公式。</p>
     </section>

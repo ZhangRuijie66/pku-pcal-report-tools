@@ -147,6 +147,173 @@ def rows_to_plate(rows):
     return out
 
 
+# ---------------------------------------------------------------- 液柱高度补齐
+# 最大气泡压力法用 U 型压差计：两臂等截面、管内液体总量固定，
+# 所以 h_left + h_right = S 为常数。实验时若只读一侧，另一侧可由 S 换算。
+HEIGHT_MODES = ('both', 'left', 'right')
+
+
+def estimate_height_sum(data):
+    """从已有读数估计两侧液柱高度之和 S / cm（两侧都填了的读数取中位数）。
+
+    只要有一组两侧同时读数（零点、纯水或任一浓度）就能定出 S，
+    因此不要求用户额外标定。
+    """
+    sums = []
+    pairs = []
+    for key in ('zero', 'water_bubble'):
+        obj = data.get(key) or {}
+        if isinstance(obj, dict):
+            pairs.append((obj.get('left') or [], obj.get('right') or []))
+    for it in data.get('bubble') or []:
+        if isinstance(it, dict):
+            pairs.append((it.get('left') or [], it.get('right') or []))
+    for left, right in pairs:
+        for a, b in zip(left, right):
+            try:
+                sums.append(float(a) + float(b))
+            except (TypeError, ValueError):
+                continue
+    if not sums:
+        return None
+    return float(np.median(np.asarray(sums, dtype=float)))
+
+
+def _fill_side(obj, src, total):
+    """按 S 把 obj 缺少的一侧补成 total − 已测侧；返回 (obj', 补了几个)。
+
+    已经填了对侧读数的位置不覆盖（用户实测优先）。
+    """
+    dst = 'right' if src == 'left' else 'left'
+    src_vals = list(obj.get(src) or [])
+    dst_vals = list(obj.get(dst) or [])
+    if not src_vals:
+        return obj, []
+
+    def val(v):
+        return None if v in (None, '') else float(v)
+
+    n = max(len(src_vals), len(dst_vals))
+    out_vals = []
+    filled = []
+    for i in range(n):
+        have = val(dst_vals[i]) if i < len(dst_vals) else None
+        if have is not None:
+            out_vals.append(have)
+            continue
+        base = val(src_vals[i]) if i < len(src_vals) else None
+        if base is None:
+            out_vals.append(None)
+            continue
+        out_vals.append(total - base)
+        filled.append(i)
+    new = dict(obj)
+    new[dst] = out_vals
+    return new, filled
+
+
+def _need_side(obj, mode):
+    """这一组该以哪一侧为准；None 表示两侧都实测、无需换算。"""
+    if not isinstance(obj, dict):
+        return None
+    left = [v for v in (obj.get('left') or []) if v not in (None, '')]
+    right = [v for v in (obj.get('right') or []) if v not in (None, '')]
+    if mode == 'left':
+        return 'left' if left else None
+    if mode == 'right':
+        return 'right' if right else None
+    # 两侧都读：只有一侧有数据时兜底换算，免得整表算不出来
+    if left and not right:
+        return 'left'
+    if right and not left:
+        return 'right'
+    return None
+
+
+def complete_heights(data, cfg):
+    """按「读数方式」把只有一侧的液柱读数补全。
+
+    返回 (data', info)：info 记录用了多大的 S、S 从哪来、补了哪些位置，
+    供报告说明与网页提示使用。两侧都实测时原样返回，行为与旧版一致。
+
+    info['keys'] 记录每组以哪一侧为准（'left' / 'right'），
+    计算 Δh 的不确定度时据此把灵敏度加倍。
+    """
+    cfg = cfg or {}
+    mode = str(cfg.get('height_mode') or 'both')
+    if mode not in HEIGHT_MODES:
+        mode = 'both'
+    info = dict(mode=mode, sum=None, source='none', filled=0,
+                keys={}, side=None, fallback=False)
+
+    plan = {}
+    for key in ('zero', 'water_bubble'):
+        s = _need_side(data.get(key), mode)
+        if s:
+            plan[key] = s
+    row_plan = [_need_side(it, mode) for it in (data.get('bubble') or [])]
+    if not plan and not any(row_plan):
+        return data, info
+
+    manual = cfg.get('height_sum')
+    try:
+        manual = float(manual) if manual not in (None, '') else 0.0
+    except (TypeError, ValueError):
+        manual = 0.0
+    if manual > 0:
+        total, source = manual, 'manual'
+    else:
+        total = estimate_height_sum(data)
+        source = 'estimated' if total else 'none'
+    info.update(sum=total, source=source, fallback=(mode == 'both'))
+    info['side'] = ('right' if mode == 'left' else 'left') if mode != 'both' else None
+    if not total:
+        info['need'] = sum(1 for s in plan.values() if s) + sum(1 for s in row_plan if s)
+        return data, info
+
+    out = dict(data)
+    for key in ('zero', 'water_bubble'):
+        src = plan.get(key)
+        if not src:
+            continue
+        new, filled = _fill_side(out[key], src, total)
+        out[key] = new
+        info['filled'] += len(filled)
+        if filled:
+            info['keys'][key] = src
+
+    rows, keys_rows = [], []
+    for i, it in enumerate(out.get('bubble') or []):
+        src = row_plan[i] if i < len(row_plan) else None
+        if src and isinstance(it, dict):
+            new, filled = _fill_side(it, src, total)
+            info['filled'] += len(filled)
+            keys_rows.append(src if filled else None)
+            it = new
+        else:
+            keys_rows.append(None)
+        rows.append(it)
+    if rows:
+        out['bubble'] = rows
+    info['keys']['bubble'] = keys_rows
+    return out, info
+
+
+def _dh_sigma(sl, sr, mode, sigma_read):
+    """Δh 的不确定度。
+
+    两侧都实测时左右读数独立，方差相加；只读一侧时另一侧由 S 换算，
+    Δh = S − 2h，对已测侧的不确定度灵敏度是 2 倍，另外再加上 S 自身的
+    定值误差（取单次读数误差 σ_h 计）。
+    """
+    sigma_read = max(0.0, float(sigma_read or 0.0))
+    if mode == 'left':
+        return math.sqrt((2.0 * sl['sigma']) ** 2 + sigma_read ** 2)
+    if mode == 'right':
+        return math.sqrt((2.0 * sr['sigma']) ** 2 + sigma_read ** 2)
+    return math.sqrt(sl['sigma'] ** 2 + sr['sigma'] ** 2)
+
+
 # ---------------------------------------------------------------- 统计
 def _stats(values, sigma_read):
     vals = np.asarray([float(v) for v in values if v not in (None, '')], dtype=float)
@@ -201,6 +368,9 @@ def _qc_row(c, gamma_inf, sigma_gamma):
 # ---------------------------------------------------------------- 单方法分析
 def _analyze_bubble(data, cfg):
     axis = 'lg' if cfg.get('conc_axis') == 'lg' else 'ln'
+    data, hinfo = complete_heights(data, cfg)
+    mode = hinfo.get('mode', 'both')
+    keys = hinfo.get('keys') or {}
     T = float(data.get('temperature_bubble', 30.0))
     gw = float(data.get('gamma_water') or gamma_water_default(T))
     sigma_read = float(data.get('sigma_read', 0.02))
@@ -210,22 +380,26 @@ def _analyze_bubble(data, cfg):
     zl = _stats(zero.get('left') or [], sigma_read)
     zr = _stats(zero.get('right') or [], sigma_read)
     dh0 = zr['mean'] - zl['mean']
-    sigma_dh0 = math.sqrt(zl['sigma'] ** 2 + zr['sigma'] ** 2)
+    z_mode = keys.get('zero') or 'both'
+    sigma_dh0 = _dh_sigma(zl, zr, z_mode, sigma_read)
 
     water = data.get('water_bubble') or {}
     wl = _stats(water.get('left') or [], sigma_read)
     wr = _stats(water.get('right') or [], sigma_read)
     dhw = (wr['mean'] - wl['mean']) - (dh0 if zero_corr else 0.0)
-    sigma_dhw = math.sqrt(wl['sigma'] ** 2 + wr['sigma'] ** 2 +
+    w_mode = keys.get('water_bubble') or 'both'
+    sigma_dhw = math.sqrt(_dh_sigma(wl, wr, w_mode, sigma_read) ** 2 +
                           (sigma_dh0 ** 2 if zero_corr else 0.0))
 
     rows = []
-    for it in data.get('bubble') or []:
+    row_modes = keys.get('bubble') or []
+    for i, it in enumerate(data.get('bubble') or []):
         c = float(it.get('c') or 0.0)
         sl = _stats(it.get('left') or [], sigma_read)
         sr = _stats(it.get('right') or [], sigma_read)
+        r_mode = (row_modes[i] if i < len(row_modes) else None) or 'both'
         dh = (sr['mean'] - sl['mean']) - (dh0 if zero_corr else 0.0)
-        sigma_dh = math.sqrt(sl['sigma'] ** 2 + sr['sigma'] ** 2 +
+        sigma_dh = math.sqrt(_dh_sigma(sl, sr, r_mode, sigma_read) ** 2 +
                              (sigma_dh0 ** 2 if zero_corr else 0.0))
         gamma = gw * dh / dhw if dhw else float('nan')
         sigma_gamma = (abs(gamma) * math.sqrt((sigma_dh / dh) ** 2 +
@@ -233,6 +407,7 @@ def _analyze_bubble(data, cfg):
                        if dh and dhw else float('nan'))
         rows.append(dict(c=c, left=sl, right=sr, dh=dh, sigma_dh=sigma_dh,
                          gamma=gamma, sigma_gamma=sigma_gamma,
+                         derived=(r_mode != 'both'),
                          fit=bool(it.get('fit', False))))
 
     fit_rows = [r for r in rows if r['fit'] and r['c'] > 0 and np.isfinite(r['gamma'])]
@@ -256,7 +431,7 @@ def _analyze_bubble(data, cfg):
 
     return dict(method='bubble', label='最大气泡压力法', axis=axis,
                 temperature=T, gamma_water=gw, zero_correction=zero_corr,
-                sigma_read=sigma_read,
+                sigma_read=sigma_read, height=hinfo,
                 zero=dict(left=zl, right=zr, dh=dh0, sigma_dh=sigma_dh0),
                 water=dict(left=wl, right=wr, dh=dhw, sigma_dh=sigma_dhw),
                 rows=rows, fit_rows=fit_rows, fit=fit,
@@ -330,6 +505,28 @@ def analyze(data, cfg=None):
         warnings.append('压力计零点差 %.2f cm 偏大，确认零点读数是否正确'
                         % bubble['zero']['dh'])
 
+    hi = bubble.get('height') or {}
+    if hi.get('need') and not hi.get('sum'):
+        warnings.append('有 %d 组液柱只填了一侧，但没能确定两臂高度之和 S：'
+                        '请填写「两臂高度总和」，或先录入一组两侧读数（零点即可）'
+                        % hi['need'])
+    elif hi.get('mode') in ('left', 'right') and hi.get('sum'):
+        if hi.get('filled'):
+            warnings.append('液柱只读%s侧：%s侧 %d 个读数由 S = %.2f cm 换算（%s）。'
+                            '报告中已注明换算关系。'
+                            % ('左' if hi['mode'] == 'left' else '右',
+                               '右' if hi['mode'] == 'left' else '左',
+                               hi['filled'], hi['sum'],
+                               '手填' if hi.get('source') == 'manual' else '由数据估计'))
+        else:
+            warnings.append('已选「只读%s侧」，但现有数据两侧都有读数，本次按实测值计算；'
+                            '在界面里灰显的一侧不会被提交'
+                            % ('左' if hi['mode'] == 'left' else '右'))
+    elif hi.get('fallback') and hi.get('filled'):
+        warnings.append('%d 个液柱读数只有一侧，已按 S = %.2f cm 自动换算补齐；'
+                        '如需只读一侧可在「液柱读数方式」里明确选择'
+                        % (hi['filled'], hi['sum']))
+
     comparison = {}
     if (np.isfinite(bubble['gamma_inf']) and np.isfinite(plate['gamma_inf'])
             and bubble['gamma_inf'] != 0):
@@ -344,4 +541,6 @@ def analyze(data, cfg=None):
     return dict(bubble=bubble, plate=plate, comparison=comparison,
                 warnings=warnings, q_literature=Q_LITERATURE,
                 axis=bubble['axis'],
+                height=dict(bubble.get('height') or {},
+                            estimate=estimate_height_sum(data)),
                 config=dict(cfg))

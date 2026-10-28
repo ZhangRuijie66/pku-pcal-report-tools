@@ -187,7 +187,9 @@ def _summary(an):
                        right_sigma=r.get('right', {}).get('sigma'),
                        dh=r.get('dh'), sigma_dh=r.get('sigma_dh'),
                        gamma=r.get('gamma'), sigma_gamma=r.get('sigma_gamma'),
+                       derived=r.get('derived'),
                        fit=r.get('fit')) for r in m['rows']],
+            height=m.get('height'),
             fit=m['fit'],
             gamma_inf=m['gamma_inf'], sigma_gamma_inf=m['sigma_gamma_inf'],
             q=m['q'], sigma_q=m['sigma_q'], qc_rows=m['qc_rows'])
@@ -202,6 +204,7 @@ def _summary(an):
         'data': data,
         'bubble': m_payload(an['bubble']),
         'plate': m_payload(an['plate']),
+        'height': an.get('height'),
         'comparison': an['comparison'],
         'warnings': an['warnings'],
         'q_literature': an['q_literature'],
