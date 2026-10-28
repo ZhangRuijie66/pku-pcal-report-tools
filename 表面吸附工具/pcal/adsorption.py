@@ -378,9 +378,9 @@ def _cfg_int(cfg, key, default):
     return v if v >= 2 else default
 
 
-def _repeat_n(cfg, data, groups, sides):
-    """平行测定次数：优先用配置，否则按数据里最长的一组推断。"""
-    n = _cfg_int(cfg, 'repeat_n', 0)
+def _repeat_n(cfg, data, groups, sides, key):
+    """平行测定次数：优先用配置（两法各一个），否则按数据里最长的一组推断。"""
+    n = _cfg_int(cfg, key, 0)
     if n:
         return n
 
@@ -390,8 +390,8 @@ def _repeat_n(cfg, data, groups, sides):
             for sk in sides:
                 n = max(n, len(obj.get(sk) or []))
 
-    for key in groups:
-        value = data.get(key)
+    for g in groups:
+        value = data.get(g)
         if isinstance(value, list):
             for it in value:
                 scan(it)
@@ -468,7 +468,7 @@ def _analyze_bubble(data, cfg):
                 temperature=T, gamma_water=gw, zero_correction=zero_corr,
                 sigma_read=sigma_read, height=hinfo,
                 repeat_n=_repeat_n(cfg, data, ('zero', 'water_bubble', 'bubble'),
-                                   ('left', 'right')),
+                                   ('left', 'right'), 'repeat_n_bubble'),
                 zero=dict(left=zl, right=zr, dh=dh0, sigma_dh=sigma_dh0),
                 water=dict(left=wl, right=wr, dh=dhw, sigma_dh=sigma_dhw),
                 rows=rows, fit_rows=fit_rows, fit=fit,
@@ -510,7 +510,7 @@ def _analyze_plate(data, cfg):
 
     return dict(method='plate', label='吊片法', axis=axis,
                 temperature=T, sigma_inst=sigma_inst, water=water,
-                repeat_n=_repeat_n(cfg, data, ('plate',), ('gamma',)),
+                repeat_n=_repeat_n(cfg, data, ('plate',), ('gamma',), 'repeat_n_plate'),
                 rows=rows, fit_rows=fit_rows, fit=fit,
                 gamma_inf=gamma_inf, sigma_gamma_inf=sigma_gamma_inf,
                 q=q, sigma_q=sigma_q, qc_rows=qc_rows)

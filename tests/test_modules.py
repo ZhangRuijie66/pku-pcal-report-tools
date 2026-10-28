@@ -109,7 +109,7 @@ class ModuleRegressionTests(unittest.TestCase):
             self.assertIn('吊片法', text)
 
     def test_surface_adsorption_repeat_n(self):
-        """平行测定次数可调：n=5 时统计个数与导出列数都跟着走。"""
+        """两种方法各自设平行次数：n 只影响自己那一半，导出列数跟着走。"""
         adsorption = load_module('表面吸附工具', 'adsorption')
         analysis = load_module('表面吸附工具', 'analysis')
         exportdata = load_module('表面吸附工具', 'exportdata')
@@ -120,14 +120,31 @@ class ModuleRegressionTests(unittest.TestCase):
                             right=list(r['right']) + [r['right'][-1] - 0.01,
                                                       r['right'][-1] + 0.01])
                        for r in d['bubble']]
+        d['plate'] = [dict(r, gamma=list(r['gamma'])[:2]) for r in d['plate']]
         cfg = analysis.default_config()
-        cfg['repeat_n'] = 5
+        cfg['repeat_n_bubble'] = 5
+        cfg['repeat_n_plate'] = 2
         an = adsorption.analyze(d, cfg)
         self.assertEqual(an['bubble']['repeat_n'], 5)
         self.assertEqual(an['bubble']['rows'][0]['left']['n'], 5)
-        heads = {n: h for n, h, _ in exportdata.tables(an)}['最大气泡法']
-        self.assertIn('h_l5 /cm', heads)
-        self.assertIn('h_r5 /cm', heads)
+        self.assertEqual(an['plate']['repeat_n'], 2)
+        self.assertEqual(an['plate']['rows'][0]['stats']['n'], 2)
+        sheets = {n: h for n, h, _ in exportdata.tables(an)}
+        self.assertIn('h_l5 /cm', sheets['最大气泡法'])
+        self.assertIn('h_r5 /cm', sheets['最大气泡法'])
+        self.assertIn('γ2 /(mN·m⁻¹)', sheets['吊片法'])
+        self.assertNotIn('γ3 /(mN·m⁻¹)', sheets['吊片法'])
+
+    def test_surface_adsorption_repeat_n_legacy(self):
+        """旧 settings 只有一个 repeat_n，升级后应拆给两个方法。"""
+        analysis = load_module('表面吸附工具', 'analysis')
+        cfg = analysis.default_config_with_saved({'repeat_n': 4})
+        self.assertEqual(cfg['repeat_n_bubble'], 4)
+        self.assertEqual(cfg['repeat_n_plate'], 4)
+        cfg2 = analysis.default_config_with_saved(
+            {'repeat_n': 4, 'repeat_n_plate': 2})
+        self.assertEqual(cfg2['repeat_n_bubble'], 4)
+        self.assertEqual(cfg2['repeat_n_plate'], 2)
 
     def test_magnetic_susceptibility(self):
         an = self.case('磁化率').an

@@ -6,7 +6,8 @@ const COVER_FIELDS = ['student_name', 'student_id', 'group', 'group_no',
   'date', 'room_temp', 'pressure'];
 const DATA_FIELDS = ['temperature_bubble', 'temperature_plate', 'gamma_water',
   'sigma_read', 'sigma_plate'];
-const PROC_FIELDS = ['conc_axis', 'zero_correction', 'height_mode', 'repeat_n'];
+const PROC_FIELDS = ['conc_axis', 'zero_correction', 'height_mode',
+  'repeat_n_bubble', 'repeat_n_plate'];
 
 let STATE = null;
 let DATA = null;
@@ -71,8 +72,9 @@ function sumValue() {
 }
 function rnd(v) { return Math.round(v * 1e4) / 1e4; }
 function range(n) { return Array.from({ length: n }, (_, i) => i); }
-function repeatN() {
-  const v = Number(($('repeat_n') || {}).value);
+function repeatN(kind) {
+  const el = $(kind === 'plate' ? 'repeat_n_plate' : 'repeat_n_bubble');
+  const v = Number((el || {}).value);
   return (isFinite(v) && v >= 2 && v <= 6) ? Math.round(v) : 3;
 }
 function autoValue(srcValue) {
@@ -120,7 +122,8 @@ function readConfig() {
   cfg.zero_correction = $('zero_correction').value === '1';
   cfg.height_mode = $('height_mode').value || 'both';
   cfg.height_sum = $('height_sum').value === '' ? 0 : Number($('height_sum').value);
-  cfg.repeat_n = repeatN();
+  cfg.repeat_n_bubble = repeatN('bubble');
+  cfg.repeat_n_plate = repeatN('plate');
   return cfg;
 }
 function fillData(d) {
@@ -210,7 +213,7 @@ function renderTrio(kind) {
   const obj = (DATA && DATA[key]) || {};
   const left = obj.left || [], right = obj.right || [];
   const dside = derivedSide();
-  const n = repeatN();
+  const n = repeatN('bubble');
   let html = '<thead><tr><th>组别</th><th>h_left / cm</th><th>h_right / cm</th></tr></thead><tbody>';
   for (let i = 0; i < n; i += 1) {
     const cells = ['left', 'right'].map((side) => {
@@ -229,7 +232,7 @@ function renderRows(kind) {
   const tbl = kind === 'bubble' ? $('bubbleTable') : $('plateTable');
   const rows = (DATA && DATA[kind]) || [];
   const dside = derivedSide();
-  const n = repeatN();
+  const n = repeatN(kind);
   let html;
   if (kind === 'bubble') {
     html = '<thead><tr><th>#</th><th>c / (mol·dm⁻³)</th>' +
@@ -513,10 +516,10 @@ async function importFile() {
     });
     if (kind === 'bubble') {
       DATA.bubble = r.rows;
-      syncRepeatN(r.rows.map((x) => (x.left || []).length));
+      syncRepeatN('bubble', r.rows.map((x) => (x.left || []).length));
     } else if (kind === 'plate') {
       DATA.plate = r.rows;
-      syncRepeatN(r.rows.map((x) => (x.gamma || []).length));
+      syncRepeatN('plate', r.rows.map((x) => (x.gamma || []).length));
     } else DATA[kind] = { left: r.left, right: r.right };
     fillData(DATA);
     await recalc();
@@ -525,12 +528,14 @@ async function importFile() {
   finally { busy(false); $('fileInput').value = ''; }
 }
 
-/* 导入的数据若是 5 次平行，自动把「平行测定次数」调过去 */
-function syncRepeatN(lengths) {
+/* 导入的数据若是 5 次平行，自动把对应方法的次数下拉调过去 */
+function syncRepeatN(kind, lengths) {
+  const el = $(kind === 'plate' ? 'repeat_n_plate' : 'repeat_n_bubble');
   const n = Math.max(0, ...lengths.filter((v) => isFinite(v)));
-  if (n >= 2 && n <= 6 && String(n) !== $('repeat_n').value) {
-    $('repeat_n').value = String(n);
-    toast('已按导入数据把平行次数设为 ' + n + ' 次');
+  if (el && n >= 2 && n <= 6 && String(n) !== el.value) {
+    el.value = String(n);
+    toast('已按导入数据把' + (kind === 'plate' ? '吊片法' : '气泡法')
+      + '平行次数设为 ' + n + ' 次');
   }
 }
 
@@ -568,7 +573,7 @@ function estimateSumFromDom() {
       tr.querySelector('input[data-side="right"]'));
   });
   document.querySelectorAll('#bubbleTable tbody tr').forEach((tr) => {
-    for (let j = 0; j < repeatN(); j += 1) {
+    for (let j = 0; j < repeatN('bubble'); j += 1) {
       push(tr.querySelector('input[data-f="left"][data-i="' + j + '"]'),
         tr.querySelector('input[data-f="right"][data-i="' + j + '"]'));
     }
@@ -621,13 +626,16 @@ function bindUI() {
   $('btnAddPlate').onclick = () => addRow('plate');
   $('chartKind').onchange = drawChart;
   $('height_mode').onchange = onModeChange;
-  $('repeat_n').onchange = () => {
+  const onRepeatChange = (kind) => {
     DATA = readData();                 // 先按旧列数把已填的读数收进 DATA
     refreshTables();
     recalc();
     persistConfig();
-    toast('已切换为每点 ' + repeatN() + ' 次平行（多出的列不再显示）');
+    toast((kind === 'plate' ? '吊片法' : '气泡法') + '已切换为每点 '
+      + repeatN(kind) + ' 次平行（多出的列不再显示）');
   };
+  $('repeat_n_bubble').onchange = () => onRepeatChange('bubble');
+  $('repeat_n_plate').onchange = () => onRepeatChange('plate');
   $('height_sum').onchange = () => {
     DATA = readData();
     refreshTables();

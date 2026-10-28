@@ -24,7 +24,8 @@ def default_config():
         'zero_correction': True,    # 是否扣除压力计零点
         'height_mode': 'both',      # 'both' 两侧都读；'left' 只读左侧；'right' 只读右侧
         'height_sum': 0.0,          # 两臂液柱高度之和 S / cm，0 = 自动估计
-        'repeat_n': 3,              # 每个点的平行测定次数
+        'repeat_n_bubble': 3,       # 最大气泡压力法每个点的平行次数
+        'repeat_n_plate': 3,        # 吊片法每个点的平行次数
         'report_title': '溶液表面吸附的测定',
     }
 
@@ -32,14 +33,21 @@ def default_config():
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
     'room_temp', 'pressure', 'conc_axis', 'zero_correction',
-    'height_mode', 'height_sum', 'repeat_n',
+    'height_mode', 'height_sum', 'repeat_n_bubble', 'repeat_n_plate',
 )
 
 
 def merge_saved(cfg, saved):
-    for key, value in (saved or {}).items():
+    saved = dict(saved or {})
+    # 旧版只有一个 repeat_n（两法共用），升级时拆给两个方法
+    legacy = saved.pop('repeat_n', None)
+    for key, value in saved.items():
         if key in PERSIST_KEYS and value is not None:
             cfg[key] = value
+    if legacy is not None:
+        for key in ('repeat_n_bubble', 'repeat_n_plate'):
+            if key not in saved:
+                cfg[key] = legacy
     return cfg
 
 
