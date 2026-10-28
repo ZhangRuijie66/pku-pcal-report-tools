@@ -122,26 +122,31 @@ def parse_numeric_rows(text):
 
 
 def rows_to_bubble(rows):
-    """CSV → 最大气泡压力法数据行：c, l1,l2,l3, r1,r2,r3（允许 4 列：c,l,r）。"""
+    """CSV → 最大气泡压力法数据行：c, 左×n, 右×n（n 由列数推出来）。
+
+    n=3 时是 7 列（c, l1~l3, r1~r3）；n=5 时 11 列；也允许 4 列（c, l, r, 拟合标记）
+    和 3 列（c, l, r）。
+    """
     out = []
     for r in rows:
-        if len(r) >= 7:
-            out.append({'c': r[0], 'left': r[1:4], 'right': r[4:7], 'fit': False})
-        elif len(r) == 3:
-            out.append({'c': r[0], 'left': [r[1]], 'right': [r[2]], 'fit': False})
-        elif len(r) == 4:
+        n_cols = len(r)
+        if n_cols >= 5 and (n_cols - 1) % 2 == 0:
+            n = (n_cols - 1) // 2
+            out.append({'c': r[0], 'left': list(r[1:1 + n]),
+                        'right': list(r[1 + n:1 + 2 * n]), 'fit': False})
+        elif n_cols == 4:
             out.append({'c': r[0], 'left': [r[1]], 'right': [r[2]], 'fit': True})
+        elif n_cols == 3:
+            out.append({'c': r[0], 'left': [r[1]], 'right': [r[2]], 'fit': False})
     return out
 
 
 def rows_to_plate(rows):
-    """CSV → 吊片法数据行：c, γ1,γ2,γ3（允许 2 列：c,γ）。"""
+    """CSV → 吊片法数据行：c, γ×n（列数不定时按实际列收，最少 2 列）。"""
     out = []
     for r in rows:
-        if len(r) >= 4:
-            out.append({'c': r[0], 'gamma': r[1:4], 'fit': False})
-        elif len(r) == 3:
-            out.append({'c': r[0], 'gamma': r[1:3], 'fit': False})
+        if len(r) >= 3:
+            out.append({'c': r[0], 'gamma': list(r[1:]), 'fit': False})
         elif len(r) == 2:
             out.append({'c': r[0], 'gamma': [r[1]], 'fit': False})
     return out
@@ -365,6 +370,36 @@ def _qc_row(c, gamma_inf, sigma_gamma):
     return dict(c=c, qc=qc, sigma=sigma)
 
 
+def _cfg_int(cfg, key, default):
+    try:
+        v = int(cfg.get(key))
+    except (TypeError, ValueError):
+        return default
+    return v if v >= 2 else default
+
+
+def _repeat_n(cfg, data, groups, sides):
+    """平行测定次数：优先用配置，否则按数据里最长的一组推断。"""
+    n = _cfg_int(cfg, 'repeat_n', 0)
+    if n:
+        return n
+
+    def scan(obj):
+        nonlocal n
+        if isinstance(obj, dict):
+            for sk in sides:
+                n = max(n, len(obj.get(sk) or []))
+
+    for key in groups:
+        value = data.get(key)
+        if isinstance(value, list):
+            for it in value:
+                scan(it)
+        else:
+            scan(value)
+    return n or 3
+
+
 # ---------------------------------------------------------------- 单方法分析
 def _analyze_bubble(data, cfg):
     axis = 'lg' if cfg.get('conc_axis') == 'lg' else 'ln'
@@ -432,6 +467,8 @@ def _analyze_bubble(data, cfg):
     return dict(method='bubble', label='最大气泡压力法', axis=axis,
                 temperature=T, gamma_water=gw, zero_correction=zero_corr,
                 sigma_read=sigma_read, height=hinfo,
+                repeat_n=_repeat_n(cfg, data, ('zero', 'water_bubble', 'bubble'),
+                                   ('left', 'right')),
                 zero=dict(left=zl, right=zr, dh=dh0, sigma_dh=sigma_dh0),
                 water=dict(left=wl, right=wr, dh=dhw, sigma_dh=sigma_dhw),
                 rows=rows, fit_rows=fit_rows, fit=fit,
@@ -473,6 +510,7 @@ def _analyze_plate(data, cfg):
 
     return dict(method='plate', label='吊片法', axis=axis,
                 temperature=T, sigma_inst=sigma_inst, water=water,
+                repeat_n=_repeat_n(cfg, data, ('plate',), ('gamma',)),
                 rows=rows, fit_rows=fit_rows, fit=fit,
                 gamma_inf=gamma_inf, sigma_gamma_inf=sigma_gamma_inf,
                 q=q, sigma_q=sigma_q, qc_rows=qc_rows)

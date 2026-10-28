@@ -108,6 +108,27 @@ class ModuleRegressionTests(unittest.TestCase):
             self.assertIn('最大气泡法', text)
             self.assertIn('吊片法', text)
 
+    def test_surface_adsorption_repeat_n(self):
+        """平行测定次数可调：n=5 时统计个数与导出列数都跟着走。"""
+        adsorption = load_module('表面吸附工具', 'adsorption')
+        analysis = load_module('表面吸附工具', 'analysis')
+        exportdata = load_module('表面吸附工具', 'exportdata')
+        d = adsorption.sample_data()
+        d['bubble'] = [dict(r,
+                            left=list(r['left']) + [r['left'][-1] + 0.01,
+                                                    r['left'][-1] - 0.01],
+                            right=list(r['right']) + [r['right'][-1] - 0.01,
+                                                      r['right'][-1] + 0.01])
+                       for r in d['bubble']]
+        cfg = analysis.default_config()
+        cfg['repeat_n'] = 5
+        an = adsorption.analyze(d, cfg)
+        self.assertEqual(an['bubble']['repeat_n'], 5)
+        self.assertEqual(an['bubble']['rows'][0]['left']['n'], 5)
+        heads = {n: h for n, h, _ in exportdata.tables(an)}['最大气泡法']
+        self.assertIn('h_l5 /cm', heads)
+        self.assertIn('h_r5 /cm', heads)
+
     def test_magnetic_susceptibility(self):
         an = self.case('磁化率').an
         self.close(an['chi_std'], 4.0242886e-07, label='chi_std')

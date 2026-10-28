@@ -117,15 +117,17 @@ def _sheet_result(an):
 
 def _sheet_bubble(an):
     b = an['bubble']
-    headers = ['c /(mol·dm⁻³)', 'h_l1 /cm', 'h_l2 /cm', 'h_l3 /cm',
-               'h_r1 /cm', 'h_r2 /cm', 'h_r3 /cm',
-               'h_l 均值 /cm', 'h_r 均值 /cm', 'Δh /cm', 'σ(Δh) /cm',
-               'γ /(mN·m⁻¹)', 'σ(γ) /(mN·m⁻¹)', '参与拟合', 'h_r 来源']
+    n = int(b.get('repeat_n') or 3)
+    headers = (['c /(mol·dm⁻³)']
+               + ['h_l%d /cm' % (j + 1) for j in range(n)]
+               + ['h_r%d /cm' % (j + 1) for j in range(n)]
+               + ['h_l 均值 /cm', 'h_r 均值 /cm', 'Δh /cm', 'σ(Δh) /cm',
+                  'γ /(mN·m⁻¹)', 'σ(γ) /(mN·m⁻¹)', '参与拟合', 'h_r 来源'])
     rows = []
     for r in b['rows']:
         rows.append([_num(r['c'], 6)]
-                    + [_num(v, 3) for v in _side_values(r['left'])]
-                    + [_num(v, 3) for v in _side_values(r['right'])]
+                    + [_num(v, 3) for v in _side_values(r['left'], n)]
+                    + [_num(v, 3) for v in _side_values(r['right'], n)]
                     + [_num(r['left']['mean'], 3), _num(r['right']['mean'], 3),
                        _num(r['dh'], 3), _num(r['sigma_dh'], 4),
                        _num(r['gamma'], 2), _num(r['sigma_gamma'], 2),
@@ -136,28 +138,32 @@ def _sheet_bubble(an):
 
 def _sheet_trio(an):
     b = an['bubble']
-    headers = ['项目', 'h_l1 /cm', 'h_l2 /cm', 'h_l3 /cm',
-               'h_r1 /cm', 'h_r2 /cm', 'h_r3 /cm',
-               'h_l 均值 /cm', 'h_r 均值 /cm', 'Δh /cm', 'σ(Δh) /cm']
+    n = int(b.get('repeat_n') or 3)
+    headers = (['项目']
+               + ['h_l%d /cm' % (j + 1) for j in range(n)]
+               + ['h_r%d /cm' % (j + 1) for j in range(n)]
+               + ['h_l 均值 /cm', 'h_r 均值 /cm', 'Δh /cm', 'σ(Δh) /cm'])
     rows = []
-    for label, key, dh in (('压力计零点', 'zero', 'dh'), ('纯水', 'water', 'dh')):
+    for label, key in (('压力计零点', 'zero'), ('纯水', 'water')):
         obj = b[key]
         rows.append([label]
-                    + [_num(v, 3) for v in _side_values(obj['left'])]
-                    + [_num(v, 3) for v in _side_values(obj['right'])]
+                    + [_num(v, 3) for v in _side_values(obj['left'], n)]
+                    + [_num(v, 3) for v in _side_values(obj['right'], n)]
                     + [_num(obj['left']['mean'], 3), _num(obj['right']['mean'], 3),
-                       _num(obj[dh], 3), _num(obj['sigma_dh'], 4)])
+                       _num(obj['dh'], 3), _num(obj['sigma_dh'], 4)])
     return '零点与纯水', headers, rows
 
 
 def _sheet_plate(an):
     p = an['plate']
-    headers = ['c /(mol·dm⁻³)', 'γ1 /(mN·m⁻¹)', 'γ2 /(mN·m⁻¹)', 'γ3 /(mN·m⁻¹)',
-               'γ 均值 /(mN·m⁻¹)', 'σ(γ)', '参与拟合']
+    n = int(p.get('repeat_n') or 3)
+    headers = (['c /(mol·dm⁻³)']
+               + ['γ%d /(mN·m⁻¹)' % (j + 1) for j in range(n)]
+               + ['γ 均值 /(mN·m⁻¹)', 'σ(γ)', '参与拟合'])
     rows = []
     for r in p['rows']:
         rows.append([_num(r['c'], 6)]
-                    + [_num(v, 2) for v in _side_values(r['stats'])]
+                    + [_num(v, 2) for v in _side_values(r['stats'], n)]
                     + [_num(r['gamma'], 2), _num(r['sigma_gamma'], 3),
                        '是' if r['fit'] else '否'])
     return '吊片法', headers, rows

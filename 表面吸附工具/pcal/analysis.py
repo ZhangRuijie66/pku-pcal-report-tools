@@ -24,6 +24,7 @@ def default_config():
         'zero_correction': True,    # 是否扣除压力计零点
         'height_mode': 'both',      # 'both' 两侧都读；'left' 只读左侧；'right' 只读右侧
         'height_sum': 0.0,          # 两臂液柱高度之和 S / cm，0 = 自动估计
+        'repeat_n': 3,              # 每个点的平行测定次数
         'report_title': '溶液表面吸附的测定',
     }
 
@@ -31,7 +32,7 @@ def default_config():
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
     'room_temp', 'pressure', 'conc_axis', 'zero_correction',
-    'height_mode', 'height_sum',
+    'height_mode', 'height_sum', 'repeat_n',
 )
 
 

@@ -169,6 +169,7 @@ def _summary(an):
         return dict(
             method=m['method'], label=m['label'], axis=m['axis'],
             temperature=m['temperature'], gamma_water=m.get('gamma_water'),
+            repeat_n=m.get('repeat_n'),
             zero_correction=m.get('zero_correction'),
             sigma_read=m.get('sigma_read'), sigma_inst=m.get('sigma_inst'),
             zero=dict(dh=m.get('zero', {}).get('dh'),
