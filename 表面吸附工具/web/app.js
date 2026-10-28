@@ -75,7 +75,7 @@ function range(n) { return Array.from({ length: n }, (_, i) => i); }
 function repeatN(kind) {
   const el = $(kind === 'plate' ? 'repeat_n_plate' : 'repeat_n_bubble');
   const v = Number((el || {}).value);
-  return (isFinite(v) && v >= 2 && v <= 6) ? Math.round(v) : 3;
+  return (isFinite(v) && v >= 1 && v <= 6) ? Math.round(v) : 3;
 }
 function autoValue(srcValue) {
   const total = sumValue();
@@ -532,7 +532,7 @@ async function importFile() {
 function syncRepeatN(kind, lengths) {
   const el = $(kind === 'plate' ? 'repeat_n_plate' : 'repeat_n_bubble');
   const n = Math.max(0, ...lengths.filter((v) => isFinite(v)));
-  if (el && n >= 2 && n <= 6 && String(n) !== el.value) {
+  if (el && n >= 1 && n <= 6 && String(n) !== el.value) {
     el.value = String(n);
     toast('已按导入数据把' + (kind === 'plate' ? '吊片法' : '气泡法')
       + '平行次数设为 ' + n + ' 次');

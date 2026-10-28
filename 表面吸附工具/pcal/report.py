@@ -54,6 +54,15 @@ def cn_num(n):
     return _CN_NUM.get(n, str(n))
 
 
+def _n_reads(n):
+    """句子里的"几次读数"：1 → 单次，其余 → 两次/三次。"""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 3
+    return '单次' if n == 1 else '%s次' % cn_num(n)
+
+
 def _zero_same(z):
     """零点两侧各次读数是否完全相同——决定"由于读数相同"那句能不能写。"""
     for side in ('left', 'right'):
@@ -258,19 +267,25 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     ])
 
     rb.heading('2.2 实验内容', 2)
+    b_n = int(b.get('repeat_n', 3) or 3)
+    p_n = int(p.get('repeat_n', 3) or 3)
+    zero_step = ('只读取一次' if b_n == 1
+                 else '重复%s次取平均' % cn_num(b_n))
+    plate_step = ('每个样品测量一次' if p_n == 1
+                  else '每个样品平行测量%s次' % cn_num(p_n))
     rb.para('最大气泡压力法：调节恒温槽至设定温度，将约 2 mL 待测液装入试管，'
-            '使毛细管尖端与液面刚好接触。读取压力计零点位置，重复%s次取平均。'
+            '使毛细管尖端与液面刚好接触。读取压力计零点位置，%s。'
             '用双联球给缓冲瓶加压，调节活塞使气泡从产生到爆裂的时间大于 8 s；'
             '气泡逸出毛细管尖端时压力计水柱差突然下降，记录下降前左右两侧水柱位置，'
             '重复 2~3 次。用同样方法依次测定纯水和各浓度正丁醇溶液的液柱高度差，'
             '每次测量前用新溶液润洗毛细管内壁和试管 2~3 次。'
-            % cn_num(b.get('repeat_n', 3)))
+            % zero_step)
     rb.para('吊片法：接通表面张力仪电源，挂上吊钩，预热稳定 30 min。'
             '用镊子夹取白金板，用去离子水冲洗，再用酒精灯灼烧 20~30 s 至变红，'
             '冷却后挂在吊钩上。用待测液润洗样品皿后加入待测液，置于升降样品台上；'
             '按去皮键清零，关上玻璃门，按手动/自动键切换至自动状态，'
-            '按向上键开始自动测定，待读数稳定后记录表面张力。每个样品平行测量%s次，'
-            '更换样品前重新清洗并灼烧白金板。' % cn_num(p.get('repeat_n', 3)))
+            '按向上键开始自动测定，待读数稳定后记录表面张力。%s，'
+            '更换样品前重新清洗并灼烧白金板。' % plate_step)
     rb.para('两种方法均由全组同学共同完成，每人负责部分浓度的测量，最后共享数据；'
             '本报告对全部浓度统一处理。')
 
@@ -480,23 +495,29 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
             ('t', 'h_{%s}' % sub_read, ITALIC), '，%s侧按 ' % calc_side,
             ('t', 'h_{%s} = S - h_{%s}' % (sub_calc, sub_read), ITALIC),
             ' 换算，表1~表3 中该侧数据均为换算值。加压前先读取压力计零点，'
-            '%s次读数的两侧液柱如表1所示；零点差 ' % cn_num(n),
+            '%s读数的两侧液柱如表1所示；零点差 ' % _n_reads(n),
             ('t', 'Δh_{0}', ITALIC),
             ' 的不确定度来自读数误差与 ',
             ('t', 'S', ITALIC), ' 的定值误差。',
         ])
     else:
         same = _zero_same(m['zero'])
+        if n == 1:
+            tail = ' 如表1所示。零点只测量一次，零点差 '
+            tail2 = ' 的不确定度只来自仪器读数误差。'
+        elif same:
+            tail = ' 如表1所示。由于 %s次读数相同，零点差 ' % cn_num(n)
+            tail2 = ' 的不确定度只来自仪器读数误差。'
+        else:
+            tail = ' 如表1所示。零点差 '
+            tail2 = ' 由 %s次读数的标准误差与仪器读数误差合成。' % cn_num(n)
         rb.para([
             '最大气泡压力法的全部数据均在 %.2f ℃ 下测得。加压前先读取压力计零点，'
-            '%s次读数的左侧液柱 ' % (m['temperature'], cn_num(n)),
+            '%s读数的左侧液柱 ' % (m['temperature'], _n_reads(n)),
             ('t', 'h_{left}', ITALIC),
             ' 和右侧液柱 ', ('t', 'h_{right}', ITALIC),
-            (' 如表1所示。由于 %s次读数相同，零点差 ' % cn_num(n)) if same else
-            (' 如表1所示。零点差 '),
-            ('t', 'Δh_{0}', ITALIC),
-            (' 的不确定度只来自仪器读数误差。' if same else
-             ' 由 %s次读数的标准误差与仪器读数误差合成。' % cn_num(n)),
+            tail,
+            ('t', 'Δh_{0}', ITALIC), tail2,
         ])
         if hi.get('fallback') and hi.get('filled'):
             rb.para([
@@ -506,12 +527,20 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
                 ('t', 'h_{other} = S - h', ITALIC), '）。',
             ])
     _zero_table(rb, m)
-    rb.para([
-        '取单次读数的不确定度 ', ('t', 'σ_{h}', ITALIC),
-        ' = %.2f cm，%s次平均值的标准不确定度按 ' % (m['sigma_read'], cn_num(n)),
-        ('t', 'σ_{s}', ITALIC), ' = ', ('t', 's/√n', ITALIC),
-        ' 计算，再与读数误差合成：',
-    ], keep_next=True)
+    if n == 1:
+        rb.para([
+            '取仪器读数的不确定度 ', ('t', 'σ_{h}', ITALIC),
+            ' = %.2f cm。只测量一次时平均值即该次读数，' % m['sigma_read'],
+            ('t', 'σ_{s}', ITALIC), ' = 0，合成式退化为 ',
+            ('t', 'σ_{h} = σ_{h,read}', ITALIC), '：',
+        ], keep_next=True)
+    else:
+        rb.para([
+            '取单次读数的不确定度 ', ('t', 'σ_{h}', ITALIC),
+            ' = %.2f cm，%s次平均值的标准不确定度按 ' % (m['sigma_read'], cn_num(n)),
+            ('t', 'σ_{s}', ITALIC), ' = ', ('t', 's/√n', ITALIC),
+            ' 计算，再与读数误差合成：',
+        ], keep_next=True)
     rb.equation(r'\sigma_{h}=\sqrt{\sigma_{s}^{2}+\sigma_{h,read}^{2}},'
                 r'\qquad \sigma_{\Delta h}='
                 r'\sqrt{\sigma_{h,left}^{2}+\sigma_{h,right}^{2}'
@@ -593,10 +622,13 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
                     '在图4中以空心圆标出。')
     else:
         excl_txt = '全部浓度点均参与线性拟合。'
+    p_n = int(m.get('repeat_n', 3) or 3)
+    measure_txt = ('每个样品只测量一次' if p_n == 1
+                   else '每个样品平行测量%s次' % cn_num(p_n))
     rb.para([
-        '吊片法在 %.1f ℃ 下测量。每个样品平行测量%s次，结果列于表6。'
+        '吊片法在 %.1f ℃ 下测量。%s，结果列于表6。'
         '表面张力仪的读数为 mN·m^{-1}（1 mN·m^{-1} = 10^{-3} J·m^{-2}）。'
-        % (m['temperature'], cn_num(m.get('repeat_n', 3))),
+        % (m['temperature'], measure_txt),
         excl_txt,
     ])
     _plate_raw_table(rb, m)
@@ -741,8 +773,10 @@ def _sec_discussion(rb, analysis):
     rb.heading('4.2.2 误差来源', 3)
     rb.para([
         '最大气泡压力法的主要误差来源是压力计读数。单次读数的标准不确定度取 ',
-        '%.2f cm，%s次平均后再与零点差合成，'
-        % (b['sigma_read'], cn_num(b.get('repeat_n', 3))),
+        '%.2f cm，%s与零点差合成，'
+        % (b['sigma_read'],
+           '只测一次、直接' if int(b.get('repeat_n', 3) or 3) == 1
+           else '%s次平均后再' % cn_num(b.get('repeat_n', 3))),
         '得到的 ', ('t', 'σ_{Δh}', ITALIC),
         ' 约为 0.04 cm；由此引起的 ', ('t', 'γ', ITALIC),
         ' 的相对不确定度约为 0.5%。毛细管尖端的浸入深度、气泡产生速度、'
@@ -761,9 +795,12 @@ def _sec_discussion(rb, analysis):
     else:
         excl_seg = '本次所有数据点都参与了拟合。'
     rb.para([
-        '吊片法的误差主要来自平行测量的分散：同一浓度%s次读数的极差可达 1~2 mN·m^{-1}，'
-        % cn_num(p.get('repeat_n', 3)),
-        '明显大于仪器允差。这可能与白金板清洗/灼烧不充分、液面蒸发、'
+        ('吊片法只做了单次测量，本组数据给不出读数重复性；'
+         '同批平行测量的经验是同一浓度多次读数的极差可达 1~2 mN·m^{-1}，'
+         '明显大于仪器允差。' if int(p.get('repeat_n', 3) or 3) == 1 else
+         '吊片法的误差主要来自平行测量的分散：同一浓度%s次读数的极差可达 1~2 mN·m^{-1}，'
+         '明显大于仪器允差。' % cn_num(p.get('repeat_n', 3))),
+        '这可能与白金板清洗/灼烧不充分、液面蒸发、'
         '环境振动以及读数尚未完全稳定有关。',
         excl_seg,
     ])

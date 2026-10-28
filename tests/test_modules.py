@@ -146,6 +146,31 @@ class ModuleRegressionTests(unittest.TestCase):
         self.assertEqual(cfg2['repeat_n_bubble'], 4)
         self.assertEqual(cfg2['repeat_n_plate'], 2)
 
+    def test_surface_adsorption_single_reading(self):
+        """只测一次：n=1，σ 退化成纯仪器项，导出只有一列。"""
+        adsorption = load_module('表面吸附工具', 'adsorption')
+        analysis = load_module('表面吸附工具', 'analysis')
+        exportdata = load_module('表面吸附工具', 'exportdata')
+        d = adsorption.sample_data()
+        d['zero'] = {'left': [21.80], 'right': [22.00]}
+        d['water_bubble'] = {'left': [17.66], 'right': [26.36]}
+        d['bubble'] = [dict(r, left=list(r['left'])[:1], right=list(r['right'])[:1])
+                       for r in d['bubble']]
+        d['plate'] = [dict(r, gamma=list(r['gamma'])[:1]) for r in d['plate']]
+        cfg = analysis.default_config()
+        cfg['repeat_n_bubble'] = 1
+        cfg['repeat_n_plate'] = 1
+        an = adsorption.analyze(d, cfg)
+        self.assertEqual(an['bubble']['repeat_n'], 1)
+        self.assertEqual(an['bubble']['zero']['left']['n'], 1)
+        # 单次：标准误差为 0，σ 就是仪器读数误差
+        self.assertAlmostEqual(an['bubble']['zero']['left']['sigma'], 0.02, places=9)
+        self.assertAlmostEqual(an['plate']['rows'][0]['stats']['sigma'], 0.01, places=9)
+        sheets = {n: h for n, h, _ in exportdata.tables(an)}
+        self.assertIn('h_l1 /cm', sheets['最大气泡法'])
+        self.assertNotIn('h_l2 /cm', sheets['最大气泡法'])
+        self.assertNotIn('γ2 /(mN·m⁻¹)', sheets['吊片法'])
+
     def test_magnetic_susceptibility(self):
         an = self.case('磁化率').an
         self.close(an['chi_std'], 4.0242886e-07, label='chi_std')

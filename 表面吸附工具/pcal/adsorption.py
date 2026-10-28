@@ -375,7 +375,7 @@ def _cfg_int(cfg, key, default):
         v = int(cfg.get(key))
     except (TypeError, ValueError):
         return default
-    return v if v >= 2 else default
+    return v if v >= 1 else default        # 1 = 只测一次
 
 
 def _repeat_n(cfg, data, groups, sides, key):
