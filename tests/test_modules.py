@@ -8,6 +8,7 @@ from pathlib import Path
 
 from audit_docx import audit_docx
 from module_cases import build_cases, generate_report
+from support import load_module
 
 
 class ModuleRegressionTests(unittest.TestCase):
@@ -80,6 +81,32 @@ class ModuleRegressionTests(unittest.TestCase):
         self.close(plate['q'], 0.36673407, label='plate q')
         self.close(an['comparison']['d_gamma'], -1.29e-06, rtol=0.02,
                    label='ΔΓ∞')
+
+    def test_surface_adsorption_tables(self):
+        """数据表导出（xlsx / csv）的表结构，防止改动内核后列错位。"""
+        case = self.case('表面吸附')
+        exportdata = load_module('表面吸附工具', 'exportdata')
+        tabs = exportdata.tables(case.an)
+        self.assertEqual([t[0] for t in tabs],
+                         ['说明', '结果', '最大气泡法', '吊片法',
+                          '零点与纯水', '浓度修正'])
+        heads = {name: hdr for name, hdr, _ in tabs}
+        self.assertEqual(heads['最大气泡法'][0], 'c /(mol·dm⁻³)')
+        self.assertIn('h_r 来源', heads['最大气泡法'])
+        rows = {name: rows for name, _, rows in tabs}
+        self.assertEqual(rows['结果'][0][0], '最大气泡压力法')
+        self.assertEqual(rows['结果'][1][0], '吊片法')
+        self.assertEqual(rows['零点与纯水'][0][0], '压力计零点')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            xp, cp = Path(tmp) / 'a.xlsx', Path(tmp) / 'a.csv'
+            exportdata.write(case.an, str(xp), 'xlsx')
+            exportdata.write(case.an, str(cp), 'csv')
+            self.assertEqual(xp.read_bytes()[:2], b'PK')      # 真 xlsx（zip 包）
+            self.assertGreater(xp.stat().st_size, 5000)
+            text = cp.read_text(encoding='utf-8-sig')
+            self.assertIn('最大气泡法', text)
+            self.assertIn('吊片法', text)
 
     def test_magnetic_susceptibility(self):
         an = self.case('磁化率').an

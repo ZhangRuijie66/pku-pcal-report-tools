@@ -430,6 +430,26 @@ async function doExport() {
   }
 }
 
+/* 把计算结果导出成数据表（xlsx 多工作表 / csv 单张长表） */
+async function exportTable(fmt) {
+  busy(true, '导出数据表…');
+  setStatus('导出中…');
+  try {
+    const r = await api('/api/export_data?fmt=' + encodeURIComponent(fmt), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: readConfig(), data: readData() }),
+    });
+    busy(false);
+    setStatus('已导出数据表');
+    toast('已导出：' + r.path + (r.note ? '（' + r.note + '）' : ''), 7000);
+  } catch (e) {
+    busy(false);
+    setStatus('导出失败：' + e.message, 'err');
+    toast('导出失败：' + e.message, 5000);
+  }
+}
+
 async function saveDefault() {
   busy(true, '保存中…');
   try {
@@ -570,6 +590,8 @@ function bindUI() {
   $('btnExport').onclick = doExport;
   $('btnSaveDefault').onclick = saveDefault;
   $('btnSaveData').onclick = saveData;
+  $('btnXlsx').onclick = () => exportTable('xlsx');
+  $('btnCsv').onclick = () => exportTable('csv');
   $('btnSample').onclick = loadSample;
   $('fileInput').onchange = importFile;
   $('btnAddBubble').onclick = () => addRow('bubble');

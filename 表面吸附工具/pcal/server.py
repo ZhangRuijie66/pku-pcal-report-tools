@@ -25,6 +25,7 @@ sys.path.insert(0, ROOT)
 
 from pcal import adsorption, plotting                      # noqa: E402
 from pcal import report as rpt                             # noqa: E402
+from pcal import exportdata
 from pcal import profile
 from pcal import workspace
 from pcal.analysis import (default_config, default_config_with_saved,  # noqa: E402
@@ -291,6 +292,35 @@ def _export(cfg, data):
     return dict(ok=True, path=out, note=note, logs=logs, figures=plots)
 
 
+def _data_target(path):
+    """数据表允许覆盖同名文件（它是中间产物），只有被 Excel 占用时才换名。"""
+    if not _locked(path):
+        return path, ''
+    base, ext = os.path.splitext(path)
+    for i in range(2, 52):
+        cand = '%s(%d)%s' % (base, i, ext)
+        if not _locked(cand):
+            return cand, '同名数据表正被 Excel 打开，已改名为 %s' % os.path.basename(cand)
+    return path, ''
+
+
+def _export_data(cfg, data, fmt='xlsx'):
+    """把计算结果导出成 xlsx / csv。只读，不回写 data/表面吸附数据.json。"""
+    fmt = 'csv' if str(fmt).lower() == 'csv' else 'xlsx'
+    an = _analysis(cfg, data)
+    name = _safe_filename(_report_filename(cfg))
+    stem = os.path.splitext(name)[0]
+    out_dir = os.path.join(OUT_DIR, stem)
+    path = exportdata.suggest_path(out_dir, stem, fmt)
+    path, note = _data_target(path)
+    try:
+        exportdata.write(an, path, fmt)
+    except PermissionError:
+        path, note = _unique_path(path)
+        exportdata.write(an, path, fmt)
+    return dict(ok=True, path=path, fmt=fmt, note=note)
+
+
 # ---------------------------------------------------------------- 导入
 def _import(kind, text):
     rows = adsorption.parse_numeric_rows(text)
@@ -394,6 +424,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._body()
                 cfg = _config_from(body)
                 return self._json(_export(cfg, body.get('data')))
+            if u.path == '/api/export_data':
+                body = self._body()
+                cfg = _config_from(body)
+                fmt = (q.get('fmt') or ['xlsx'])[0]
+                return self._json(_export_data(cfg, body.get('data'), fmt))
             if u.path == '/api/settings':
                 cfg = _config_from(self._body())
                 data = save_settings(cfg)
