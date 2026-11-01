@@ -146,3 +146,5 @@ q_c、两法对比。
 - 用户数据里 `gamma_water` 由 71.61 改为 **71.19**（恒温槽 30 ℃ 的 CRC 值；
   71.61 对应 CRC 的 27.4 ℃，属温度与 γ_w 不同源的写法）。
   气泡法结果随之  Γ∞ 5.7376→5.7039×10⁻⁶ mol·m⁻²，q 0.2894→0.2911 nm²。
+- 参考文献新增 **[5] Haynes W M. CRC Handbook of Chemistry and Physics[M]. 97th ed.
+  Boca Raton, FL: CRC Press, 2016: 6-5.**，正文 3.1.2 / 3.2.1 用上标 `[5]` 引用。

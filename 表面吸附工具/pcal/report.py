@@ -315,6 +315,8 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             indent_chars=0)
     rb.para('[4] 复旦大学. 物理化学实验（第2版）[M]. 北京：高等教育出版社, 1993.',
             indent_chars=0)
+    rb.para('[5] Haynes W M. CRC Handbook of Chemistry and Physics[M]. 97th ed. '
+            'Boca Raton, FL: CRC Press, 2016: 6-5.', indent_chars=0)
 
     log('写入 docx…')
     rb.save(out_path)
@@ -577,7 +579,7 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
         '其中纯水在 %.2f ℃ 的表面张力 ' % m['temperature'],
         ('t', 'γ_{w}', ITALIC), ' = %.2f mN·m^{-1}。'
         % m['gamma_water'],
-        '该值取自 CRC 手册表 6-5（IAPWS 认可值），与纯水高度差 '
+        '该值取自 CRC 手册表 6-5^{[5]}（IAPWS 认可值），与纯水高度差 '
         'Δh_{w} 在同一温度下测定。各溶液的表面张力计算结果列于表4。',
     ])
     _gamma_table(rb, m, axis)
@@ -652,7 +654,7 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
                      % (signed, pct, side, side))
         rb.para([
             '纯水的吊片法读数为 ', pm(m['water']['mean'], m['water']['sigma']),
-            ' mN·m^{-1}；CRC 手册表 6-5 在 %.1f ℃ 给出 %.2f mN·m^{-1}，'
+            ' mN·m^{-1}；CRC 手册表 6-5^{[5]} 在 %.1f ℃ 给出 %.2f mN·m^{-1}，'
             % (m['temperature'], ref),
             judge,
         ])
