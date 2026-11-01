@@ -171,6 +171,18 @@ class ModuleRegressionTests(unittest.TestCase):
         self.assertNotIn('h_l2 /cm', sheets['最大气泡法'])
         self.assertNotIn('γ2 /(mN·m⁻¹)', sheets['吊片法'])
 
+    def test_surface_adsorption_crc_water(self):
+        """纯水表面张力表取自 CRC 表 6-5（IAPWS），覆盖 0~100 ℃，不再钳位到 20~35 ℃。"""
+        adsorption = load_module('表面吸附工具', 'adsorption')
+        gw = adsorption.gamma_water_default
+        self.assertEqual(gw(30.0), 71.19)
+        self.assertEqual(gw(18.0), 73.04)
+        self.assertEqual(gw(25.0), 71.97)
+        self.assertAlmostEqual(gw(17.1), 73.175, places=3)   # 16~18 ℃ 线性插值
+        self.assertAlmostEqual(gw(45.0), 68.775, places=3)   # 44~46 ℃ 线性插值
+        self.assertEqual(gw(-5.0), 75.65)                    # 低于下限取端点
+        self.assertEqual(gw(120.0), 58.91)                   # 高于上限取端点
+
     def test_magnetic_susceptibility(self):
         an = self.case('磁化率').an
         self.close(an['chi_std'], 4.0242886e-07, label='chi_std')

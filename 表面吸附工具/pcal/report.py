@@ -24,6 +24,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm
 
 from . import plotting
+from .adsorption import gamma_water_default
 from .docxkit import ReportBuilder
 
 ITALIC = {'italic': True}
@@ -576,7 +577,8 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
         '其中纯水在 %.2f ℃ 的表面张力 ' % m['temperature'],
         ('t', 'γ_{w}', ITALIC), ' = %.2f mN·m^{-1}。'
         % m['gamma_water'],
-        '各溶液的表面张力计算结果列于表4。',
+        '该值取自 CRC 手册表 6-5（IAPWS 认可值），与纯水高度差 '
+        'Δh_{w} 在同一温度下测定。各溶液的表面张力计算结果列于表4。',
     ])
     _gamma_table(rb, m, axis)
 
@@ -633,9 +635,26 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
     ])
     _plate_raw_table(rb, m)
     if np.isfinite(m['water']['mean']):
+        # 与 CRC 表 6-5（IAPWS 值）在同一温度下比对，给出具体偏差而不是笼统的“接近”
+        ref = gamma_water_default(m['temperature'])
+        dev = m['water']['mean'] - ref
+        rel = dev / ref * 100.0
+        signed = ('%+.2f' % dev).replace('-', '−')
+        pct = ('%+.2f' % rel).replace('-', '−')
+        if abs(rel) <= 0.3:
+            judge = ('二者基本一致（相差 %s mN·m^{-1}，即 %s%%），'
+                     '说明白金板的润湿状态与仪器零点正常。' % (signed, pct))
+        else:
+            side = '偏低' if dev < 0 else '偏高'
+            judge = ('二者相差 %s mN·m^{-1}（%s%%），在 1%% 以内，'
+                     '说明白金板的润湿状态与仪器零点基本正常；'
+                     '但仪器读数整体%s，使吊片法算得的 γ 同比例%s。'
+                     % (signed, pct, side, side))
         rb.para([
             '纯水的吊片法读数为 ', pm(m['water']['mean'], m['water']['sigma']),
-            ' mN·m^{-1}，与文献值接近，说明白金板的润湿状态和仪器零点基本正常。',
+            ' mN·m^{-1}；CRC 手册表 6-5 在 %.1f ℃ 给出 %.2f mN·m^{-1}，'
+            % (m['temperature'], ref),
+            judge,
         ])
 
     rb.heading(['3.2.2 ', ('t', 'γ', ITALIC), '–', ('t', _axis_label(axis), ITALIC),
