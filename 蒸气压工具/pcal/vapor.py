@@ -212,8 +212,12 @@ def fit_liquid(points, p1=P_NORM, shift=0.0):
     dh_J = A * R_GAS                    # J·mol⁻¹
     sigma_dh_J = sigma_A * R_GAS
     ds = dh_J / tb                      # J·mol⁻¹·K⁻¹
-    sigma_ds = math.sqrt((sigma_dh_J / tb) ** 2
-                         + (dh_J * sigma_tb / tb ** 2) ** 2)
+    # Δ_vap S_m = ΔH/Tb = (A·R)/(A/d) = R·d，其中 d = B − ln(p1/p⊖)，
+    # 与 A 严格无关（∂ΔS/∂A = 0），所以不确定度只由 σ_B 传播：
+    #   σ_ΔS = R·σ_B
+    # 以前按 sqrt((σ_ΔH/Tb)² + (ΔH·σ_Tb/Tb²)²) 合成，等于把 Tb = A/d
+    # 当成与 A 独立的量，把 σ_ΔS 高估约 70%。
+    sigma_ds = R_GAS * sigma_B
 
     return {
         'A': A, 'sigma_A': sigma_A, 'B': B, 'sigma_B': sigma_B,

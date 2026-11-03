@@ -130,12 +130,16 @@ def _summary(an):
 
 def _export(cfg, data, progress=None):
     an = _analysis(cfg, data, force=True)
-    save_settings(cfg)
 
-    stem = '%s-%s-磁化率' % (cfg.get('student_id'), cfg.get('student_name'))
+    # 文件名：空姓名/学号要有兜底，非法字符要清洗——否则会建出
+    # 「--磁化率」「2400011877-None-磁化率」这种目录，姓名带 / 或 : 时直接 500。
+    stem = _safe_filename(
+        '%s-%s-磁化率' % (cfg.get('student_id') or '未署名',
+                          cfg.get('student_name') or '未署名'))
     out_dir = os.path.join(OUT_DIR, stem)
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, stem + '.docx')
+    # 同名报告已存在（或正被 Word 占用）时自动加序号，别静默覆盖上次那份。
+    out_path, note = _unique_path(os.path.join(out_dir, stem + '.docx'))
     plots_dir = os.path.join(out_dir, 'figures')
     os.makedirs(plots_dir, exist_ok=True)
 
@@ -154,8 +158,36 @@ def _export(cfg, data, progress=None):
     except Exception as exc:                         # noqa: BLE001
         if progress:
             progress('工作区快照写入失败：%s' % exc)
+    if note and progress:
+        progress(note)
 
     return out_path, an
+
+
+# ---------------------------------------------------------------- 文件名
+def _safe_filename(name):
+    """把 Windows 不允许的字符换成下划线；空名给兜底。"""
+    for ch in '\\/:*?"<>|':
+        name = name.replace(ch, '_')
+    return name.strip() or 'report.docx'
+
+
+def _locked(path):
+    """Word 打开文件时会建一个 ~$ 属主文件。"""
+    d, f = os.path.dirname(path), os.path.basename(path)
+    return os.path.exists(os.path.join(d, '~$' + f))
+
+
+def _unique_path(path, max_tries=50):
+    """目标已存在或被 Word 占用时加序号，返回 (路径, 提示)。"""
+    if not os.path.exists(path) and not _locked(path):
+        return path, ''
+    base, ext = os.path.splitext(path)
+    for i in range(2, max_tries + 2):
+        cand = '%s(%d)%s' % (base, i, ext)
+        if not os.path.exists(cand) and not _locked(cand):
+            return cand, '目标文件被占用或已存在，已改名为 %s' % os.path.basename(cand)
+    return path, ''
 
 
 # ---------------------------------------------------------------- 绘图预览
@@ -198,7 +230,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _html(self, path):
-        full = os.path.join(WEB_DIR, path.lstrip('/'))
+        # 只允许读 web/ 目录里的文件：不做 normpath 校验的话
+        # /static/../pcal/server.py、/static/../../profile.json 都能读到。
+        rel = path.replace('\\', '/').lstrip('/')
+        full = os.path.normpath(os.path.join(WEB_DIR, rel))
+        if not full.startswith(os.path.normpath(WEB_DIR)):
+            self.send_error(403)
+            return
         if not os.path.exists(full):
             self.send_error(404)
             return
@@ -243,15 +281,6 @@ class Handler(BaseHTTPRequestHandler):
             with PREVIEW_LOCK:
                 png = _preview_png(kind, an.get('chart') or [])
             self._png(png)
-        elif path == '/api/export':
-            cfg = default_config_with_saved(load_settings())
-            data = _current_data()
-            try:
-                out_path, an = _export(cfg, data, progress=lambda msg: print(msg))
-                self._json({'ok': True, 'path': out_path})
-            except Exception as e:
-                traceback.print_exc()
-                self._json({'ok': False, 'error': str(e)}, 500)
         elif path.startswith('/static/'):
             self._html(path[len('/static/'):])
         elif path.startswith('/web/'):
@@ -308,14 +337,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
+def _port_busy(port):
+    """端口上是否已有服务在监听。
+
+    不能只用 bind 探测：ThreadingHTTPServer 默认 allow_reuse_address=True，
+    两边都带 SO_REUSEADDR 时 Windows 允许同端口重复 bind，探测会误判成空闲，
+    于是新实例起在同一端口、请求却被旧实例吞掉（"时好时坏"的由来）。
+    这里先 connect_ex 复核，再不带 SO_REUSEADDR 地 bind。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.4)
+        if s.connect_ex(('127.0.0.1', port)) == 0:
+            return True
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('127.0.0.1', port))
+        except OSError:
+            return True
+    return False
+
+
 def _free_port(preferred=8781):
     for port in range(preferred, preferred + 60):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind(('127.0.0.1', port))
-            except OSError:
-                continue
+        if not _port_busy(port):
             return port
     return 0
 

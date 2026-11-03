@@ -226,10 +226,10 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     sample_names = '、'.join(r['name'] for r in samples) or '糖样品'
     rb.para([
         ('t', '实验目的　', {'bold': True}),
-        '用氧弹式量热计测定蔗糖的燃烧热，了解量热计的原理、构造与使用方法，'
+        '用氧弹式量热计测定%s的燃烧热，了解量热计的原理、构造与使用方法，'
         '取得热化学实验的一般知识和基本训练。本实验按讲义要求分三轮进行：'
         '先在未标定量热计常数的情况下测出温度(温差)-时间曲线，算出每克样品引起的体系温升值；'
-        '再用标准物质苯甲酸标定量热计常数 ',
+        '再用标准物质苯甲酸标定量热计常数 ' % sample_names,
         ('t', 'W', ITALIC),
         '；最后测出%s的恒容及恒压燃烧热。' % sample_names,
     ])

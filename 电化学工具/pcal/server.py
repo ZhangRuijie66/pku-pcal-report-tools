@@ -393,15 +393,30 @@ def _scan(data_dir):
 
 
 # ---------------------------------------------------------------- 启动
+def _port_busy(port):
+    """端口上是否已有服务在监听。
+
+    不能只用 bind 探测：ThreadingHTTPServer 默认 allow_reuse_address=True，
+    两边都带 SO_REUSEADDR 时 Windows 允许同端口重复 bind，探测会误判成空闲，
+    于是新实例起在同一端口、请求却被旧实例吞掉（"时好时坏"的由来）。
+    这里先 connect_ex 复核，再不带 SO_REUSEADDR 地 bind。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.4)
+        if s.connect_ex(('127.0.0.1', port)) == 0:
+            return True
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('127.0.0.1', port))
+        except OSError:
+            return True
+    return False
+
+
 def _free_port(preferred=8801):
     for port in range(preferred, preferred + 60):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind(('127.0.0.1', port))
-                return port
-            except OSError:
-                continue
+        if not _port_busy(port):
+            return port
     return 0
 
 

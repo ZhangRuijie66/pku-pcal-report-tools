@@ -78,11 +78,15 @@ def _para_fmt(p, indent_chars=2.0, space_before=0, space_after=0,
         ind = parse_xml('<w:ind %s/>' % W_NS)
         ppr.append(ind)
     if indent_chars:
+        # 1 个五号汉字 = 10.5 pt = 210 twips，所以 N 字符 = N × 210。
+        # firstLineChars 是相对字符数的属性，Word 优先用它；firstLine 是
+        # 绝对 twips 的兜底，给不认 firstLineChars 的渲染器用——两个值必须
+        # 指向同一个缩进量，否则在 LibreOffice/在线预览里会缩成一半。
         ind.set(qn('w:firstLineChars'), str(int(indent_chars * 100)))
-        ind.set(qn('w:firstLine'), str(int(indent_chars * 105)))
+        ind.set(qn('w:firstLine'), str(int(indent_chars * 210)))
     if left_chars:
         ind.set(qn('w:leftChars'), str(int(left_chars * 100)))
-        ind.set(qn('w:left'), str(int(left_chars * 105)))
+        ind.set(qn('w:left'), str(int(left_chars * 210)))
 
 
 # ---------------------------------------------------------------- 富文本

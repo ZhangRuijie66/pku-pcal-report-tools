@@ -293,7 +293,7 @@ function showRound(i, keepSelection) {
   drawChart(v);
   renderStats(v);
   renderRaw(v);
-  renderDiffTable();
+  // 切换轮次只影响逐轮表与曲线；各浓度热效应表由 renderResults 统一刷新
 
   if (!switched && keptWhich !== '') {
     $('whichPoint').value = keptWhich;
@@ -336,15 +336,6 @@ function renderResults(res) {
   let html = `<p>共 ${res.rounds.length} 轮累加实验，得到 ${res.rounds.length} 个浓度下的积分溶解热。</p>`;
   html += `<p>无限稀释积分溶解热 <b>Q<sub>s</sub><sup>0</sup> = ${fmt(f.Qs0, 2)} ± ${fmt(f.sigma_Qs0, 2)} kJ/mol</b>，`
         + `<b>a = ${fmt(f.a, 4)} ± ${fmt(f.sigma_a, 4)}</b>，R² = ${fmt(f.r_square, 4)}。</p>`;
-  const m = f.marks;
-  html += '<table><thead><tr><th>n<sub>0</sub></th><th>Q<sub>s</sub><br>kJ/mol</th>'
-        + '<th>微分溶解热<br>kJ/mol</th><th>微分冲淡热<br>J/mol</th>'
-        + '<th>积分冲淡热<br>J/mol</th></tr></thead><tbody>';
-  m.n0.forEach((n, i) => {
-    html += `<tr><td>${fmt(n, 0)}</td><td>${fmt(m.Qs[i], 2)}</td><td>${fmt(m.Qs_n2[i], 2)}</td>`
-          + `<td>${fmt(m.Qs_n0[i], 2)}</td><td>${i ? fmt(m.Qd[i - 1], 1) : '—'}</td></tr>`;
-  });
-  html += '</tbody></table>';
   html += `<p class="hint">a 的物理意义：n<sub>0</sub> = 1/a ≈ ${fmt(f.n_half, 2)} 时 Q<sub>s</sub> 降到
     Q<sub>s</sub><sup>0</sup>/2；本实验数据都在 n<sub>0</sub> 较大的一侧，落在曲线的平缓段。
     误差分析口径（报告 4.3.1）：σ<sub>I</sub> = ${fmt(readConfigForm().sigma_current, 2)} A、
@@ -352,6 +343,8 @@ function renderResults(res) {
     σ<sub>t</sub> = ${fmt(readConfigForm().sigma_time, 2)} s、
     σ<sub>ΔT</sub> = ${fmt(readConfigForm().sigma_dt, 3)} K。</p>`;
   $('results').innerHTML = html;
+
+  renderDiffTable(f);
 
   // 逐轮表
   let t = '<table><thead><tr><th>轮次</th><th>m<sub>sam</sub>/g</th><th>ΔT<sub>d</sub>/K</th>'
@@ -377,7 +370,19 @@ function renderResults(res) {
   $('fitChart').appendChild(img);
 }
 
-function renderDiffTable() { /* 已并入 renderResults 的表格 */ }
+function renderDiffTable(f) {
+  // 各浓度下的热效应：微分溶解热、微分冲淡热、积分冲淡热
+  const m = f.marks;
+  let html = '<table><thead><tr><th>n<sub>0</sub></th><th>Q<sub>s</sub><br>kJ/mol</th>'
+           + '<th>微分溶解热<br>kJ/mol</th><th>微分冲淡热<br>J/mol</th>'
+           + '<th>积分冲淡热<br>J/mol</th></tr></thead><tbody>';
+  m.n0.forEach((n, i) => {
+    html += `<tr><td>${fmt(n, 0)}</td><td>${fmt(m.Qs[i], 2)}</td><td>${fmt(m.Qs_n2[i], 2)}</td>`
+          + `<td>${fmt(m.Qs_n0[i], 2)}</td><td>${i ? fmt(m.Qd[i - 1], 1) : '—'}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  $('diffTable').innerHTML = html;
+}
 
 function renderRaw(v) {
   const rows = (v.chart && v.chart.t || []).slice(0, 30);
@@ -765,6 +770,8 @@ function reportFilename(cfg) {
 
 window.addEventListener('DOMContentLoaded', () => {
   bindUI();
-  $('#btnHome') && ($('#btnHome').style.display = 'none');
+  // $() 是 getElementById，不是 querySelector——传 '#btnHome' 永远拿不到元素。
+  const homeBtn = $('btnHome');
+  if (homeBtn) homeBtn.style.display = 'none';
   boot().catch(e => { setStatus('初始化失败'); toast(e.message, 6000); });
 });
