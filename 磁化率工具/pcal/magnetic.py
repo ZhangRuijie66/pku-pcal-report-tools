@@ -166,8 +166,13 @@ def delta_mass(m_zero, m_field):
     return m_field - m_zero
 
 
-def process_sample(data, T_K, sample_name, chi_std, m_std, delta_m_std):
+def process_sample(data, T_K, sample_name, chi_std, m_std, delta_m_std,
+                   m_tube_zero, delta_m_tube):
     """处理单个样品的数据。
+
+    ⚠ 口径必须与标样一致：标样用的是「扣掉空管后的净质量」与「扣掉空管的
+    质量变化」，样品也必须同样扣，否则 χ_样 = χ_标·m_标·Δm_样/(Δm_标·m_样)
+    里分子是净重、分母是毛重，结果会系统性偏小（毛重/净重之比）。
 
     Parameters
     ----------
@@ -180,9 +185,13 @@ def process_sample(data, T_K, sample_name, chi_std, m_std, delta_m_std):
     chi_std : float
         标准样品的比磁化率 (m³·kg⁻¹)
     m_std : float
-        标准样品的质量 (g)
+        标准样品的净质量 (g)，已扣空管
     delta_m_std : float
-        标准样品在磁场中的质量变化 (g)
+        标准样品在磁场中的净质量变化 (g)，已扣空管
+    m_tube_zero : float
+        空管无磁场时的质量 (g)
+    delta_m_tube : float
+        空管在磁场中的质量变化 (g)
 
     Returns
     -------
@@ -191,9 +200,9 @@ def process_sample(data, T_K, sample_name, chi_std, m_std, delta_m_std):
     """
     m_zero = data['m_zero']
     m_field = data['m_field']
-    m_sample = m_zero  # 无磁场时的质量
+    m_sample = m_zero - m_tube_zero          # 样品的净质量（扣空管）
 
-    delta_m_sample = delta_mass(m_zero, m_field)
+    delta_m_sample = delta_mass(m_zero, m_field) - delta_m_tube
 
     chi_mass = mass_magnetic_susceptibility(
         chi_std, m_std, delta_m_sample, delta_m_std, m_sample
@@ -279,7 +288,8 @@ def process_all(data_dict):
         if sample_name in data_dict:
             sample_data = data_dict[sample_name]
             result = process_sample(
-                sample_data, T_K, sample_name, chi_std, m_std, delta_m_std
+                sample_data, T_K, sample_name, chi_std, m_std, delta_m_std,
+                m_tube_zero, delta_m_tube
             )
             results['samples'][sample_name] = result
 
@@ -287,34 +297,39 @@ def process_all(data_dict):
 
 
 def sample_data():
-    """返回示例数据（2025 年参照数据）。
+    """返回示例数据：2025 年参照报告表1 的原始称量（5 cm 装样，取上行支）。
 
-    Returns
-    -------
-    dict
-        示例实验数据
+    数据取自 `…\\物理化学实验\\物理化学实验\\磁化率\\2300012602-李晨曦-磁化率.pdf`
+    第 3~5 页表 1/表 2，只取「0 A → 3.00 A」的上行支（参照报告 3.1 节说明
+    下行支受磁滞影响，不能与上行支平均）。
+
+    用这套数据算出的结果应与参照报告逐位吻合：
+        χ_莫 = 4.035e-7 m³·kg⁻¹、T_b 无关、T = 21.7 ℃
+        CuSO₄·5H₂O:  χ_m = 1.80e-8 m³·mol⁻¹、μ = 1.84 μ_B、n = 1
+        K₄Fe(CN)₆·3H₂O: χ_m = −0.18e-8 m³·mol⁻¹（反磁性）
+    它也顺便满足物理判据：Cu²⁺ 是 d⁹，必有 1 个未成对电子（μ ≈ 1.73 μ_B）。
     """
     return {
-        'temperature_C': 22.5,
-        'tube': {
-            'm_zero': 18.2345,
-            'm_field': 18.2340,
+        'temperature_C': 21.7,          # 参照报告 3.1 节：室温 21.7 ℃
+        'tube': {                        # 空管：4.2 mT / 206.0 mT
+            'm_zero': 8.3660,
+            'm_field': 8.3654,
         },
-        'mohr_salt': {
-            'm_zero': 24.5678,
-            'm_field': 24.5890,
+        'mohr_salt': {                   # 莫尔盐 5 cm
+            'm_zero': 10.4654,
+            'm_field': 10.4905,
         },
         '硫酸铜': {
-            'm_zero': 23.4567,
-            'm_field': 23.4612,
+            'm_zero': 10.8382,
+            'm_field': 10.8430,
         },
         '亚铁氰化钾': {
-            'm_zero': 22.3456,
-            'm_field': 22.3450,
+            'm_zero': 10.6726,
+            'm_field': 10.6717,
         },
         '未知样': {
-            'm_zero': 21.2345,
-            'm_field': 21.2389,
+            'm_zero': 10.4895,
+            'm_field': 10.4972,
         },
     }
 

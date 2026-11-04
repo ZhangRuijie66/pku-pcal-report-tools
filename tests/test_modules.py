@@ -64,11 +64,14 @@ class ModuleRegressionTests(unittest.TestCase):
         self.assertEqual(an['mode'], 'ratio')
 
     def test_dipole_moment(self):
+        # σ_P 曾把 A、C 当独立量各自平方相加，但两者都是 (ε₁, ρ₁) 的函数、
+        # 对 ε₁ 的偏导符号相反，必须合并后再平方。改成全微分后
+        # σ_P 2.175181 → 2.147433、σ_μ 0.031541 → 0.031138（已用数值微分核对）。
         an = self.case('偶极矩').an
         for key, expected in (('a', 2.7505005), ('eps1', 1.9590845),
                               ('b', 0.01671356), ('rho1', 0.77790199),
                               ('P_inf', 79.472504), ('mu', 1.6627369),
-                              ('s_mu', 0.03154062)):
+                              ('s_P', 2.147433), ('s_mu', 0.031138)):
             self.close(an[key], expected, label=key)
 
     def test_surface_adsorption(self):
@@ -184,11 +187,25 @@ class ModuleRegressionTests(unittest.TestCase):
         self.assertEqual(gw(120.0), 58.91)                   # 高于上限取端点
 
     def test_magnetic_susceptibility(self):
+        # 基准取自参照报告（李晨曦 2025）表 3：CuSO4·5H2O 在 3.00 A 下
+        # χm = (1.80 ± 0.14)e-8 m3/mol、μ = (1.84 ± 0.07) μB、n = 1。
+        # 用参照报告表1 的原始称量（magnetic.sample_data）复算应逐位吻合。
         an = self.case('磁化率').an
-        self.close(an['chi_std'], 4.0242886e-07, label='chi_std')
+        self.close(an['chi_std'], 4.0351713e-07, label='chi_std')
         cuso4 = an['samples']['硫酸铜']
-        self.close(cuso4['mu'], 1.0287810, label='CuSO4 μ')
-        self.close(cuso4['n'], 0.43470915, label='CuSO4 n')
+        self.close(cuso4['chi_m'], 1.7977027e-08, label='CuSO4 χm')
+        self.close(cuso4['mu'], 1.8365345, label='CuSO4 μ')
+        self.close(cuso4['n'], 1.0911382, label='CuSO4 n')
+
+        # 物理判据：Cu2+ 是 d9，必须有 1 个未成对电子（μ ≈ √3 = 1.73 μ_B）。
+        # 这条能挡住「毛重/净重口径不一致」那类错误——那时候 μ 只有 1.03、
+        # n 只有 0.43，半个未成对电子，物理上不可能。
+        self.assertAlmostEqual(cuso4['n'], 1.0, delta=0.35,
+                               msg='Cu2+ 是 d9，未成对电子数应约等于 1')
+        self.assertAlmostEqual(cuso4['mu'], 1.732, delta=0.35,
+                               msg='Cu2+ 的 μ 应接近 √3 = 1.732 μB')
+
+        # 亚铁氰化钾 [Fe(CN)6]4- 是低自旋 d6，反磁性；未知样没有分子量。
         self.assertIsNone(an['samples']['亚铁氰化钾']['mu'])
         self.assertIsNone(an['samples']['未知样']['chi_m'])
 

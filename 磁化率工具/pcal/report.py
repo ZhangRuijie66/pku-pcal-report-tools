@@ -149,13 +149,20 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     # 添加主要结果
     for name in sample_names:
         s = samples[name]
-        if s['chi_m'] is not None:
-            mu_str = '%.3f' % s['mu'] if s['mu'] is not None else '0'
-            n_str = '%.1f' % s['n'] if s['n'] is not None else '0'
+        if s['chi_m'] is None:
+            continue
+        # χ_m < 0 是反磁性物质（如 K₄Fe(CN)₆·3H₂O）：没有永久磁矩，
+        # 不能印成「分子磁矩为 0」——那是把反磁性说成「磁矩为零的顺磁体」。
+        if s['mu'] is None:
+            abstract_text += (
+                '实验测得%s的摩尔磁化率为 %.3e m³·mol⁻¹（小于 0，'
+                '为反磁性物质，无永久磁矩、未成对电子数为 0）。'
+            ) % (name, s['chi_m'])
+        else:
             abstract_text += (
                 '实验测得%s的摩尔磁化率为 %.3e m³·mol⁻¹，'
-                '分子磁矩为 %s μ_B，未成对电子数约为 %s。'
-            ) % (name, s['chi_m'], mu_str, n_str)
+                '分子磁矩为 %.3f μ_B，未成对电子数约为 %.1f。'
+            ) % (name, s['chi_m'], s['mu'], s['n'])
 
     abstract_text += '实验结果与理论预期基本吻合，验证了古埃磁天平法的可靠性。'
 
@@ -300,22 +307,32 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
     # 汇总各样品结果
     for name, s in samples.items():
-        if s['chi_m'] is not None:
-            mu_str = '%.3f' % s['mu'] if s['mu'] is not None else '0'
-            n_str = '%.1f' % s['n'] if s['n'] is not None else '0'
+        if s['chi_m'] is None:
+            continue
+        if s['mu'] is None:
+            # 反磁性：没有永久磁矩，不能印「0 μ_B」
             rb.para([
                 ('t', name, {}),
                 ' 的摩尔磁化率为 ',
                 ('m', r'\chi_{m} = '),
                 ('t', '%.3e' % s['chi_m'], {}),
                 ('m', r'\ \text{m}^{3}\cdot\text{mol}^{-1}'),
-                '，分子磁矩为 ',
-                ('t', mu_str, {}),
-                ('m', r'\ \mu_{B}'),
-                '，未成对电子数约为 ',
-                ('t', n_str, {}),
-                '。'
+                '，为反磁性物质，无永久磁矩，未成对电子数为 0。',
             ])
+            continue
+        rb.para([
+            ('t', name, {}),
+            ' 的摩尔磁化率为 ',
+            ('m', r'\chi_{m} = '),
+            ('t', '%.3e' % s['chi_m'], {}),
+            ('m', r'\ \text{m}^{3}\cdot\text{mol}^{-1}'),
+            '，分子磁矩为 ',
+            ('t', '%.3f' % s['mu'], {}),
+            ('m', r'\ \mu_{B}'),
+            '，未成对电子数约为 ',
+            ('t', '%.1f' % s['n'], {}),
+            '。'
+        ])
 
     rb.heading('4.2 实验讨论', 2)
     rb.para([

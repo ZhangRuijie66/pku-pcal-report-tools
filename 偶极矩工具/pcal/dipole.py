@@ -183,13 +183,55 @@ def _sigma_C(eps1, rho1, M1, s_eps1, s_rho1):
     return 3.0 * M1 * math.sqrt(t1 ** 2 + t2 ** 2)
 
 
-def _sigma_P(A, B, C, a, b, M2, s_A, s_B, s_C, s_a, s_b):
-    """P̄₂^∞ = A(M₂ − bB) + aC 的不确定度（cm³·mol⁻¹）。"""
-    terms = [((M2 - b * B) * s_A) ** 2,
-             (A * B * s_b) ** 2,
-             (A * b * s_B) ** 2,
-             (C * s_a) ** 2,
-             (a * s_C) ** 2]
+def _A_of(eps1, rho1):
+    """Hedestrand 外推的截距 A = (ε₁−1)/((ε₁+2)ρ₁)。"""
+    return (eps1 - 1.0) / (eps1 + 2.0) / rho1
+
+
+def _B_of(M1, rho1):
+    """截距 B = M₁/ρ₁。"""
+    return M1 / rho1
+
+
+def _C_of(eps1, rho1, M1):
+    """截距 C = 3M₁/((ε₁+2)²ρ₁)。"""
+    return 3.0 * M1 / ((eps1 + 2.0) ** 2 * rho1)
+
+
+def _sigma_P(eps1, rho1, M1, M2, s_eps1, s_rho1, s_a, s_b, a, b):
+    """P̄₂^∞ = A(M₂ − bB) + aC 的不确定度（cm³·mol⁻¹）。
+
+    ⚠ 必须对**独立量**（ε₁、ρ₁、a、b）作全微分，不能把 A、C 当独立量各自
+    平方相加：A 与 C 都是 (ε₁, ρ₁) 的函数，且
+        ∂A/∂ε₁ = +3/(ε₁+2)²/ρ₁        （正）
+        ∂C/∂ε₁ = −6M₁/(ε₁+2)³/ρ₁      （负）
+    符号相反，必须合并后再平方。分开平方会把 ε₁ 这一项的贡献放大一倍多
+    （实测：全微分 0.1188 vs 分开平方 0.3662，放大 208%），
+    合起来让 σ_P 偏大约 1.3%。
+
+    返回 (σ_P, terms) —— terms 是四个独立量各自贡献的**方差**，和为 σ_P²。
+    """
+    A = _A_of(eps1, rho1)
+    B = _B_of(M1, rho1)
+    C = _C_of(eps1, rho1, M1)
+
+    # 各量对 (ε₁, ρ₁) 的偏导
+    dA_de = 3.0 / ((eps1 + 2.0) ** 2 * rho1)
+    dA_dr = -(eps1 - 1.0) / ((eps1 + 2.0) * rho1 ** 2)
+    dB_dr = -M1 / rho1 ** 2
+    dC_de = -6.0 * M1 / ((eps1 + 2.0) ** 3 * rho1)
+    dC_dr = -3.0 * M1 / ((eps1 + 2.0) ** 2 * rho1 ** 2)
+
+    # P = A(M₂ − bB) + aC，对四个独立量的偏导（同源项必须合并）
+    dP_de = (M2 - b * B) * dA_de + a * dC_de
+    dP_dr = (M2 - b * B) * dA_dr - A * b * dB_dr + a * dC_dr
+    dP_da = C
+    dP_db = -A * B
+
+    terms = [(dP_de * s_eps1) ** 2,
+             (dP_dr * s_rho1) ** 2,
+             (dP_da * s_a) ** 2,
+             (dP_db * s_b) ** 2]
     return math.sqrt(sum(terms)), terms
 
 
@@ -251,19 +293,16 @@ def analyze(data, cfg=None):
     C = 3.0 * M1 / ((eps1 + 2.0) ** 2 * rho1)
     s_C = _sigma_C(eps1, rho1, M1, s_eps1, s_rho1)
     P_inf = A * (M2 - b * B) + a * C
-    s_P, terms_P = _sigma_P(A, B, C, a, b, M2, s_A, s_B, s_C, s_a, s_b)
+    s_P, terms_P = _sigma_P(eps1, rho1, M1, M2, s_eps1, s_rho1, s_a, s_b, a, b)
 
-    # ---- 表 6：把每个拟合参数的不确定度置零后的 σ_P（找主要贡献者）
+    # ---- 表 6：把每个参数的不确定度置零后的 σ_P（找主要贡献者）
     zeroed = {}
     for name in ('a', 'eps1', 'b', 'rho1'):
-        sa = 0.0 if name == 'a' else s_a
         se = 0.0 if name == 'eps1' else s_eps1
-        sb = 0.0 if name == 'b' else s_b
         sr = 0.0 if name == 'rho1' else s_rho1
-        sA0 = _sigma_A(eps1, rho1, se, sr)
-        sC0 = _sigma_C(eps1, rho1, M1, se, sr)
-        sB0 = M1 * sr / rho1 ** 2
-        zeroed[name] = _sigma_P(A, B, C, a, b, M2, sA0, sB0, sC0, sa, sb)[0]
+        sa = 0.0 if name == 'a' else s_a
+        sb = 0.0 if name == 'b' else s_b
+        zeroed[name] = _sigma_P(eps1, rho1, M1, M2, se, sr, sa, sb, a, b)[0]
 
     # ---- 摩尔折射度 R
     n_d = data['butanol']['n']
@@ -290,7 +329,8 @@ def analyze(data, cfg=None):
     s_eps_h = math.sqrt((s_c_hyp / C0) ** 2 + (s_Cdist_h / C0) ** 2
                         + ((c1 - C_dist) * s_C0_h / C0 ** 2) ** 2)
     s_a_h = s_eps_h / math.sqrt(eps_fit['sxx'])
-    s_P_h = _sigma_P(A, B, C, a, b, M2, s_A, s_B, s_C, s_a_h, s_b)[0]
+    s_P_h = _sigma_P(eps1, rho1, M1, M2, s_eps1, s_rho1, s_a_h, s_b,
+                     a, b)[0]
     s_mu_h = MU_CONST * math.sqrt(T_K) \
         * math.sqrt((s_P_h * 1e-6) ** 2 + s_R_m3 ** 2) / (2.0 * math.sqrt(dP))
 

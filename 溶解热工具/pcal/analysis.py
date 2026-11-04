@@ -298,12 +298,16 @@ class Analysis:
             rel_n0 = float(np.sqrt((s_n1 / n1) ** 2
                                    + (it['sigma_sum_n2'] / it['sum_n2']) ** 2)) if it['Mr'] else float('nan')
             it['sigma_n0'] = it['n0'] * rel_n0
-            rel_Qs = float(np.sqrt((it['sigma_cum_Q'] / abs(it['cum_Q'])) ** 2
+            # ⚠ 量纲：sigma_cum_Q 的单位是 J（各单位 σ_Q[J] 的平方和开方），
+            # 而 cum_Q 的单位是 kJ（dissolution.fit_integral_heat 里 sum_Q += Q/1000）。
+            # 直接用 sigma_cum_Q/cum_Q 会把比值放大 1000 倍，σ_Qs 报成 1078 kJ/mol
+            # 而 Qs 本身只有 38 kJ/mol。这里先统一到 kJ。
+            rel_Qs = float(np.sqrt((it['sigma_cum_Q'] / 1000.0 / abs(it['cum_Q'])) ** 2
                                    + (it['sigma_sum_n2'] / it['sum_n2']) ** 2)) if it['Mr'] else float('nan')
             it['sigma_Qs'] = abs(it['Qs']) * rel_Qs
             # 与本课程报告一贯的写法一致：σ_Qs 由 σ_Q 直接除以溶质的物质的量
             if it['Mr']:
-                it['sigma_Qs_simple'] = it['sigma_cum_Q'] / it['sum_n2']
+                it['sigma_Qs_simple'] = it['sigma_cum_Q'] / 1000.0 / it['sum_n2']
 
         # 经验方程给出的各浓度热效应
         self.diff = ds.differential_heats(fit['Qs0'], fit['a'])
