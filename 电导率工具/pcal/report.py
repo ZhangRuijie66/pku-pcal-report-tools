@@ -33,6 +33,20 @@ import numpy as np
 from . import conduct
 from . import plotting
 from .docxkit import ReportBuilder
+from .sigfig import k, pm, pct, sig_fig, SIG_DIGITS
+
+def pm(x, u, n=SIG_DIGITS):
+    """本模块口径：u 缺失时用 4 位有效数字（sig_fig）。"""
+    from .sigfig import pm as _pm
+    if u in (None, 0) or not np.isfinite(u):
+        return sig_fig(x, 4)
+    return _pm(x, u, n)
+
+
+def pct(x, n=SIG_DIGITS):
+    """本模块口径：相对偏差带 % 后缀（其余模块不带）。"""
+    from .sigfig import pct as _pct
+    return _pct(x, n, sign='%')
 
 ITALIC = {'italic': True}
 
@@ -47,40 +61,14 @@ SIG_DIGITS = 2
 
 
 # ---------------------------------------------------------------- 数值格式
-def _place(u, n=SIG_DIGITS):
-    return decimal.Decimal(repr(float(u))).adjusted() - n + 1
 
 
-def _fix(x, exp):
-    q = decimal.Decimal(1).scaleb(exp)
-    return float(decimal.Decimal(repr(float(x))).quantize(
-        q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _fmt(x, exp):
-    return '%.*f' % (max(0, -exp), x)
 
 
-def pm(x, u, n=SIG_DIGITS):
-    """「值 ± σ」，末位与 σ 对齐（JJF 1059 / GB/T 8170）。"""
-    if u in (None, 0) or not np.isfinite(u):
-        return sig_fig(x, 4)
-    e = _place(u, n)
-    return '%s ± %s' % (_fmt(_fix(x, e), e), _fmt(_fix(u, e), e))
 
 
-def sig_fig(x, n=4):
-    """保留 n 位有效数字（保留末尾的 0），如 0.0121 → '0.01210'。"""
-    if x is None or not np.isfinite(x):
-        return '—'
-    if x == 0:
-        return '0'
-    d = decimal.Decimal(repr(abs(float(x))))
-    exp = d.adjusted()
-    q = decimal.Decimal(1).scaleb(exp - n + 1)
-    v = d.quantize(q, rounding=decimal.ROUND_HALF_EVEN)
-    s = '%.*f' % (max(0, n - 1 - exp), v)
-    return ('-' + s) if x < 0 else s
 
 
 def sci(x, nd=3, exp=None):
@@ -103,12 +91,6 @@ def sci_pm(x, u, exp=None):
     return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
 
 
-def pct(x, n=SIG_DIGITS):
-    """相对偏差，2 位有效数字，带 %。"""
-    if not np.isfinite(x):
-        return '—'
-    e = _place(abs(x), n)
-    return _fmt(_fix(x, e), e) + '%'
 
 
 def _latex_sci(x, nd=3, exp=None):

@@ -1,8 +1,9 @@
 {
   "version": "1.0.0",
   "files": {
-    "omml.py": "1d720d45a580fdd6f7f29fc919cf92c8a22aea8b3427d2c9ed8149cb5785ebcb",
-    "docxkit.py": "e46fe2928720a8208bf94498c135663494c5e769c12c3297019e7d59be15e7e6",
+    "omml.py": "4e46bec4faf2a129881f59bb81c46af1697c3b27004c0dcd2c59e1e3b0b0c3bb",
+    "docxkit.py": "27a40dba71ba9a80639ff44a680c2640045ead549e09b92ddd62d91308a56ba4",
+    "sigfig.py": "638fb7a989db775b0355d21f4300347082b2176fe2ba9cd2deaa69cbbefe4ed0",
     "workspace.py": "0fe745f926b2d6b2f36d53b2ecd8bd5d1b09e07e15836bcd07ed91c002a66c07",
     "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3"
   },

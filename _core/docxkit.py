@@ -59,6 +59,37 @@ def style_run(run, size=10.5, bold=False, cjk=FONT_SONG, latin=FONT_LATIN,
         rf.set(qn('w:hint'), 'eastAsia')
 
 
+# w:pPr 子元素的 schema 顺序（ECMA-376 CT_PPr）。用 insert_element_before
+# 按这个表插入，元素才会落在合法位置——直接 insert(0, …) / append 会把
+# pStyle、ind、jc 排错位。Word 容错强能正常渲染，但 LibreOffice 等渲染器
+# 会忽略顺序错误的属性（ind 在 jc 之后时首行缩进会丢）。
+_PPR_SEQ = (
+    'w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr',
+    'w:widowControl', 'w:numPr', 'w:suppressLineNumbers', 'w:pBdr', 'w:shd',
+    'w:tabs', 'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap',
+    'w:overflowPunct', 'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN',
+    'w:bidi', 'w:adjustRightInd', 'w:snapToGrid', 'w:spacing', 'w:ind',
+    'w:contextualSpacing', 'w:mirrorIndents', 'w:suppressOverlap', 'w:jc',
+    'w:textDirection', 'w:textAlignment', 'w:textboxTightWrap',
+    'w:outlineLvl', 'w:divId', 'w:cnfStyle', 'w:rPr', 'w:sectPr', 'w:pPrChange')
+
+_PPR_TAG_INDEX = {qn(name): i for i, name in enumerate(_PPR_SEQ)}
+
+
+def _ppr_insert(ppr, elem):
+    """按 CT_PPr 的 schema 顺序把 elem 插进 ppr（重复的同类元素先删掉）。"""
+    tag = elem.tag
+    old = ppr.find(tag)
+    if old is not None:
+        ppr.remove(old)
+    idx = _PPR_TAG_INDEX.get(tag)
+    if idx is None:
+        ppr.append(elem)
+        return elem
+    ppr.insert_element_before(elem, *_PPR_SEQ[idx + 1:])
+    return elem
+
+
 def _para_fmt(p, indent_chars=2.0, space_before=0, space_after=0,
               line_spacing=1.0, align=None, left_chars=0.0,
               page_break_before=False):
@@ -71,12 +102,9 @@ def _para_fmt(p, indent_chars=2.0, space_before=0, space_after=0,
         p.alignment = align
     ppr = p._element.get_or_add_pPr()
     if page_break_before:
-        # 段前分页：w:pageBreakBefore 按 schema 必须排在 spacing/ind/jc 之前
-        ppr.insert(0, parse_xml('<w:pageBreakBefore %s/>' % W_NS))
-    ind = ppr.find(qn('w:ind'))
-    if ind is None:
-        ind = parse_xml('<w:ind %s/>' % W_NS)
-        ppr.append(ind)
+        # 段前分页：w:pageBreakBefore 按 schema 排在 keepNext 之后、spacing 之前
+        _ppr_insert(ppr, parse_xml('<w:pageBreakBefore %s/>' % W_NS))
+    ind = parse_xml('<w:ind %s/>' % W_NS)
     if indent_chars:
         # 1 个五号汉字 = 10.5 pt = 210 twips，所以 N 字符 = N × 210。
         # firstLineChars 是相对字符数的属性，Word 优先用它；firstLine 是
@@ -87,6 +115,8 @@ def _para_fmt(p, indent_chars=2.0, space_before=0, space_after=0,
     if left_chars:
         ind.set(qn('w:leftChars'), str(int(left_chars * 100)))
         ind.set(qn('w:left'), str(int(left_chars * 210)))
+    if indent_chars or left_chars:
+        _ppr_insert(ppr, ind)
 
 
 # ---------------------------------------------------------------- 富文本
@@ -595,7 +625,7 @@ class ReportBuilder:
         # 标题不能孤零零留在页底：跟后面的正文/公式绑在一页
         _ppr = p._element.get_or_add_pPr()
         if _ppr.find(qn('w:keepNext')) is None:
-            _ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
+            _ppr_insert(_ppr, parse_xml('<w:keepNext %s/>' % W_NS))
         # 段落标记也要压到五号，否则模板样式里的 22 pt 会把标题行高撑大
         ppr = p._element.get_or_add_pPr()
         old = ppr.find(qn('w:rPr'))
@@ -623,7 +653,7 @@ class ReportBuilder:
         if keep_next:
             ppr = p._element.get_or_add_pPr()
             if ppr.find(qn('w:keepNext')) is None:
-                ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
+                _ppr_insert(ppr, parse_xml('<w:keepNext %s/>' % W_NS))
         self._write_segments(p, segments)
         return p
 
@@ -685,7 +715,7 @@ class ReportBuilder:
         if keep_next:
             ppr = p._element.get_or_add_pPr()
             if ppr.find(qn('w:keepNext')) is None:
-                ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
+                _ppr_insert(ppr, parse_xml('<w:keepNext %s/>' % W_NS))
         head = ''
         rest = text or ''
         m = re.match(r'^([表图]\s*\d+)(.*)$', rest)
@@ -707,18 +737,27 @@ class ReportBuilder:
 
     # ------------------------------------------------------------ 图片
     def figure(self, image_path, caption=None, width_cm=14.0):
-        if not os.path.exists(image_path):
-            return
+        """插入图片 + 图题。图片不存在时返回 False（不写题注）。
+
+        ⚠ 原来写的是 `if not os.path.exists(image_path): return`，
+        传 None 会抛 `TypeError: stat: path should be string...`，
+        传不存在的路径则**静默连题注一起丢掉**——报告里的图号从 N 跳到
+        N+2，而正文「如图 N 所示」是按顺序加的，文字就指向了下一张图。
+        现在统一返回 bool，调用方可以据此决定要不要顺延图号。
+        """
+        if not image_path or not os.path.exists(image_path):
+            return False
         p = self.doc.add_paragraph()
         _para_fmt(p, indent_chars=0, align=WD_ALIGN_PARAGRAPH.CENTER, line_spacing=1.0)
         if caption:
             ppr = p._element.get_or_add_pPr()      # 图片与图题不能分家
             if ppr.find(qn('w:keepNext')) is None:
-                ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
+                _ppr_insert(ppr, parse_xml('<w:keepNext %s/>' % W_NS))
         r = p.add_run()
         r.add_picture(image_path, width=Cm(width_cm))
         if caption:
             self.caption(caption, keep_next=False)
+        return True
 
     # ------------------------------------------------------------ 表格
     def table(self, headers, rows, widths_cm=None, font_size=10.5,
@@ -730,6 +769,12 @@ class ReportBuilder:
                 raise ValueError(
                     '表格第 %d 行有 %d 列，表头是 %d 列（列数不一致会把整行左移）'
                     % (i + 1, len(row), len(headers)))
+        # 列宽数量也必须与表头一致：少了会静默用默认宽度把后几列挤变形，
+        # 多了会在下面按 index 取值时抛 IndexError。跟列数校验并列，别只校验一半。
+        if widths_cm and len(widths_cm) != len(headers):
+            raise ValueError(
+                'widths_cm 有 %d 个，表头是 %d 列（数量必须一致）'
+                % (len(widths_cm), len(headers)))
         t = self.doc.add_table(rows=1 + len(rows), cols=len(headers))
         t.style = self._grid_style()
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -766,7 +811,7 @@ class ReportBuilder:
                     for p in cell.paragraphs:
                         ppr = p._element.get_or_add_pPr()
                         if ppr.find(qn('w:keepNext')) is None:
-                            ppr.insert(0, parse_xml('<w:keepNext %s/>' % W_NS))
+                            _ppr_insert(ppr, parse_xml('<w:keepNext %s/>' % W_NS))
         return t
 
     @staticmethod

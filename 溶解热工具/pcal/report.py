@@ -37,6 +37,16 @@ from . import dissolution as ds
 from . import plotting
 from .analysis import SUBSTANCES
 from .docxkit import ReportBuilder
+from .sigfig import k, pm, pct, SIG_DIGITS
+
+def pm(x, u, n=SIG_DIGITS, unit=''):
+    from .sigfig import pm as _pm
+    return _pm(x, u, n, unit, fallback=1)
+
+
+def val(x, u, n=SIG_DIGITS):
+    from .sigfig import val as _val
+    return _val(x, u, n, fallback=1)
 
 ITALIC = {'italic': True}
 
@@ -53,56 +63,25 @@ INTRO_BLANK_LINES = 26
 
 
 # ---------------------------------------------------------------- 数值格式
-def k(x, nd=1):
-    return '%.*f' % (nd, x)
 
 
 SIG_DIGITS = 2
 
 
-def _sig(x, n=SIG_DIGITS):
-    x = float(x)
-    if x == 0 or not np.isfinite(x):
-        return 0.0
-    d = decimal.Decimal(repr(x))
-    q = decimal.Decimal(1).scaleb(d.adjusted() - n + 1)
-    return float(d.quantize(q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _place(unc, n=SIG_DIGITS):
-    return decimal.Decimal(repr(float(unc))).adjusted() - n + 1
 
 
-def _fix(x, exp):
-    q = decimal.Decimal(1).scaleb(exp)
-    return float(decimal.Decimal(repr(float(x))).quantize(
-        q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _fmt(x, exp):
-    return '%.*f' % (max(0, -exp), x)
 
 
-def val(x, unc, n=SIG_DIGITS):
-    if unc in (None, 0):
-        return k(x, 1)
-    return _fmt(_fix(x, _place(unc, n)), _place(unc, n))
 
 
-def unc(x, n=SIG_DIGITS):
-    if x in (None, 0):
-        return '—'
-    e = _place(x, n)
-    return _fmt(_fix(x, e), e)
 
 
-def pm(x, u, n=SIG_DIGITS, unit=''):
-    e = _place(u, n) if u not in (None, 0) else _place(abs(x) * 1e-3 or 1, n)
-    return '%s ± %s%s' % (_fmt(_fix(x, e), e), _fmt(_fix(u, e), e), unit)
 
 
-def pct(x, n=SIG_DIGITS):
-    return _fmt(_sig(x, n), _place(x, n))
 
 
 # ---------------------------------------------------------------- 主流程

@@ -37,6 +37,7 @@ from . import plotting
 from . import uv
 from .analysis import default_config
 from .docxkit import ReportBuilder, add_rich_text
+from .sigfig import k, pm
 
 ITALIC = {'italic': True}
 
@@ -51,55 +52,22 @@ SIG_DIGITS = 2
 
 
 # ---------------------------------------------------------------- 数值格式
-def k(x, nd=1):
-    return '%.*f' % (nd, x)
 
 
-def _sig(x, n=SIG_DIGITS):
-    x = float(x)
-    if x == 0 or not np.isfinite(x):
-        return 0.0
-    d = decimal.Decimal(repr(x))
-    q = decimal.Decimal(1).scaleb(d.adjusted() - n + 1)
-    return float(d.quantize(q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _place(unc, n=SIG_DIGITS):
-    return decimal.Decimal(repr(float(unc))).adjusted() - n + 1
 
 
-def _fix(x, exp):
-    q = decimal.Decimal(1).scaleb(exp)
-    return float(decimal.Decimal(repr(float(x))).quantize(
-        q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _fmt(x, exp):
-    return '%.*f' % (max(0, -exp), x)
 
 
-def val(x, u, n=SIG_DIGITS):
-    if u in (None, 0) or not np.isfinite(u):
-        return k(x, 3)
-    return _fmt(_fix(x, _place(u, n)), _place(u, n))
 
 
-def unc(u, n=SIG_DIGITS):
-    if u in (None, 0) or not np.isfinite(u):
-        return '—'
-    e = _place(u, n)
-    return _fmt(_fix(u, e), e)
 
 
-def pm(x, u, n=SIG_DIGITS):
-    if u in (None, 0) or not np.isfinite(u):
-        return k(x, 3)
-    e = _place(u, n)
-    return '%s ± %s' % (_fmt(_fix(x, e), e), _fmt(_fix(u, e), e))
 
 
-def pct(x, n=SIG_DIGITS):
-    return _fmt(_sig(x, n), _place(x, n))
 
 
 def sci_pm(x, u, exp=None):

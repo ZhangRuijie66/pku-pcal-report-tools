@@ -86,10 +86,22 @@ def _scan_chem(s, i):
 
     语法： [系数]{元素}[_{下标}] 或 [系数](基团) 重复；至少出现一次“元素_下标”。
     注意每个 token 都必须真的吃进字符，否则像 'C_{12}...+' 里的 '+' 会被当成系数。
+
+    ⚠ 两个额外约束（都是为了不把变量误判成化学式）：
+
+    1. **至少两个元素符号**：单字母元素 + 纯数字下标（C_{0}、P_{2}、V_{2}）
+       在物化报告里几乎总是变量而不是化学式（浓度 C₀、压力 P₂），
+       只看「一个元素 + 数字下标」会把它们误排成正体。
+       H_{2}O、C_{12}H_{22}O_{11}、C_{7}H_{6}O_{2} 这类真正的化学式都有
+       多个元素，不受影响。
+    2. **下标必须是纯数字**：`h_{ii}` 会被 H + I 拼成「两个元素」，
+       但 ii 不是化学计量数，那是变量的重复索引（协方差矩阵元素），
+       必须保持斜体。
     """
     n = len(s)
     j = i
     saw_sub = False
+    n_elements = 0
     while j < n:
         start = j
         if s[j] == '(':
@@ -108,6 +120,7 @@ def _scan_chem(s, i):
                 break
             j = k
             continue
+        n_elements += 1
         j += len(el)
         sm = _SUB_RE.match(s, j)
         if sm:
@@ -115,8 +128,12 @@ def _scan_chem(s, i):
             saw_sub = True
         if j == start:
             break
-    if j <= i or not saw_sub:
+    if j <= i or not saw_sub or n_elements < 2:
         return None
+    # 下标里的花括号段必须全是数字（C_{12} 可以，h_{ii} 不行）
+    for sub in re.findall(r'_\{([^{}]*)\}', s[i:j]):
+        if not sub.isdigit():
+            return None
     return j
 
 
@@ -467,10 +484,16 @@ def _unit_run(s, i, prev):
     prev —— 前一个有意义字符，用于区分变量与单位：
             前面是数字 / 右括号时，单字母按单位处理
             （如 0.0023 K、mol^{-1}、(g·K)^{-1}）。
+            prev 为 None 表示**公式开头**：独立的单位串
+            （J·mol⁻¹·K⁻¹ 这种换算式）只有按单位处理才对，否则会被整段
+            排成斜体。但公式开头的**单个字母**不能当单位——`h_{ii}` 里的
+            h 是变量（亨利 h 是单位、也是变量），开了这个口子会把
+            h、s、m 这些当单位的单字母全排成正体。
     """
     if not _unit_token(s, i):
         return 0
-    if not (prev and (prev.isdigit() or prev in ')}]')):
+    at_start = prev is None
+    if not at_start and not (prev.isdigit() or prev in ')}]'):
         return 0
     j = i
     n = len(s)
@@ -520,7 +543,16 @@ def _unit_run(s, i, prev):
     # 结尾去掉尾随空格
     while j > i and s[j - 1] in ' \t':
         j -= 1
-    return j - i
+    end = j - i
+    if at_start:
+        # 公式开头只认「多字母单位」或「带 \cdot/$· 连接的单位串」：
+        # J·mol⁻¹·K⁻¹ 要整段正体，但单独的 h_{ii}、s、m 是变量。
+        first = _unit_token(s, i) or 0
+        has_dot = ('\\cdot' in s[i:j] or '\\times' in s[i:j] or '·' in s[i:j])
+        multi = first > 1
+        if not (multi or has_dot):
+            return 0
+    return end
 
 
 def _upright_units(s):
@@ -616,6 +648,12 @@ class _Parser:
             self.i += 1
             start = self.i
             operand = _Node(''.join(p.xml for p in self.read_braced()), is_atom=True)
+            if not operand.xml.strip():
+                # `x^{}` 这种空上下标会生成一个空的 <m:sSup>，Word 里显示
+                # 一个空白上标位——同样报错，别让它静默产出坏公式。
+                raise ValueError(
+                    '上下标内容为空：%r（位置 %d）。完整公式：%s'
+                    % (mark + '{}', start - 1, self.s[:120]))
             if mark == '^':
                 node = _Node(_s_sup(node.xml, operand.xml), is_atom=True)
             else:
@@ -647,9 +685,13 @@ class _Parser:
         if c == '\\':
             return self.attach_scripts(self.parse_command())
         if c == '^' or c == '_':
-            # 无基底的上下标（罕见），按空基底处理
-            self.i += 1
-            return _Node('', is_atom=True)
+            # 无基底的上下标：`^{2}` / `_{x}` 这种写法会把标记连同内容一起
+            # 静默丢掉（渲染成普通的 2 / x），看不出问题在哪。这里直接报错，
+            # 把 LaTeX 片段带出来，让作者在开发期就发现。
+            raise ValueError(
+                '上下标缺少基底：%r（位置 %d）。写 K^{-1} 时要先有 K，'
+                '不能以 ^ 或 _ 开头。完整公式：%s'
+                % (c, self.i, self.s[:120]))
         # 化学式（KNO_{3}、H_{2}O…）整段正体；必须放在"普通字符"之前，
         # 否则 \frac{m}{M(KNO_{3})} 这种括号里的化学式会被当成变量排成斜体。
         if c.isascii() and c.isupper():

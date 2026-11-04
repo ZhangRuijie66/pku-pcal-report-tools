@@ -12,6 +12,16 @@ from . import combustion as cb
 from . import plotting
 from .analysis import SUBSTANCES
 from .docxkit import ReportBuilder
+from .sigfig import k, val, unc, pm, pct, SIG_DIGITS
+
+def pm(x, u, n=SIG_DIGITS, unit=''):
+    from .sigfig import pm as _pm
+    return _pm(x, u, n, unit, fallback=1)
+
+
+def val(x, u, n=SIG_DIGITS):
+    from .sigfig import val as _val
+    return _val(x, u, n, fallback=1)
 
 # 行内变量：普通文本 + 斜体（不是公式对象）
 ITALIC = {'italic': True}
@@ -25,8 +35,6 @@ APPARATUS_PNG = os.path.join(ASSETS, '装置图.png')
 REPORT_TITLE = '燃烧热的测定'
 
 # ---------------------------------------------------------------- 数值格式
-def k(x, nd=1):
-    return '%.*f' % (nd, x)
 
 
 # ---- 有效数字（按 JJF 1059.1 + GB/T 8170）
@@ -36,56 +44,20 @@ def k(x, nd=1):
 SIG_DIGITS = 2
 
 
-def _sig(x, n=SIG_DIGITS):
-    """保留 n 位有效数字（四舍六入五成双）。"""
-    x = float(x)
-    if x == 0 or not np.isfinite(x):
-        return 0.0
-    d = decimal.Decimal(repr(x))
-    q = decimal.Decimal(1).scaleb(d.adjusted() - n + 1)
-    return float(d.quantize(q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _place(unc, n=SIG_DIGITS):
-    """不确定度保留 n 位有效数字后，末位所在的量级（返回 10 的幂）。"""
-    return decimal.Decimal(repr(float(unc))).adjusted() - n + 1
 
 
-def _fix(x, exp):
-    """把 x 修约到 10^exp 位（四舍六入五成双）。"""
-    q = decimal.Decimal(1).scaleb(exp)
-    return float(decimal.Decimal(repr(float(x))).quantize(
-        q, rounding=decimal.ROUND_HALF_EVEN))
 
 
-def _fmt(x, exp):
-    return '%.*f' % (max(0, -exp), x)
 
 
-def val(x, unc, n=SIG_DIGITS):
-    """结果值：修约到与不确定度末位一致，返回字符串。"""
-    if unc in (None, 0):
-        return k(x, 1)
-    return _fmt(_fix(x, _place(unc, n)), _place(unc, n))
 
 
-def unc(x, n=SIG_DIGITS):
-    """不确定度：保留 n 位有效数字，返回字符串。"""
-    if x in (None, 0):
-        return '—'
-    e = _place(x, n)
-    return _fmt(_fix(x, e), e)
 
 
-def pm(x, u, n=SIG_DIGITS, unit=''):
-    """「值 ± 不确定度」，末位对齐（JJF 1059.1 要求）。"""
-    e = _place(u, n) if u not in (None, 0) else _place(abs(x) * 1e-3 or 1, n)
-    return '%s ± %s%s' % (_fmt(_fix(x, e), e), _fmt(_fix(u, e), e), unit)
 
 
-def pct(x, n=SIG_DIGITS):
-    """相对偏差：保留 n 位有效数字。"""
-    return _fmt(_sig(x, n), _place(x, n))
 
 
 def sci(x, nd=2):

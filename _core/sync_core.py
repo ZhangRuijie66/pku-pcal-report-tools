@@ -33,6 +33,7 @@ TOOLS = (
 FILES = (
     ('omml.py', Path('pcal') / 'omml.py'),
     ('docxkit.py', Path('pcal') / 'docxkit.py'),
+    ('sigfig.py', Path('pcal') / 'sigfig.py'),
     ('workspace.py', Path('pcal') / 'workspace.py'),
     ('profile.py', Path('pcal') / 'profile.py'),
 )
