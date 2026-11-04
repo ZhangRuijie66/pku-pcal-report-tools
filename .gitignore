@@ -8,6 +8,7 @@
 !/启动入口.vbs
 !/停止服务.vbs
 !/安装依赖.cmd
+!/make_portable.py
 !/_tools/
 !/_core/
 !/tests/

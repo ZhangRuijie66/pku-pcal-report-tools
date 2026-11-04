@@ -72,12 +72,25 @@
 
 ## 可移植版
 
-`…\物理化学实验\发布\物化实验报告工具-可移植版.zip`（约 3 MB）：把入口页和
-五个模块打成一个绿色包，解压到任意位置、双击根目录的 `启动.cmd` 即可用。
+`…\物理化学实验\发布\物化实验报告工具-可移植版.zip`（约 7.5 MB、254 个文件）：
+把入口页 + **11 个模块** + `_core/`（canonical 核心件留档）+ `_tools/`（无黑框启动器）
+打成一个绿色包，解压到任意位置、双击根目录的 `启动入口.cmd` 即可用。
 目标机器只要有 Python 3，启动器会自动装依赖（走清华源）。包内 `使用说明.md`。
 
-打包命令（改完代码后重新发布时照这个跑）：用 `robocopy` 把五个工具目录
-拷到 `发布\_stage\` 下（排除 `输出\`、`__pycache__\`、`settings.json`），
-再 `Compress-Archive`。`settings.json` **不要进包**——里面是使用者自己的
-姓名/学号/数据目录。根目录的 `启动.cmd` 靠“找哪个子目录里有 portal.py”
-来定位入口，这样它自己可以保持纯 ASCII。
+打包用仓库根的 **`make_portable.py`**（不要再手敲 robocopy）：
+
+```bash
+python make_portable.py                # 输出 发布/物化实验报告工具-可移植版.zip
+python make_portable.py --no-zip       # 只准备 发布/_stage_portable/，先检查
+python make_portable.py --out D:/x.zip # 换个输出路径
+```
+
+脚本会排除 `settings.json`、`profile.json`、各工具的 `data/`（本机录入数据）、
+`__pycache__`、`_core/backups/`、`实验报告输出/`、`发布/` 等。`settings.json`
+**不要进包**——里面是使用者自己的姓名/学号/数据目录。根目录的 `启动入口.cmd`
+靠「找哪个子目录里有 `portal.py`」来定位入口，这样它自己可以保持纯 ASCII。
+
+⚠ 交付前**必须把 zip 解压到一个和仓库完全无关的路径实测**：跑各模块
+`run.py --test`、起一次入口页确认 11 个模块都 `installed=True`——
+路径写死的坑只有这样才查得出来。上次那个包（2026-09-23）就是没这么做，
+里面积压的只有 3 个模块、连 `_core/` 和 `_tools/` 都没有。

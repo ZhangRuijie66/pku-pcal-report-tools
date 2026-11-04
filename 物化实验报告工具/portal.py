@@ -137,8 +137,29 @@ STATE = {
 
 
 # ---------------------------------------------------------------- 小工具
+LOG_MAX_BYTES = 4 * 1024 * 1024      # 单个日志超过 4 MB 就滚一次
+
+
+def _rotate_log(path, max_bytes=LOG_MAX_BYTES):
+    """日志只追加不轮转，一年下来会很大；超过上限就改名成 .1 再重开。
+
+    只保留一代（.log → .log.1），够用且不占空间。
+    """
+    try:
+        if os.path.getsize(path) > max_bytes:
+            backup = path + '.1'
+            try:
+                os.remove(backup)
+            except OSError:
+                pass
+            os.replace(path, backup)
+    except OSError:
+        pass
+
+
 def _log_handle():
     """后台运行时看不到 stdout，把各模块的输出汇到一个日志里。"""
+    _rotate_log(LOG_PATH)
     try:
         fh = open(LOG_PATH, 'a', encoding='utf-8')
         fh.write('\n===== %s\n' % time.strftime('%Y-%m-%d %H:%M:%S'))
@@ -336,10 +357,22 @@ def _start_module(mod, force_new_port=False):
                 return st
             return {**st, 'starting': True}
         try:
-            proc = subprocess.Popen(
-                [PYTHON, os.path.join(d, 'run.py'), '--port', str(port), '--no-browser'],
-                cwd=d, env=env, creationflags=creationflags,
-                stdin=subprocess.DEVNULL, stdout=_log_handle(), stderr=subprocess.STDOUT)
+            # 日志句柄交给 Popen 之后由子进程继承，父进程这边要关掉自己那份，
+            # 否则每拉起一次模块就泄漏一个文件句柄（原来会累积到进程退出）。
+            log_fh = _log_handle()
+            try:
+                proc = subprocess.Popen(
+                    [PYTHON, os.path.join(d, 'run.py'), '--port', str(port),
+                     '--no-browser'],
+                    cwd=d, env=env, creationflags=creationflags,
+                    stdin=subprocess.DEVNULL, stdout=log_fh,
+                    stderr=subprocess.STDOUT)
+            finally:
+                if log_fh is not subprocess.DEVNULL:
+                    try:
+                        log_fh.close()
+                    except OSError:
+                        pass
         except OSError as exc:
             return {'ok': False, 'installed': True, 'port': None, 'error': str(exc)}
         st = {'ok': False, 'installed': True, 'port': port, 'proc': proc,

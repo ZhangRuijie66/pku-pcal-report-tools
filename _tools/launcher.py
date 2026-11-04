@@ -44,8 +44,23 @@ def _portal_module():
     return portal
 
 
+def _rotate_log(path, max_bytes=4 * 1024 * 1024):
+    """日志只追加不轮转会越积越大；超过上限就改名成 .1 再重开（只留一代）。"""
+    try:
+        if os.path.getsize(path) > max_bytes:
+            backup = path + '.1'
+            try:
+                os.remove(backup)
+            except OSError:
+                pass
+            os.replace(path, backup)
+    except OSError:
+        pass
+
+
 def _spawn_hidden(argv, cwd=None):
     """后台启动一个 python 进程：输出写日志文件，不创建任何窗口。"""
+    _rotate_log(LOG_FILE)
     try:
         log = open(LOG_FILE, 'a', encoding='utf-8')
         log.write('\n===== %s\n    %s\n' %
@@ -56,9 +71,17 @@ def _spawn_hidden(argv, cwd=None):
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUNBUFFERED'] = '1'      # 日志要实时，不能等进程退出才刷出来
-    return subprocess.Popen(argv, cwd=cwd, stdout=log, stderr=log,
-                            stdin=subprocess.DEVNULL, env=env,
-                            creationflags=NO_WINDOW)
+    try:
+        return subprocess.Popen(argv, cwd=cwd, stdout=log, stderr=log,
+                                stdin=subprocess.DEVNULL, env=env,
+                                creationflags=NO_WINDOW)
+    finally:
+        # 句柄已交给子进程，父进程这份要关掉，否则每起一次就泄漏一个
+        if log is not subprocess.DEVNULL:
+            try:
+                log.close()
+            except OSError:
+                pass
 
 
 def _has(exe, module):
