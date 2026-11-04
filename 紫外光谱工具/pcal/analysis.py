@@ -24,6 +24,8 @@ def default_config():
         'student_id': '',
         'group': '',
         'group_no': '',
+        # 本实验是两人合作完成，报告封面要写合作者姓名
+        'partner_name': '',
         'date': '2026/10/14 & 10/21',
         'room_temp_1': 22.0,
         'room_temp_2': 19.1,
@@ -56,7 +58,7 @@ def default_config():
 
 # 只有这些字段会被保存到 settings.json（与具体数据文件无关的偏好）
 PERSIST_KEYS = (
-    'student_name', 'student_id', 'group', 'group_no', 'date',
+    'student_name', 'student_id', 'group', 'group_no', 'partner_name', 'date',
     'room_temp_1', 'room_temp_2', 'pressure_1', 'pressure_2',
     'data_dir', 'smooth_window', 'stray', 'stray_mode', 'stray_a3',
     'path_cm', 'anchor_pad', 'voigt_peaks',
@@ -143,15 +145,18 @@ class Analysis:
             bp = self._spec(os.path.join(data_dir, s['blank']))
             cal = cal_by_key[s['cal']]
             stray = self._stray_for(s)
+            # 吸收光谱不做平滑：直接用原始点，基线也在原始点上取中位数。
             cur = uv.absorbance_curve(sp, bp, cal,
-                                      smooth_window=int(_num(cfg.get('smooth_window'), 9)),
+                                      smooth_window=int(_num(cfg.get('smooth_window'), 1)),
                                       stray=stray)
             band = tuple(mol['band'])
             anchors = uv.default_anchors(band, pad=_num(cfg.get('anchor_pad'), 80))
-            k, b, A_corr = uv.baseline_line(cur['lam'], cur['A_smooth'], anchors)
-            k0, b0, A_corr_plain = uv.baseline_line(cur['lam'], cur['A_smooth_plain'],
+            k, b, A_corr = uv.baseline_line(cur['lam'], cur['A_raw'], anchors)
+            k0, b0, A_corr_plain = uv.baseline_line(cur['lam'], cur['A_raw_plain'],
                                                     anchors)
-            # Voigt 分峰拟合（分峰个数可配置；失败时退回简单寻峰）
+            # 峰位与峰高只认 Voigt 分峰拟合的总曲线极大值。
+            # 抛物线寻峰只作兜底，并且要留下告警——平滑/寻峰两条路径给出的
+            # λmax、A 会有可见差异，不能悄悄换口径。
             n_peaks = cfg.get('voigt_peaks', 'auto')
             if n_peaks not in (None, '', 'auto'):
                 try:
@@ -164,6 +169,9 @@ class Analysis:
             else:
                 peak = uv.find_peak(cur['lam'], A_corr, band)
                 peak['voigt'] = False
+                self.warnings.append(
+                    '%s 的 Voigt 拟合失败，改用抛物线寻峰（λmax、A 可靠性下降）'
+                    % s['key'])
             if stray == 0:
                 vf_obs = vf
             else:

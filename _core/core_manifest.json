@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "files": {
     "omml.py": "1d720d45a580fdd6f7f29fc919cf92c8a22aea8b3427d2c9ed8149cb5785ebcb",
-    "docxkit.py": "2ab640c985e0d80d9490c2936ae5a15c41ff6e2a1c6d8fe8c9d6fd76dbffd004",
+    "docxkit.py": "9873a9002ec583b7b877210b2329a65e87403fef4de160d4456dd542b89551d4",
     "workspace.py": "0fe745f926b2d6b2f36d53b2ecd8bd5d1b09e07e15836bcd07ed91c002a66c07",
     "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3"
   },

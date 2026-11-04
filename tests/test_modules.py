@@ -215,13 +215,16 @@ class ModuleRegressionTests(unittest.TestCase):
         self.assertEqual(an.warnings, [])
 
     def test_uv_spectrum(self):
+        # 吸收光谱不做平滑（smooth_window=1），峰位取 Voigt 总拟合曲线极大值。
+        # 与原来的 9 点平滑相比只有 A3 的 λmax 动了 0.25 nm（656.15 vs 655.89），
+        # 其余五个分子完全一致——说明不平滑对峰位是稳健的。
         an = self.case('紫外').an
         for key, expected in (('A1', 428.53567), ('A2', 560.85106),
-                              ('A3', 655.89487), ('A4', 770.18773),
+                              ('A3', 656.14518), ('A4', 770.18773),
                               ('B1', 449.88736), ('B2', 296.25782)):
             self.close(an.box['lambdas'][key], expected, label=key)
-        self.close(an.beer['fit']['eps'], 43297.19984, label='epsilon')
-        self.close(an.beer['fit']['r2'], 0.99880146, rtol=1e-5, label='Beer R2')
+        self.close(an.beer['fit']['eps'], 43235.27526, label='epsilon')
+        self.close(an.beer['fit']['r2'], 0.99875613, rtol=1e-5, label='Beer R2')
         self.close(an.cals['d1_long']['r2'], 0.99992434, rtol=1e-6,
                    label='calibration R2')
         self.assertEqual(an.warnings, [])

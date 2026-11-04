@@ -95,7 +95,7 @@ def make_spectra_figure(items, labels=None, xlim=None, title=None,
     """多条 A–λ 曲线（items 为 Analysis.samples 里的条目）。"""
     fig, ax = plt.subplots(figsize=FIGSIZE, dpi=120)
     for i, it in enumerate(items):
-        A = it['A_corr'] if corrected else it['A_smooth']
+        A = it['A_corr'] if corrected else it['A_raw']
         lab = labels[i] if labels else _auto_label(it)
         color = PALETTE[i % len(PALETTE)]
         ax.plot(it['lam'], A, linewidth=0.8, color=color, label=lab)
@@ -130,11 +130,11 @@ def _auto_label(it):
 
 
 def make_concentration_figure(items):
-    """A3 不同浓度的 A–λ 谱（只平滑、不做基线校正，用于定性比较）。"""
+    """A3 不同浓度的 A–λ 谱（原始数据、不做基线校正，用于定性比较）。"""
     fig, ax = plt.subplots(figsize=FIGSIZE, dpi=120)
     items = sorted(items, key=lambda p: p['conc'])
     for i, it in enumerate(items):
-        ax.plot(it['lam'], it['A_smooth_plain'], linewidth=0.8,
+        ax.plot(it['lam'], it['A_raw_plain'], linewidth=0.8,
                 color=PALETTE[i % len(PALETTE)],
                 label=r'$c$ = %g $\mu$mol·L$^{-1}$' % it['conc'])
     lo = min(s['band'][0] for s in items) - 60
@@ -153,7 +153,7 @@ def make_source_figure(item_w, item_dw):
     fig, ax = plt.subplots(figsize=FIGSIZE, dpi=120)
     for it, color, lab in ((item_w, 'black', '钨灯'),
                            (item_dw, '#d62728', '钨灯 + 氘灯')):
-        ax.plot(it['lam'], it['A_smooth_plain'], linewidth=0.8, color=color, label=lab)
+        ax.plot(it['lam'], it['A_raw_plain'], linewidth=0.8, color=color, label=lab)
     lo = item_w['band'][0] - 80
     hi = item_w['band'][1] + 30
     ax.set_xlim(lo, hi)

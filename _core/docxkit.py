@@ -473,6 +473,64 @@ class ReportBuilder:
                         matched.append(key)
         return matched
 
+    def add_cover_row(self, label, value, after=None, size=14.0):
+        """在封面信息表里插入一行「标签 / 值」（模板本身没有这一行时用）。
+
+        模板封面是 姓名/学号/组别/实验日期/室温/大气压强 六行；某些实验需要
+        额外字段（如紫外光谱是两人合作，要写合作者）。set_cover 只能填已有行，
+        所以这里复制相邻行的格式再插一行，保持字号、加粗、行高与对齐一致。
+
+        after: 插在哪一行的标签之后（默认插在最后一行）。
+        返回是否成功。
+        """
+        table = None
+        for t in self.doc.tables:
+            labels = [self._norm_label(r.cells[0].text) if len(r.cells) >= 2 else ''
+                      for r in t.rows]
+            if any(lab in ('姓名', '学号') for lab in labels):
+                table = t
+                break
+        if table is None:
+            return False
+
+        anchor = None
+        for row in table.rows:
+            if len(row.cells) < 2:
+                continue
+            lab = self._norm_label(row.cells[0].text)
+            if after is not None and lab == self._norm_label(after):
+                anchor = row
+                break
+        if anchor is None:
+            anchor = table.rows[-1]
+
+        import copy as _copy
+        new_tr = _copy.deepcopy(anchor._tr)
+        anchor._tr.addnext(new_tr)
+
+        from docx.table import _Row
+        row = _Row(new_tr, table)
+        left, right = row.cells[0], row.cells[1]
+        for cell, text, bold in ((left, label, False), (right, str(value or ''), True)):
+            for p in cell.paragraphs[1:]:
+                p._element.getparent().remove(p._element)
+            p = cell.paragraphs[0]
+            for r in list(p.runs):
+                r._element.getparent().remove(r._element)
+            if text:
+                run = p.add_run(text)
+                style_run(run, size=size, cjk=FONT_HEI, latin=FONT_HEI, bold=bold)
+            ppr = p._element.get_or_add_pPr()
+            rpr = ppr.find(qn('w:rPr'))
+            if rpr is not None:
+                ppr.remove(rpr)
+            ppr.append(parse_xml(
+                '<w:rPr %s><w:rFonts w:ascii="%s" w:eastAsia="%s" w:hAnsi="%s"'
+                ' w:hint="eastAsia"/><w:sz w:val="%d"/><w:szCs w:val="%d"/>%s</w:rPr>'
+                % (W_NS, FONT_HEI, FONT_HEI, FONT_HEI,
+                   int(size * 2), int(size * 2), '<w:b/>' if bold else '')))
+        return True
+
     def set_header_title(self, title):
         """把页眉里的「实验题目」换成真正的题目（模板页眉是 左 | 中 | 右 的制表位布局）。"""
         for section in self.doc.sections:

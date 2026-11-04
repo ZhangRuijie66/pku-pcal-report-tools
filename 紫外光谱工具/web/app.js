@@ -2,9 +2,9 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const COVER_FIELDS = ['student_name', 'student_id', 'group', 'group_no', 'date',
+const COVER_FIELDS = ['student_name', 'student_id', 'partner_name', 'group', 'group_no', 'date',
   'room_temp_1', 'room_temp_2', 'pressure_1', 'pressure_2'];
-const PROC_FIELDS = ['data_dir', 'smooth_window', 'voigt_peaks', 'stray_mode',
+const PROC_FIELDS = ['data_dir', 'voigt_peaks', 'stray_mode',
   'stray', 'stray_a3', 'path_cm', 'anchor_pad', 'box_a', 'box_n_B1', 'box_n_B2'];
 // 配置键 -> 页面元素 id（data_dir 的输入框 id 是 dataDir）
 const EL_ID = { data_dir: 'dataDir' };
@@ -127,6 +127,7 @@ function renderWarnings(s) {
   const list = (s.warnings || []).slice();
   if (s.config && !s.config.student_name) list.push('封面「姓名」为空');
   if (s.config && !s.config.student_id) list.push('封面「学号」为空');
+  if (s.config && !s.config.partner_name) list.push('封面「合作者」为空（本实验两人合作，导出时留「（待填）」占位）');
   if (!list.length) { $('warnCard').style.display = 'none'; return; }
   $('warnCard').style.display = '';
   $('warns').innerHTML = list.map((w) => '<div class="msg">' + esc(w) + '</div>').join('');
@@ -209,7 +210,7 @@ function drawChart() {
   const hints = {
     cal: '左图：光源谱图与特征峰位置；右图：pixel–波长线性拟合',
     source: '同一浓度 A3 在卤钨灯与卤钨灯+氘灯下的吸收光谱',
-    conc: 'A3 不同浓度的吸收光谱（只平滑、未扣基线）',
+    conc: 'A3 不同浓度的吸收光谱（原始数据、未扣基线）',
     beer: '扣除杂散光后的 A–c 线性拟合',
   };
   const kind = $('chartKind').value.split(':')[0];

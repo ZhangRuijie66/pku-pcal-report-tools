@@ -97,6 +97,8 @@ td{white-space:nowrap}
       <h2>报告封面</h2>
       <div class="field"><label>姓名</label><input type="text" id="student_name"></div>
       <div class="field"><label>学号</label><input type="text" id="student_id"></div>
+      <div class="field"><label>合作者（本实验两人合作）</label>
+        <input type="text" id="partner_name" placeholder="合作者姓名"></div>
       <div class="grid2">
         <div class="field"><label>组别</label><input type="text" id="group"></div>
         <div class="field"><label>组号</label><input type="text" id="group_no"></div>
@@ -114,8 +116,8 @@ td{white-space:nowrap}
 
     <section class="card">
       <h2>处理参数</h2>
-      <div class="field"><label>平滑窗口（移动平均点数）</label>
-        <input type="number" step="2" min="3" id="smooth_window"></div>
+      <p class="hint">吸收光谱一律用原始数据点处理，不做移动平均平滑；
+        峰位与峰高只取 Voigt 分峰拟合总曲线的极大值。</p>
       <div class="field"><label>Voigt 分峰组元数</label>
         <select id="voigt_peaks">
           <option value="auto">自动（1~2 个组元）</option>

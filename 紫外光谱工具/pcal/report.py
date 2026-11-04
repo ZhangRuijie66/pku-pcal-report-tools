@@ -166,6 +166,14 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     if missing:
         log('⚠ 封面缺字段：%s（请在界面左侧「报告封面 / 实验条件」里填上）'
             % '、'.join(missing))
+    # 模板封面没有「合作者」这一行（本实验两人合作，需要写明）：先插行、再填值。
+    # add_cover_row 会复制相邻行的字号/加粗/对齐，保证和原有的六行一致。
+    # 标签带全角冒号，与模板其它行（姓    名：/ 学    号：）保持同一风格。
+    partner = str(cfg.get('partner_name') or '').strip()
+    if not rb.add_cover_row('合作者：', partner or '（待填）', after='学号'):
+        log('⚠ 封面表格结构异常，没能插入「合作者」行')
+    elif not partner:
+        log('⚠ 封面「合作者」为空，已留占位「（待填）」，导出前请补上')
     rb.set_cover(cover, title_size=18.0)
     rb.set_header_title(REPORT_TITLE)
 
@@ -202,14 +210,26 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         voigt_png = save(plotting.make_voigt_figure(analysis.samples[a3_key]),
                          'voigt_A3.png')
 
-    long_items = [analysis.samples[k] for k in ('A2', 'A3c5', 'A4')
-                  if k in analysis.samples]
-    short_items = [analysis.samples[k] for k in ('A1', 'B1c', 'B2')
-                   if k in analysis.samples]
-    long_png = save(plotting.make_spectra_figure(
-        long_items, labels=['A2', 'A3', 'A4'], xlim=(450, 880)), 'spectra_long.png')
-    short_png = save(plotting.make_spectra_figure(
-        short_items, labels=['A1', 'B1', 'B2'], xlim=(250, 600)), 'spectra_short.png')
+    # 按分子类别分组作图：A 组（A1~A4 花青染料）一张，B 组（B1、B2 多烯）一张。
+    # 用 picked 的 key 而不是写死 sample key，界面上换了测量也能跟着走。
+    def _items(codes, fallback):
+        out, labels = [], []
+        for code in codes:
+            row = mol.get(code)
+            key = (row or {}).get('key') or fallback.get(code)
+            it = analysis.samples.get(key) if key else None
+            if it is not None:
+                out.append(it)
+                labels.append(code)
+        return out, labels
+
+    a_items, a_labels = _items(('A1', 'A2', 'A3', 'A4'),
+                               {'A1': 'A1', 'A2': 'A2', 'A3': 'A3c5b', 'A4': 'A4'})
+    b_items, b_labels = _items(('B1', 'B2'), {'B1': 'B1c', 'B2': 'B2'})
+    a_png = save(plotting.make_spectra_figure(
+        a_items, labels=a_labels, xlim=(350, 880)), 'spectra_A.png')
+    b_png = save(plotting.make_spectra_figure(
+        b_items, labels=b_labels, xlim=(240, 620)), 'spectra_B.png')
 
     # ================================================================ 摘要
     log('撰写摘要…')
@@ -291,7 +311,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     _sec_source(rb, analysis, source_png)
     log('写浓度与其余分子…')
     _sec_concentration(rb, analysis, fit, conc_items, conc_png, beer_png)
-    _sec_molecules(rb, analysis, mol, long_png, short_png, voigt_png)
+    _sec_molecules(rb, analysis, mol, a_png, b_png, voigt_png)
     _sec_gaussian(rb, cfg, mol)
 
     # ================================================================ 4 讨论与结论
@@ -418,7 +438,7 @@ def _sec_calibration(rb, c1, c2, c3, pngs):
         '其中 ', ('t', 'I_{0}', ITALIC), ' 为同光源条件下乙醇空白的信号强度，',
         ('t', 'I', ITALIC), ' 为待测样品的信号强度。之后对 ',
         ('t', 'A', ITALIC), '–', ('t', 'λ', ITALIC),
-        ' 曲线作平滑与基线校正，再用 Voigt 线形对吸收带作分峰拟合，'
+        ' 曲线作基线校正后，用 Voigt 线形对吸收带作分峰拟合，'
         '取拟合总曲线的极大值作为最大吸收波长 ',
         ('t', 'λ_{max}', ITALIC), ' 与相应的吸光度 ',
         ('t', 'A', ITALIC), '。',
@@ -481,8 +501,8 @@ def _sample_of(analysis, code):
 def _sec_concentration(rb, analysis, fit, conc_items, conc_png, beer_png):
     rb.heading('3.3 浓度对吸收光谱的影响', 2)
     rb.para('为了考察浓度对吸收光谱的影响，测量了浓度为 0.5、1.0、5.0、10、20 和 '
-            '50 μmol·L⁻¹ 的 A3 乙醇溶液的吸收光谱，结果如图6所示。图6 只做了平滑处理，'
-            '并未扣除基线，用于定性比较。')
+            '50 μmol·L⁻¹ 的 A3 乙醇溶液的吸收光谱，结果如图6所示。图6 用原始吸光度直接作图，'
+            '既未平滑也未扣除基线，用于定性比较。')
     rb.figure(conc_png, caption='图6  A3 分子不同浓度下的吸收光谱', width_cm=15.0)
     rb.para('由图可见，浓度很低（0.5、1.0 μmol·L⁻¹）时信号很弱、噪声较大，不适合'
             '定量测量；随着浓度增加，吸光度增大，但高浓度下谱线明显展宽，峰顶的噪声'
@@ -542,7 +562,7 @@ def _sec_concentration(rb, analysis, fit, conc_items, conc_png, beer_png):
 
 
 # ---------------------------------------------------------------- 3.4 其余分子
-def _sec_molecules(rb, analysis, mol, long_png, short_png, voigt_png=None):
+def _sec_molecules(rb, analysis, mol, a_png, b_png, voigt_png=None):
     rb.heading('3.4 其余分子的吸收光谱测定结果', 2)
     if voigt_png:
         rb.para(['以 5.0 μmol·L⁻¹ 的 A3 为例说明分峰的具体做法。按 3.1 节的方法'
@@ -572,14 +592,15 @@ def _sec_molecules(rb, analysis, mol, long_png, short_png, voigt_png=None):
     rb.para([
         '其余分子的吸收光谱按同样的方法处理：A2、A3、A4 用卤钨灯，'
         'A1、B1、B2 用氘灯；波长–pixel 的换算关系按 3.1 节所选用的标定结果处理。'
-        '对每条吸收光谱作平滑、基线校正和 Voigt 分峰，取总拟合曲线的极大值'
+        '对每条吸收光谱作基线校正和 Voigt 分峰（不做平滑，全部用原始数据点），'
+        '取总拟合曲线的极大值'
         '作为 ', ('t', 'λ_{max}', ITALIC), ' 与 ', ('t', 'A', ITALIC),
-        '，结果按长波长分子与短波长分子两组分别绘于图9和图10'
+        '。按分子类别分两组作图：A 组（花青染料 A1~A4）见图9，'
+        'B 组（多烯 B1、B2）见图10'
         '（图中实线为实测曲线，同色虚线为 Voigt 总拟合曲线）。',
     ])
-    rb.figure(long_png, caption='图9  长波长分子（A2、A3、A4）的吸收光谱', width_cm=15.0)
-    rb.figure(short_png, caption='图10  短波长分子（A1、B1、B2）的吸收光谱',
-              width_cm=15.0)
+    rb.figure(a_png, caption='图9  A 组分子（A1、A2、A3、A4）的吸收光谱', width_cm=15.0)
+    rb.figure(b_png, caption='图10  B 组分子（B1、B2）的吸收光谱', width_cm=15.0)
     rb.para('需要说明的是，图10 中 B2 在 550 nm 附近还有一个宽峰。B2 只有 3 个共轭双键，'
             '3.5 节的 TD-DFT 计算给出其第一激发态在 286.2 nm（振子强度 1.331），'
             '550 nm 附近没有允许跃迁，故该峰不可能是 B2 的真实电子吸收。它来自光栅的'

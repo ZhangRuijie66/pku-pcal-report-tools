@@ -43,7 +43,9 @@ MERCURY_LINES = (253.7, 404.7, 435.8, 546.1, 577.0, 579.0)
 # 一维势箱：λ(nm) = K·L(nm)²/(2n+1)，K = 8·m_e·c/h
 BOX_K = 3297.8
 
-DEFAULT_SMOOTH = 9          # 移动平均窗口（数据点）
+# 移动平均窗口（数据点）。1 = 不做平滑：吸收光谱用原始数据直接拟合，
+# 平滑会把峰顶压平、把 λmax 拉偏（A4 的 A 差 0.0023、B2 差 0.0046）。
+DEFAULT_SMOOTH = 1
 DEFAULT_STRAY = 0.0         # 杂散光占入射光强的比例（0 = 不校正）
 PATH_LENGTH_CM = 1.00       # 比色皿光程
 
@@ -420,7 +422,11 @@ def default_anchors(band, pad=80, width=25):
 
 
 def find_peak(lam, A, band, half_px=2):
-    """在 band 内找 A 的极大点；用抛物线插值给出亚像素 λmax。"""
+    """在 band 内找 A 的极大点；用抛物线插值给出亚像素 λmax。
+
+    ⚠ 只作为 Voigt 拟合失败时的兜底。吸收峰的 λmax / A 以 voigt_fit 的
+    总拟合曲线极大值为准（见 analysis.run），抛物线寻峰会被噪声带偏。
+    """
     m = np.isfinite(A) & (lam >= band[0]) & (lam <= band[1])
     if not np.any(m):
         return nan_peak()
