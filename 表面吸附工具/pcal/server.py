@@ -34,6 +34,7 @@ from pcal.analysis import (default_config, default_config_with_saved,  # noqa: E
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
 LOCK = threading.Lock()
+PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
 
 
 # ---------------------------------------------------------------- 设置
@@ -370,8 +371,12 @@ class Handler(BaseHTTPRequestHandler):
                                     default=_json_default))
 
     def _error(self, exc):
-        self._json({'ok': False, 'error': str(exc),
-                    'trace': traceback.format_exc()}, 400)
+        """把异常回给前端。traceback 只在本机调试（PCAL_DEBUG=1）时附带——
+        原来无条件回 trace，等于把内部路径结构和异常栈都吐给调用方。"""
+        payload = {'ok': False, 'error': str(exc)}
+        if os.environ.get('PCAL_DEBUG'):
+            payload['trace'] = traceback.format_exc()
+        self._json(payload, 400)
 
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
@@ -407,7 +412,9 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = STATE.get('config') or _config_from()
                 data = STATE.get('data') or _current_data()
                 kind = (q.get('kind') or ['bubble_curve'])[0]
-                return self._send(200, _preview(kind, cfg, data, q), 'image/png')
+                with PREVIEW_LOCK:
+                    png = _preview(kind, cfg, data, q)
+                return self._send(200, png, 'image/png')
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:                       # noqa: BLE001
             return self._error(exc)

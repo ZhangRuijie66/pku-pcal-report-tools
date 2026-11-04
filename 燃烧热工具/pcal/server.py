@@ -51,6 +51,7 @@ STATE = {
     'analysis': None,
     'points': {},       # index -> [s1,e1,s2,e2]
 }
+LOCK = threading.Lock()   # STATE 的读写都在它里面
 
 
 def load_settings():
@@ -287,8 +288,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False, default=_json_default))
 
     def _error(self, exc):
-        self._json({'ok': False, 'error': str(exc),
-                    'trace': traceback.format_exc()}, 400)
+        """把异常回给前端。traceback 只在本机调试（PCAL_DEBUG=1）时附带——
+        原来无条件回 trace，等于把内部路径结构和异常栈都吐给调用方。"""
+        payload = {'ok': False, 'error': str(exc)}
+        if os.environ.get('PCAL_DEBUG'):
+            payload['trace'] = traceback.format_exc()
+        self._json(payload, 400)
 
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
@@ -314,15 +319,10 @@ class Handler(BaseHTTPRequestHandler):
                                    'settings_file': SETTINGS_FILE,
                                    'has_saved': bool(load_settings())})
             if path == '/api/file':
-                q = urllib.parse.parse_qs(u.query)
-                p = (q.get('path') or [''])[0]
-                if not p or not os.path.exists(p):
-                    return self._json({'ok': False, 'error': '文件不存在'}, 404)
-                return self._json({'ok': True, 'text': _read_csv_text(p)})
-            if path == '/api/plot':
-                q = urllib.parse.parse_qs(u.query)
-                key = (q.get('key') or [''])[0]
-                return self._plot(key)
+                # ⚠ 这个端点前端从来没用过，而且能把任意本地文件内容读出来
+                # （实测 /api/file?path=C:\WINDOWS\win.ini 返回 200 + 文件文本）。
+                # 留着没有收益、只有风险，直接下线。
+                return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
             if path == '/api/scan':
                 q = urllib.parse.parse_qs(u.query)
                 d = (q.get('dir') or [''])[0]
@@ -332,8 +332,6 @@ class Handler(BaseHTTPRequestHandler):
                 initial = (q.get('initial') or [''])[0]
                 return self._json({'ok': True, 'path': pick_folder(initial)})
 
-            if path == '/api/results':
-                return self._json(self._results_payload())
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)
@@ -412,27 +410,14 @@ class Handler(BaseHTTPRequestHandler):
                            'settings_file': SETTINGS_FILE,
                            'saved': {k: cfg.get(k) for k in PERSIST_KEYS if k in cfg}})
 
-    def _plot(self, key):
-        """按轮次序号生成课程软件样式的 PNG（用于前端预览）。"""
-        an = STATE.get('analysis')
-        if an is None:
-            return self._json({'ok': False, 'error': '尚未计算'}, 400)
-        try:
-            idx = int(key or 0)
-        except ValueError:
-            idx = 0
-        it = next((r for r in an.rounds if r['index'] == idx), None)
-        if it is None:
-            return self._json({'ok': False, 'error': '没有第 %s 轮' % key}, 404)
-        fig = plotting.make_figure(it['data'], it['fit1'], it['fit2'], it['reynolds'])
-        png = plotting.figure_png(fig)
-        return self._send(200, png, 'image/png')
-
     def _calc(self, payload):
         base, datasets, an = build_state(payload)
-        STATE['config'] = base
-        STATE['datasets'] = datasets
-        STATE['analysis'] = an
+        # 三项必须一起更新：并发请求（页面同时触发 calc 与 export）时
+        # 否则可能读到「新 config + 旧 analysis」的混合态。
+        with LOCK:
+            STATE['config'] = base
+            STATE['datasets'] = datasets
+            STATE['analysis'] = an
         rounds = [_round_view(it, an, it['points']) for it in an.rounds]
         std = next((r for r in rounds if r['role'] == 'standard'), None)
         return self._json({
@@ -447,18 +432,14 @@ class Handler(BaseHTTPRequestHandler):
             'Qv_benzoic': an.Qv_benzoic,
         })
 
-    def _results_payload(self):
-        an = STATE.get('analysis')
-        if an is None:
-            return {'ok': False, 'error': '尚未计算'}
-        rounds = [_round_view(it, an, it['points']) for it in an.rounds]
-        return {'ok': True, 'rounds': rounds, 'W': an.W, 'sigma_W': an.sigma_W}
-
     def _export(self, payload):
         base, datasets, an = build_state(payload)
-        STATE['config'] = base
-        STATE['datasets'] = datasets
-        STATE['analysis'] = an
+        # 三项必须一起更新：并发请求（页面同时触发 calc 与 export）时
+        # 否则可能读到「新 config + 旧 analysis」的混合态。
+        with LOCK:
+            STATE['config'] = base
+            STATE['datasets'] = datasets
+            STATE['analysis'] = an
         stamp = time.strftime('%Y%m%d-%H%M%S')
         name = payload.get('filename') or _report_filename(base, stamp)
         name = _safe_filename(name)
