@@ -68,9 +68,23 @@
     options = opts;
     document.addEventListener('input', schedule);
     document.addEventListener('change', schedule);
-    await maybeRestore();
-    ready = true;
+    // 关标签页前把 debounce 里还没落盘的最后一次编辑存下来
+    window.addEventListener('beforeunload', flush);
+    try {
+      await maybeRestore();
+    } finally {
+      // 必须放在 finally：apply() 抛错时若 ready 一直是 false，
+      // 之后所有 save() 都会静默失效，用户「输入了但下次打开全没了」。
+      ready = true;
+    }
   }
 
-  window.PcalDraft = { init, save, schedule, clear };
+  /** 立刻把待存的编辑写进 localStorage（不等 debounce）。 */
+  function flush() {
+    clearTimeout(timer);
+    timer = null;
+    save();
+  }
+
+  window.PcalDraft = { init, save, schedule, flush, clear };
 })();

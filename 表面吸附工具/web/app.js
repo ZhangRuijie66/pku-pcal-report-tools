@@ -381,15 +381,17 @@ async function boot() {
       $('btnHome').style.display = '';
     }
     setStatus('就绪');
-    await PcalDraft.init({
-      key: 'pcal-draft-adsorption-v1',
-      read: () => ({config: readConfig(), data: readData()}),
-      apply: async (d) => {
-        fillConfig(d.config || {});
-        fillData(d.data || {});
-        await recalc();
-      },
-    });
+    if (window.PcalDraft) {
+      await PcalDraft.init({
+        key: 'pcal-draft-adsorption-v1',
+        read: () => ({config: readConfig(), data: readData()}),
+        apply: async (d) => {
+          fillConfig(d.config || {});
+          fillData(d.data || {});
+          await recalc();
+        },
+      });
+    }
   } catch (e) {
     setStatus('初始化失败：' + e.message, 'err');
     toast('初始化失败：' + e.message, 5000);

@@ -298,7 +298,10 @@ def _start_module(mod, force_new_port=False):
                     st['error'] = ''
                     return st
             if st['proc'].poll() is None:
-                return {**st, 'ok': False, 'error': '模块正在启动中…'}
+                # 还没起来但进程活着——这是「正在启动」，不是失败。
+                # 前端据此继续轮询，而不是关窗口 + 弹「启动失败」。
+                return {**st, 'ok': False, 'starting': True,
+                        'error': '模块正在启动中…'}
             with STATE['lock']:
                 if STATE['modules'].get(key) is st:
                     STATE['modules'].pop(key, None)
@@ -308,7 +311,8 @@ def _start_module(mod, force_new_port=False):
     if not force_new_port and _port_open(mod['port']) and _healthy(mod['port']):
         st = {'ok': True, 'installed': True, 'port': mod['port'], 'proc': None,
               'external': True, 'error': ''}
-        STATE['modules'][key] = st
+        with STATE['lock']:
+            STATE['modules'][key] = st
         return st
 
     port = _free_port(mod['port']) if not force_new_port else _free_port(mod['port'])
@@ -326,7 +330,11 @@ def _start_module(mod, force_new_port=False):
     with STATE['lock']:
         st = STATE['modules'].get(key)
         if st and st.get('proc') and st['proc'].poll() is None and not force_new_port:
-            return st                  # 另一个线程刚拉起，直接用它的
+            # 另一个线程刚拉起进程，直接复用。但此时它是「正在启动」而不是
+            # 失败——必须带上 starting 标记，否则前端会关窗口 + 弹「启动失败」。
+            if st.get('ok'):
+                return st
+            return {**st, 'starting': True}
         try:
             proc = subprocess.Popen(
                 [PYTHON, os.path.join(d, 'run.py'), '--port', str(port), '--no-browser'],
@@ -591,7 +599,11 @@ class Handler(BaseHTTPRequestHandler):
         if force:
             self._stop(key, quiet=True)
         st = _start_module(mod, force_new_port=force)
-        return self._json({'ok': bool(st.get('ok')), 'error': st.get('error', ''),
+        # starting=True 表示「进程活着但还没通过健康检查」，不是失败。
+        # 把两个状态分开，前端才知道该继续轮询还是该报错。
+        return self._json({'ok': bool(st.get('ok')),
+                           'starting': bool(st.get('starting')),
+                           'error': st.get('error', ''),
                            'modules': _module_payload()})
 
     def _stop(self, key, quiet=False):

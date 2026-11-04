@@ -2,12 +2,12 @@
   "version": "1.0.0",
   "files": {
     "omml.py": "1d720d45a580fdd6f7f29fc919cf92c8a22aea8b3427d2c9ed8149cb5785ebcb",
-    "docxkit.py": "9873a9002ec583b7b877210b2329a65e87403fef4de160d4456dd542b89551d4",
+    "docxkit.py": "e46fe2928720a8208bf94498c135663494c5e769c12c3297019e7d59be15e7e6",
     "workspace.py": "0fe745f926b2d6b2f36d53b2ecd8bd5d1b09e07e15836bcd07ed91c002a66c07",
     "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3"
   },
   "web_files": {
-    "web_draft.js": "36eb1d72a43d75a10b956cdc113f7f312bb0cb074c90787d1b72fb4590852a7a"
+    "web_draft.js": "f23dfb8643b5fa876e242c0bfe9f26cdfea7c165d12bc8cbcbfa826a1d4d0125"
   },
   "tools": [
     "燃烧热工具",

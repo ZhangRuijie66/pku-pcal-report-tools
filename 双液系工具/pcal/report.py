@@ -180,7 +180,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         ]
         if analysis.get('deviation') is not None:
             abs_segs += [
-                '恒沸点与文献值（%s K[4]）相差 %s K，组成较文献值偏低约 %s%%，'
+                '恒沸点与文献值（%s K^{[4]}）相差 %s K，组成较文献值偏低约 %s%%，'
                 '属系统偏差，其来源在讨论中分析。'
                 % (k(analysis['lit_T_K'], 2), k(azeo['T_K'] - analysis['lit_T_K'], 1),
                    pct(abs(analysis['deviation']) * 100)),
@@ -322,7 +322,7 @@ def _sec_curve(rb, analysis, curve, png_curve, png_refit, fig_no, tbl_no):
             '需要根据数据点的排布选择合适的拟合方式。'
             '理想溶液的摩尔折射率与摩尔分数呈线性关系，'
             '但折射率与组成之间并无线性关系；由表1数据点的散点也可以看出明显的'
-            '曲率，线性拟合会引入较大误差。参照文献[2]的做法，'
+            '曲率，线性拟合会引入较大误差。参照文献^{[2]}的做法，'
             '采用二次多项式拟合即可满足精度要求（次数过高有过拟合的风险），'
             '拟合方程为：', keep_next=True)
     rb.equation(r'n=Ax^{2}+Bx+C')
@@ -383,7 +383,7 @@ def _sec_curve(rb, analysis, curve, png_curve, png_refit, fig_no, tbl_no):
     suspects = [o for o in curve['outliers']]
     if suspects:
         rb.heading('3.1.3 离群点判断', 3)
-        rb.para('为判断可疑点是否为离群点，采用经典教科书[3]的方法计算'
+        rb.para('为判断可疑点是否为离群点，采用经典教科书^{[3]}的方法计算'
                 '学生化残差：', keep_next=True)
         rb.equation(r'r_{i}=\frac{e_{i}}{s_{-i}\sqrt{1-h_{ii}}}')
         rb.para(['其中 ', ('t', 'e_{i}', ITALIC), ' 是用全部数据拟合二次模型后'
@@ -554,7 +554,7 @@ def _sec_boiling(rb, analysis, rows, azeo, png_phase, fig_no, tbl_no):
                  '经反解公式分母 ',
                  ('t', '2', {}), ('t', 'A', ITALIC), ('t', 'x', ITALIC),
                  ('t', '+', {}), ('t', 'B', ITALIC),
-                 ' 的放大。文献[4]给出环己烷-乙醇体系的最低恒沸点为 '
+                 ' 的放大。文献^{[4]}给出环己烷-乙醇体系的最低恒沸点为 '
                  '%s K，恒沸组成以乙醇摩尔分数 0.4540 计，'
                  '换算成乙醇质量分数为 %s' % (k(lit_T, 2), k(lit_w, 4)),
                  '（%s 为 %s）。本实验测得恒沸点 %s K 与文献值相差 %s K；'

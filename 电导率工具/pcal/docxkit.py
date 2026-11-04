@@ -150,8 +150,42 @@ def _is_var_char(ch):
     return ('a' <= ch <= 'z') or ('A' <= ch <= 'Z') or (ch in _GREEK_LOWER)
 
 
+# 函数名与单位要正体：`_is_var_char` 会把 ln、lg 当成变量排成斜体。
+# 斜体片段里出现这些**整词**时单独拎出来排正体（按最长优先匹配）。
+UPRIGHT_WORDS = ('arcsinh', 'arccosh', 'arctan', 'arcsin', 'arccos',
+                 'sinh', 'cosh', 'tanh', 'log', 'exp', 'sin', 'cos', 'tan',
+                 'max', 'min', 'ln', 'lg')
+_UPRIGHT_WORD_RE = re.compile(
+    r'(?<![A-Za-z])(?:%s)(?![A-Za-z])'
+    % '|'.join(sorted(UPRIGHT_WORDS, key=len, reverse=True)))
+
+
 def _split_runs_by_italic(text):
-    """把一段变量文本按正/斜体切成 [(子串, italic), …]。"""
+    """把一段变量文本按正/斜体切成 [(子串, italic), …]。
+
+    与单纯的「字母=斜体」不同，这里先把函数名（ln、lg、exp…）单独切出来
+    排正体——否则 `('t', 'ln(α−α_{∞})', ITALIC)` 会印成斜体的 *ln*，
+    而函数名按规范是正体。
+    """
+    if not text:
+        return []
+    out = []
+    pos = 0
+    for m in _UPRIGHT_WORD_RE.finditer(text):
+        if m.start() > pos:
+            out.extend(_split_by_var_char(text[pos:m.start()]))
+        if out and out[-1][1] is False:
+            out[-1][0] += m.group(0)
+        else:
+            out.append([m.group(0), False])
+        pos = m.end()
+    if pos < len(text):
+        out.extend(_split_by_var_char(text[pos:]))
+    return out
+
+
+def _split_by_var_char(text):
+    """按「变量字符 → 斜体」逐字符切分（不含函数名判定）。"""
     out = []
     for ch in text:
         it = _is_var_char(ch)

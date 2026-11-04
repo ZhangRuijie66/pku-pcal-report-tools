@@ -188,12 +188,23 @@ def fit_liquid(points, p1=P_NORM, shift=0.0):
 
     points: 全部参与拟合的点（大气压沸点平均值 + 变压系列），[p_kPa, t_℃]。
     shift : 复算时每个温度减去的 ℃ 数（0 = 正常拟合）。
+
+    返回 None 表示数据不足或无有效点；调用方应当把「哪些点被剔除」
+    写进 warnings，否则用户只会看到报告里一片「—」。
     """
     if len(points) < 3:
         return None
     p = np.array([r[0] for r in points], float)
     t_c = np.array([r[1] for r in points], float)
     T = t_c + 273.15 - shift
+    # p ≤ 0 会让 log 变成 -inf / nan，进而把 A、B、Tb、ΔH、R² 全部污染成 nan，
+    # 而原来的 r2 < 0.99 之类判据对 nan 恒为 False，所以一条告警都不会触发。
+    # 这里显式剔掉非有限且非正的压强，并把剔除个数交给 upper 层报告。
+    ok = np.isfinite(p) & np.isfinite(T) & (p > 0) & (T > 0)
+    dropped = int((~ok).sum())
+    p, t_c, T = p[ok], t_c[ok], T[ok]
+    if len(p) < 3:
+        return None
     y = np.log(p / P_STD)
     x = 1.0 / T
     ols = _ols(x, y)
@@ -225,6 +236,8 @@ def fit_liquid(points, p1=P_NORM, shift=0.0):
         'tb': tb, 'sigma_tb': sigma_tb,
         'dh_kJ': dh_J / 1000.0, 'sigma_dh_kJ': sigma_dh_J / 1000.0,
         'ds': ds, 'sigma_ds': sigma_ds,
+        # 被剔掉的点（p ≤ 0 或温度非正）个数——由上层转成 warnings
+        'dropped': dropped,
         # 画图 / 表 3 用的逐点数据（按 1/T 从小到大）
         'points': sorted(
             [{'p': float(pi), 't': float(ti), 'T': float(Ti),
@@ -289,6 +302,16 @@ def analyze(data, cfg=None):
                                       % spec['name'])
         elif not res['fit']:
             result['warnings'].append('%s的数据点不足 3 个，无法拟合' % spec['name'])
+        # 被剔掉的非法点（p≤0、温度非正）必须显式告警：
+        # 否则 log(p) 变成 nan，报告里只印一片「—」，用户分不清是数据错还是程序错。
+        if res['fit'] and res['fit'].get('dropped'):
+            result['warnings'].append(
+                '%s有 %d 个点的压强≤0 或温度非正，已剔除不参与拟合'
+                % (spec['name'], res['fit']['dropped']))
+        if res['fit'] and not np.isfinite(res['fit']['r2']):
+            result['warnings'].append(
+                '%s的拟合结果含 NaN，请检查原始数据是否有空值或非正压强'
+                % spec['name'])
         if res['fit'] and res['fit']['r2'] < 0.99:
             result['warnings'].append('%s的拟合 R² = %.4f 偏低，请检查数据'
                                       % (spec['name'], res['fit']['r2']))

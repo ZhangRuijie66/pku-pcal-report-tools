@@ -253,7 +253,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.heading('3.2 莫尔盐标定', 2)
     rb.para([
         '由公式 ', ('m', r'\chi_{\text{莫}} = \frac{9500 \times 10^{-9}}{T + 1} \times 4\pi'),
-        ' 计算莫尔盐的比磁化率，其中 ', ('t', 'T', ITALIC), ' 为热力学温度。'
+        '^{[1]} 计算莫尔盐的比磁化率，其中 ', ('t', 'T', ITALIC), ' 为热力学温度。'
     ])
     rb.para([
         '本次实验测得莫尔盐的比磁化率为 ',
@@ -337,7 +337,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.heading('4.2 实验讨论', 2)
     rb.para([
         '（1）本实验采用莫尔盐作为标准样品标定仪器常数。莫尔盐的磁化率已知且稳定，'
-        '是常用的磁化率标准物质。'
+        '是常用的磁化率标准物质^{[1]}。'
     ])
     rb.para([
         '（2）样品的装填高度和密实度对测量结果有重要影响。装填不均匀会导致磁场中'
@@ -348,7 +348,9 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     ])
     rb.para([
         '（4）对于顺磁性物质，测得的磁化率包含了顺磁和反磁两部分贡献。'
-        '在常温下，顺磁贡献远大于反磁贡献，因此可以近似认为测得的是顺磁磁化率。'
+        '在常温下，顺磁贡献远大于反磁贡献，因此可以近似认为测得的是顺磁磁化率^{[3]}。'
+        '亚铁氰化钾的 χ_m 为负，说明反磁贡献占主导，与其 [Fe(CN)₆]⁴⁻ '
+        '低自旋 d⁶ 组态（无未成对电子）一致^{[2]}。'
     ])
 
     rb.heading('4.3 实验结论', 2)

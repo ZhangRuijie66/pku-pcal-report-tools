@@ -623,9 +623,16 @@ def molar_extinction(A, conc_umol, path_cm=PATH_LENGTH_CM):
 
 # ---------------------------------------------------------------- 线性拟合
 def line_fit(x, y):
-    """最小二乘 y = k x + b，返回斜率/截距及其标准误差与 R²。"""
+    """最小二乘 y = k x + b，返回斜率/截距及其标准误差与 R²。
+
+    ⚠ 先剔掉含 NaN/Inf 的点：`np.linalg.lstsq` 遇到 NaN 会抛
+    `LinAlgError: SVD did not converge`（本模块是全仓唯一没做掩码的
+    line_fit，其余模块的版本都有 isfinite 过滤）。
+    """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
     n = len(x)
     if n < 2:
         return dict(k=float('nan'), b=float('nan'), sigma_k=float('nan'),
@@ -635,7 +642,9 @@ def line_fit(x, y):
     pred = A @ coef
     ss = np.sum((y - pred) ** 2)
     sst = np.sum((y - y.mean()) ** 2)
-    r2 = 1 - ss / sst if sst > 0 else 1.0
+    # y 全相同时 sst == 0，此时 R² 没有定义（原来返回 1.0，报告会显示
+    # 「完美拟合」而斜率实际为 0），改成 nan。
+    r2 = 1 - ss / sst if sst > 0 else float('nan')
     if n > 2:
         s2 = ss / (n - 2)
         s = np.sqrt(max(s2, 0.0))

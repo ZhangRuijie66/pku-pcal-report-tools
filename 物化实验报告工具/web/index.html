@@ -241,7 +241,18 @@ async function load() {
 async function start(key, force, openWhenReady) {
   const win = openWhenReady ? window.open('', '_blank') : null;
   $('status').textContent = '正在启动…';
-  const j = await api('/api/start?key=' + encodeURIComponent(key) + (force ? '&force=1' : ''));
+  let j = await api('/api/start?key=' + encodeURIComponent(key) + (force ? '&force=1' : ''));
+  // starting=true 表示进程活着但还没通过健康检查（并发点两下会走到这里），
+  // 不是失败：继续轮询 /api/modules 等它就位，别关窗口也别弹「启动失败」。
+  if (!j.ok && j.starting) {
+    $('status').textContent = '模块启动中，请稍候…';
+    for (let i = 0; i < 25 && !j.ok; i += 1) {
+      await new Promise((r) => setTimeout(r, 800));
+      const m = ((await api('/api/modules')).modules || []).find((x) => x.key === key);
+      if (m && m.running) { j = { ok: true, modules: [{ ...m }] }; break; }
+      j = await api('/api/start?key=' + encodeURIComponent(key));
+    }
+  }
   if (!j.ok) {
     if (win) win.close();
     toast('启动失败：' + (j.error || ''), 6000);

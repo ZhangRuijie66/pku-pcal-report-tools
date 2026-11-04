@@ -514,9 +514,34 @@ def _sec_weak(rb, an, fig_kfit):
     rb.equation(r'K^{\ominus}=\frac{1}{c^{\ominus}}\times'
                 r'\frac{\kappa_{corrected}^{2}}'
                 r'{c(\Lambda_{m}^{\infty})^{2}-\kappa_{corrected}\Lambda_{m}^{\infty}}')
-    rb.para(['电导率读数的不确定度按「末位数字取 2」估计：1 号溶液读数 '
-             '0.0258 S·m⁻¹ 的不确定度为 ', ('t', 'σ_{κ}', ITALIC),
-             ' = 0.0002 S·m⁻¹，其余溶液为 0.00002 S·m⁻¹。'
+    # σ_κ 按「读数末位取 2」估计：2×10^(-小数位数)。同一实验里各读数记录的
+    # 有效位数可能不同（0.2770 是 4 位小数 → 2e-4；0.01575 是 5 位 → 2e-5），
+    # 所以正文按实际读数统计，不写死「只有 1 号溶液是 0.0002」。
+    def _sigma_txt(v):
+        """2e-4 这种值写成普通文本：2×10⁻⁴（用真上标标记，交给 add_rich_text）。"""
+        exp = int(round(__import__('math').log10(v)))
+        mant = v / (10.0 ** exp)
+        return '%g×10^{%d}' % (mant, exp)
+
+    sig_all = [float(r['sigma_kappa'])
+               for rows in (an.tables or {}).values()
+               for r in rows if r.get('sigma_kappa')]
+    sig_segs = []
+    if sig_all:
+        uniq = sorted(set(sig_all))
+        if len(uniq) == 1:
+            sig_segs = [('t', 'σ_{κ}', ITALIC),
+                        ' 统一取 %s S·m⁻¹。' % _sigma_txt(uniq[0])]
+        else:
+            counts = {v: sig_all.count(v) for v in uniq}
+            parts = '、'.join('%d 个读数取 %s' % (counts[v], _sigma_txt(v))
+                             for v in uniq)
+            sig_segs = [('t', 'σ_{κ}', ITALIC),
+                        ' 随记录的小数位数而变（2×10^{−d}，d 为读数的小数位数）：'
+                        '%s S·m⁻¹。' % parts]
+    else:
+        sig_segs = [('t', 'σ_{κ}', ITALIC), '。']
+    rb.para(['电导率读数的不确定度按「末位数字取 2」估计：'] + sig_segs + [
              '水的电导率不确定度比溶液低 1~2 个数量级，可忽略，'
              '故校正电导率的不确定度近似等于测量电导率的不确定度。'
              '浓度在分母上，其不确定度影响很小，视为常数；',
