@@ -38,6 +38,31 @@ PROFILE_PATH = os.environ.get('PCAL_PROFILE') or os.path.join(LAB_DIR, 'profile.
 REPORT_DIR = os.path.join(LAB_DIR, '实验报告输出')
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 PORTAL_PORTS = (8700, 8730)              # 入口页优先用 8700，被占了往后找
+LAUNCHER_PATH = os.path.join(LAB_DIR, '_tools', 'launcher.py')
+
+# ---------------------------------------------------------------- 版本与更新
+# 版本真源在 _core/version.py，更新链路在 _core/updater.py；两者都由入口页
+# 通过 sys.path 里的 LAB_DIR 导入。这里**不允许**硬编码版本号。
+# 导入失败（便携包被拷坏、_core 目录缺失）不能让入口页起不来：置 None，
+# 相关端点回一句「更新模块不可用」，其余功能照常。
+if LAB_DIR not in sys.path:
+    sys.path.insert(0, LAB_DIR)
+APP_VERSION = ''
+RELEASE_DATE = ''
+try:
+    from _core import version as pcal_version
+    APP_VERSION = str(getattr(pcal_version, 'APP_VERSION', '') or '')
+    RELEASE_DATE = str(getattr(pcal_version, 'RELEASE_DATE', '') or '')
+except Exception:                        # noqa: BLE001  起不来也要能开页面
+    pcal_version = None
+try:
+    from _core import updater as pcal_updater
+except Exception:                        # noqa: BLE001
+    pcal_updater = None
+
+UPDATE_UNAVAILABLE = '更新模块不可用（缺少 _core/updater.py，可能文件被删或包不完整）'
+UPDATE_WRITE_PATHS = ('/api/update/check', '/api/update/apply',
+                      '/api/update/rollback')
 
 # ---------------------------------------------------------------- 实验模块登记表
 # ok=True 的模块会随入口一起启动；其余在入口页上显示为「即将支持」。
@@ -209,9 +234,35 @@ def _healthy(port, timeout=1.0):
         return False
 
 
+def _env_port():
+    """环境变量 PCAL_PORTAL_PORT 指定的入口端口；没给或不合法返回 0。
+
+    重启器（launcher.py --restart）靠它把入口页放回它原来待的端口。
+    """
+    value = (os.environ.get('PCAL_PORTAL_PORT') or '').strip()
+    if value.isdigit():
+        port = int(value)
+        if 1024 <= port <= 65535:
+            return port
+    return 0
+
+
 def find_portal_port():
-    """已经有一个入口页在跑就复用它（重复点快捷方式只会开一个新标签页）。"""
+    """已经有一个入口页在跑就复用它（重复点快捷方式只会开一个新标签页）。
+
+    端口区间沿用原来的 range(PORTAL_PORTS[0], PORTAL_PORTS[1])（8700..8729：
+    入口优先 8700，被占了就往后挪，所以必须整段都找）；
+    若环境变量 PCAL_PORTAL_PORT 指定了端口（测试或多实例），先查那一个，
+    让 launcher.py --restart 也能找对地方。
+    """
+    candidates = []
+    env_port = _env_port()
+    if env_port:
+        candidates.append(env_port)
     for port in range(*PORTAL_PORTS):
+        if port not in candidates:
+            candidates.append(port)
+    for port in candidates:
         if not _port_open(port):
             continue
         try:
@@ -547,9 +598,111 @@ def _save_profile(payload):
     return {'ok': True, 'profile': data, 'path': PROFILE_PATH}
 
 
+# ---------------------------------------------------------------- 更新与重启
+def _log_line(text):
+    """往启动日志里追加一行；日志不可写时静默放弃（不让日志问题影响主流程）。"""
+    stamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        _rotate_log(LOG_PATH)
+        with open(LOG_PATH, 'a', encoding='utf-8') as fh:
+            fh.write('[%s] %s\n' % (stamp, text))
+    except OSError:
+        pass
+
+
+def _update_error(message):
+    """统一的中文错误包；永远不带 traceback（项目审计硬规则）。"""
+    return {'ok': False, 'error': str(message or '更新操作失败')}
+
+
+def _update_status_safe():
+    """public_status() 的安全包装：更新模块不可用时也返回结构化字段。"""
+    if pcal_updater is None:
+        return {'ok': False, 'error': UPDATE_UNAVAILABLE,
+                'current': APP_VERSION, 'release_date': RELEASE_DATE}
+    try:
+        return pcal_updater.public_status()
+    except Exception as exc:             # noqa: BLE001
+        return {'ok': False, 'error': '读不到更新状态：%s' % exc,
+                'current': APP_VERSION, 'release_date': RELEASE_DATE}
+
+
+def _version_summary():
+    return {'version': APP_VERSION, 'release_date': RELEASE_DATE,
+            'update': _update_status_safe()}
+
+
+def _restart_services():
+    """静默重启：交给 launcher.py --restart 收摊再起入口（不会弹任何窗口）。
+
+    调用者负责先回包，然后延迟一两秒再调它，最后 os._exit(0) 收掉本进程。
+    这里任何异常都只写日志——重启失败也不该在用户面前炸。
+    """
+    env = dict(os.environ)
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUNBUFFERED'] = '1'
+    # 把入口端口告诉重启器：这样重起之后还落在同一个端口上
+    # （默认 8700；用 --port 起在别处时也能回原位）。
+    if STATE.get('portal_port'):
+        env['PCAL_PORTAL_PORT'] = str(STATE['portal_port'])
+    try:
+        _rotate_log(LOG_PATH)
+        log_fh = open(LOG_PATH, 'a', encoding='utf-8')
+    except OSError:
+        log_fh = subprocess.DEVNULL
+    try:
+        subprocess.Popen(
+            [PYTHON, LAUNCHER_PATH, '--restart'],
+            cwd=LAB_DIR, env=env, creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL, stdout=log_fh, stderr=subprocess.STDOUT)
+    except Exception as exc:             # noqa: BLE001
+        _log_line('[FAIL] 重启服务失败：%s' % exc)
+    finally:
+        if log_fh is not subprocess.DEVNULL:
+            try:
+                log_fh.close()
+            except OSError:
+                pass
+
+
+def _schedule_restart(delay=1.2):
+    """回包之后在后台重启：先让浏览器把响应读完，再换掉进程。"""
+
+    def worker():
+        time.sleep(delay)
+        _log_line('更新流程：正在重启入口服务…')
+        _restart_services()
+        time.sleep(0.2)
+        os._exit(0)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _background_check():
+    """启动时静默检查一次更新（updater 内部有 6 h 节流），失败只写日志。"""
+    if pcal_updater is None:
+        _log_line('跳过启动更新检查：%s' % UPDATE_UNAVAILABLE)
+        return
+    try:
+        status = pcal_updater.check_for_update(force=False)
+        if status.get('available'):
+            _log_line('发现新版本 v%s（当前 v%s）'
+                      % (status.get('latest') or '?', status.get('current') or APP_VERSION))
+        else:
+            _log_line('检查更新完成：当前 v%s，最新 v%s'
+                      % (status.get('current') or APP_VERSION,
+                         status.get('latest') or '（未知）'))
+    except Exception as exc:             # noqa: BLE001  后台任务绝不打扰用户
+        _log_line('启动更新检查失败：%s' % exc)
+
+
+def _start_bg_check(delay=3.0):
+    threading.Timer(delay, _background_check).start()
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'PChemPortal/1.0'
+    server_version = 'PChemPortal/' + (APP_VERSION or '0.0.0')
 
     def log_message(self, fmt, *args):
         if os.environ.get('PCAL_DEBUG'):
@@ -578,10 +731,17 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(WEB_DIR, 'index.html'), 'r', encoding='utf-8') as fh:
                     return self._send(200, fh.read(), 'text/html; charset=utf-8')
             if u.path == '/api/modules':
-                return self._json({'ok': True, 'portal_port': STATE['portal_port'],
-                                   'lab_dir': LAB_DIR,
-                                   'output_dir': os.path.join(LAB_DIR, '实验报告输出'),
-                                   'modules': _module_payload()})
+                payload = {'ok': True, 'portal_port': STATE['portal_port'],
+                           'lab_dir': LAB_DIR,
+                           'output_dir': os.path.join(LAB_DIR, '实验报告输出'),
+                           'modules': _module_payload()}
+                payload.update(_version_summary())
+                return self._json(payload)
+            if u.path in UPDATE_WRITE_PATHS:
+                # 写盘端点只收 POST：GET 一律 405（审计规则 D 节）
+                return self._json(_update_error('这个操作必须用 POST'), 405)
+            if u.path == '/api/update/status':
+                return self._json(_update_status_safe())
             if u.path == '/api/profile':
                 return self._json(_profile_payload())
             if u.path == '/api/reports':
@@ -615,15 +775,101 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/pdf':
                 result, code = _convert_pdf(self._body())
                 return self._json(result, code)
+            # 更新相关的写盘端点必须先于 do_GET 兜底判断，否则会被绕成 GET。
+            if u.path == '/api/update/check':
+                return self._update_check(self._body())
+            if u.path == '/api/update/apply':
+                return self._update_apply(self._body())
+            if u.path == '/api/update/rollback':
+                return self._update_rollback(self._body())
+            if u.path == '/api/update/status':
+                # 只读端点用 POST 访问没有副作用，直接按 GET 回同一份数据
+                return self._json(_update_status_safe())
             return self.do_GET()
         except Exception as exc:  # noqa: BLE001
+            # 只回中文说明，绝不把 traceback 抛给前端
             return self._json({'ok': False, 'error': str(exc)}, 400)
 
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
         if not n:
             return {}
-        return json.loads(self.rfile.read(n).decode('utf-8'))
+        try:
+            data = json.loads(self.rfile.read(n).decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    # -------------------------------------------------------- 更新端点
+    def _update_check(self, payload):
+        """POST /api/update/check —— 联网检查是否有新版本（只读，不改代码）。"""
+        if pcal_updater is None:
+            return self._json(_update_error(UPDATE_UNAVAILABLE), 503)
+        force = bool((payload or {}).get('force'))
+        try:
+            status = pcal_updater.check_for_update(force=force)
+        except pcal_updater.UpdateError as exc:
+            return self._json(_update_error(exc))
+        except Exception as exc:         # noqa: BLE001
+            return self._json(_update_error('检查更新失败：%s' % exc))
+        status = dict(status or {})
+        status['from_cache'] = False
+        status.setdefault('ok', True)
+        return self._json(status)
+
+    def _update_apply(self, payload):
+        """POST /api/update/apply —— 下载并安装；成功后回包再后台重启。"""
+        if pcal_updater is None:
+            return self._json(_update_error(UPDATE_UNAVAILABLE), 503)
+        payload = payload or {}
+        tag = str(payload.get('tag') or '').strip() or None
+        restart = payload.get('restart', True)
+        restart = True if restart is None else bool(restart)
+        try:
+            result = pcal_updater.update_now(tag=tag, restart=False)
+        except pcal_updater.UpdateError as exc:
+            _log_line('安装更新失败：%s' % exc)
+            return self._json(_update_error(exc))
+        except Exception as exc:         # noqa: BLE001
+            _log_line('安装更新出错：%s' % exc)
+            return self._json(_update_error('安装更新失败：%s' % exc))
+        to_version = str((result or {}).get('to') or '')
+        _log_line('更新已安装：%s → v%s（备份 %s）'
+                  % ((result or {}).get('from') or APP_VERSION, to_version,
+                     (result or {}).get('backup_dir') or '—'))
+        out = {'ok': True,
+               'to': to_version,
+               'from': (result or {}).get('from') or '',
+               'tag': (result or {}).get('tag') or (tag or ''),
+               'message': (result or {}).get('message') or ('已更新到 v%s' % to_version),
+               'restart': restart,
+               'status': _update_status_safe()}
+        response = self._json(out)
+        if restart:
+            _schedule_restart()
+        return response
+
+    def _update_rollback(self, payload):
+        """POST /api/update/rollback —— 用备份还原；成功后回包再后台重启。"""
+        if pcal_updater is None:
+            return self._json(_update_error(UPDATE_UNAVAILABLE), 503)
+        backup = str((payload or {}).get('backup') or '').strip() or None
+        try:
+            result = pcal_updater.rollback(backup)
+        except pcal_updater.UpdateError as exc:
+            _log_line('回滚失败：%s' % exc)
+            return self._json(_update_error(exc))
+        except Exception as exc:         # noqa: BLE001
+            _log_line('回滚出错：%s' % exc)
+            return self._json(_update_error('回滚失败：%s' % exc))
+        to_version = str((result or {}).get('to') or '')
+        _log_line('已回滚到 v%s' % to_version)
+        out = {'ok': True, 'to': to_version,
+               'message': (result or {}).get('message') or ('已回滚到 v%s' % to_version),
+               'restart': True, 'status': _update_status_safe()}
+        response = self._json(out)
+        _schedule_restart()
+        return response
 
     def _start(self, key, force):
         mod = next((m for m in MODULES if m['key'] == key), None)
@@ -678,6 +924,28 @@ class Handler(BaseHTTPRequestHandler):
         return resp
 
 
+def _requested_port(argv):
+    """`--port N` 或环境变量 PCAL_PORTAL_PORT 指定入口端口（测试/多实例用）。
+
+    默认仍然 8700，行为不变；给了就只用这一个端口，不再往后挪。
+    """
+    for i, arg in enumerate(argv):
+        if arg == '--port' and i + 1 < len(argv):
+            value = argv[i + 1]
+        elif arg.startswith('--port='):
+            value = arg.split('=', 1)[1]
+        else:
+            continue
+        if str(value).strip().isdigit():
+            port = int(str(value).strip())
+            if 1024 <= port <= 65535:
+                return port
+    env_port = _env_port()
+    if env_port:
+        return env_port
+    return 0
+
+
 # ---------------------------------------------------------------- 主流程
 def main():
     argv = list(sys.argv[1:])
@@ -685,15 +953,23 @@ def main():
     if '--no-browser' in argv:
         open_browser = False
     warm_all = '--warm-all' in argv
-    existing = find_portal_port()
-    if existing:
-        # 已经开着了：再点一次快捷方式只是把入口页重新打开，不再起一套服务
-        url = 'http://127.0.0.1:%d' % existing
-        print('入口页已经在运行：%s' % url)
-        if open_browser:
-            webbrowser.open(url)
-        return 0
-    port = _free_port(PORTAL_PORTS[0])
+    requested = _requested_port(argv)
+    if not requested:
+        existing = find_portal_port()
+        if existing:
+            # 已经开着了：再点一次快捷方式只是把入口页重新打开，不再起一套服务
+            url = 'http://127.0.0.1:%d' % existing
+            print('入口页已经在运行：%s' % url)
+            if open_browser:
+                webbrowser.open(url)
+            return 0
+    if requested:
+        if _port_busy(requested):
+            print('端口 %d 已被占用，请换一个端口（--port N）。' % requested)
+            return 1
+        port = requested
+    else:
+        port = _free_port(PORTAL_PORTS[0])
     if not port:
         print('找不到空闲端口，退出。')
         return 1
@@ -701,6 +977,7 @@ def main():
 
     print('=' * 60)
     print('  物化实验报告工具 —— 统一入口')
+    print('  版本：v%s（%s）' % (APP_VERSION or '未知', RELEASE_DATE or '未知'))
     print('  入口页：http://127.0.0.1:%d' % port)
     print('-' * 60)
 
@@ -727,6 +1004,8 @@ def main():
 
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    # 启动后静默查一次更新（updater 内部有 6 h 节流），失败只写日志。
+    _start_bg_check(3.0)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -1,7 +1,9 @@
 # 物理化学实验报告工具集
 
 北大物理化学实验的十一套报告工具 + 一个统一入口，全部在**本机**运行，
-不联网、不上传数据，一键导出与课程模板同款的 Word 报告（含 Word 原生公式）。
+实验数据不上传、不外发，一键导出与课程模板同款的 Word 报告（含 Word 原生公式）。
+（唯一会联网的是「检查更新」：只向 GitHub 读版本 tag，不上传任何数据，见下文
+「版本号与自动更新」。）
 
 | 模块 | 目录 | 做什么 |
 | --- | --- | --- |
@@ -17,6 +19,8 @@
 | 🧭 磁化率的测定 | `磁化率工具/` | 古埃磁天平：莫尔盐标定仪器常数，测 CuSO₄·5H₂O、K₄Fe(CN)₆·3H₂O、未知样的摩尔磁化率、分子磁矩与未成对电子数 |
 | 🌈 紫外可见吸收光谱 | `紫外光谱工具/` | 光谱仪标定、6 种共轭分子的 λmax/ε、一维势箱验证、Voigt 分峰、TD-DFT 对照 |
 | 🚪 统一入口 | `物化实验报告工具/` | 一个卡片页，一次拉起全部已安装模块 |
+
+当前版本 **v1.0.0**（2026-11-06），版本号与更新日志见 `更新日志/`。
 
 ## 快速开始
 
@@ -77,6 +81,77 @@ python _core/sync_core.py --apply           # 同步（旧文件备份到 _core/
 测试会检查：公式里的 `\lg`/单位/`⊖`/上下标斜体、题注化学式、表头列数、
 表格列数与表头一致、图号/表号连续、标题 keepNext、正文五号；
 数值基准用 2025 参照数据和各模块内置示例数据，覆盖全部 11 个实验。
+
+## 版本号与自动更新
+
+### 版本真源
+
+整套工具**只有一个版本号**，真源在 `_core/version.py`（`APP_VERSION` / `RELEASE_DATE` /
+`REPO_SLUG`），窗口标题、入口页、更新检查都从这里取，不许各处硬编码。
+11 个工具的 `pcal/version.py` 是 `_core/sync_core.py` 同步过去的副本，逐字节一致。
+
+```bash
+python _core/check_version.py       # 版本号一致性自检（版本号/日期/更新日志/工具副本/旧版本号残留）
+python _core/sync_core.py --apply   # 把 version.py 同步进 11 个工具的 pcal/
+```
+
+### 编号规则
+
+三段式 `X.Y.Z`，每段非负整数，`APP_VERSION` 不带 `v` 前缀：
+
+- **PATCH**：修复，第三段**只装递增序号**（+1，不跳号）；修复的**类别**用文字写进
+  当版 `更新日志/CHANGELOG_vX_Y_Z.md` 的「类型：」，不编进版本号；
+- **MINOR**：用户可感知的新功能，中段 +1、第三段归 0；
+- **MAJOR**：破坏性变更（目录结构、报告输出布局、`settings.json` 键名），首段 +1、后两段归 0。
+
+每版一份 `更新日志/CHANGELOG_v<X>_<Y>_<Z>.md`（下划线格式，避免 `4.10` 与 `4.1` 混淆）。
+
+### 更新源认 git tag
+
+发版时推送一个 `vX.Y.Z` 的 **git tag**；程序拉
+`https://api.github.com/repos/ZhangRuijie66/pku-pcal-report-tools/tags` 取语义最大的 tag，
+与本地 `APP_VERSION` 比较。**不看 main 分支的最新提交**——只有打了 tag 才算发版。
+
+### 入口页：检查 / 安装 / 回滚
+
+入口页「软件更新 / 版本号」卡片（`物化实验报告工具/web/`）：
+
+1. **检查更新**：点按钮联网查一次（启动时后台也会静默检查一次，有节流）；
+   有新版本时显示横幅「发现新版本 vX.Y.Z」。
+2. **看更新说明**：「查看更新说明」在新窗口打开该 tag 的 GitHub 页面。
+3. **下载并安装**：`confirm()` 二次确认后才真正替换代码——先把要覆盖的文件
+   备份到 `_core/updates/backups/<旧版本>-<YYYYmmdd-HHMMSS>/`（同目录写 `manifest.json`），
+   装完用子进程自检 `APP_VERSION`，自检不过自动还原；安装成功后**自动重启服务**
+   （本页 8 秒后自动刷新，重启失败也不会卡死，可手动刷新）。
+4. **回滚**：出问题时点「回滚」，用最近一份备份把代码还原（只保留最近 2 份备份）。
+
+**永不覆盖的路径**：`settings.json`、`profile.json`、各工具的 `data/`、
+`实验报告输出/`、`发布/`、`.git/`、`_tools/启动日志.log`；`update_state.json` 与
+`_core/updates/` 是运行时状态，不参与覆盖也不进仓库。也就是说，**换版本不会动你的数据**。
+
+### 命令行
+
+没有界面时（或想自动化）用启动器：
+
+```bat
+python _tools\launcher.py --update              :: 只检查，打印 当前版本 / 最新版本
+python _tools\launcher.py --update --apply      :: 下载并安装（成功后自动重启）
+python _tools\launcher.py --update --apply --no-restart
+```
+
+### 发版
+
+```bat
+python make_release.py patch --notes "修复：更新检查的节流" --type 修复
+python make_release.py minor --notes "新增：自动抓取更新" --type 功能 --apply
+```
+
+**默认只打印计划**（当前版本 → 新版本、要改的文件、CHANGELOG 首几行、将执行的 git 命令），
+不动任何文件；确认后加 `--apply` 才按顺序执行：校验工作区干净 →
+改 `APP_VERSION` / `RELEASE_DATE` → 写更新日志 → `sync_core.py --apply` →
+`tests/run_tests.py` 必须全绿 → `git add -A` / `commit` / `tag vX.Y.Z` / `push` / `push --tags`
+→ `git ls-remote --tags` 复核。任一步失败都会把版本号与更新日志还原并打印「已中止」。
+`--notes` 多条用 `;` 或 `；` 分隔（一条一个 bullet），`--type` 默认 `修复`。
 
 ## 各模块做什么
 
@@ -211,8 +286,15 @@ Word 原生公式 OMML、五号字、图表题注）。
 ├─ 安装依赖.cmd              ← 只在缺依赖/换电脑时需要
 ├─ 启动入口.cmd              ← 同上，只是转去叫 启动入口.vbs
 ├─ requirements.txt
+├─ make_release.py           ← 发版脚本（改版本号/写更新日志/同步/测试/commit+tag+push；默认只打印计划）
+├─ update_state.json         ← 运行时生成：更新检查缓存（不进仓库）
 ├─ _tools/                   ← 无黑框启动器（hidden-launch.vbs + launcher.py + 启动日志.log）
 ├─ _core/                    ← canonical 排版件 + draft.js + pdf.py + sync_core.py
+│  ├─ version.py             ← 版本号唯一真源（APP_VERSION / RELEASE_DATE）
+│  ├─ updater.py             ← 检查更新 / 下载安装 / 备份与回滚
+│  ├─ check_version.py       ← 版本号一致性自检
+│  └─ updates/               ← 运行时生成：更新备份（不进仓库）
+├─ 更新日志/                  ← 每版一份 CHANGELOG_vX_Y_Z.md
 ├─ tests/                    ← 回归测试、docx 审计器、11 模块基准数据
 ├─ 物化实验报告工具/          ← 入口页（portal.py 按需拉起各模块，卡片按讲义顺序）
 │  ├─ run.py / portal.py / web/ / 启动.vbs

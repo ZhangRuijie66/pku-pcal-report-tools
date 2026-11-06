@@ -1,6 +1,7 @@
 {
   "version": "1.0.0",
   "files": {
+    "version.py": "eeff96a6d0da580fc5ba6bdde820c061f573e15acaa139ecb69f7fb606e9639f",
     "omml.py": "4e46bec4faf2a129881f59bb81c46af1697c3b27004c0dcd2c59e1e3b0b0c3bb",
     "docxkit.py": "27a40dba71ba9a80639ff44a680c2640045ead549e09b92ddd62d91308a56ba4",
     "sigfig.py": "638fb7a989db775b0355d21f4300347082b2176fe2ba9cd2deaa69cbbefe4ed0",
@@ -31,5 +32,6 @@
     "表面吸附工具",
     "磁化率工具"
   ],
-  "note": "canonical 源在 _core/；各工具 pcal/ 是 vendored 副本。"
+  "init_import": "from .version import APP_VERSION as __version__",
+  "note": "canonical 源在 _core/；各工具 pcal/ 是 vendored 副本；pcal/__init__.py 的 __version__ 引用 pcal/version.py。"
 }

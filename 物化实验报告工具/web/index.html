@@ -27,6 +27,9 @@ body{margin:0;background:var(--bg);color:var(--ink);
 .bar .spacer{flex:1}
 .btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 14px;cursor:pointer;
   color:var(--ink);text-decoration:none;display:inline-block;transition:.15s;font:inherit}
+/* .btn 的 display:inline-block 会盖掉 HTML 的 hidden 属性（display 优先级更高），
+   更新卡片里靠 hidden 隐藏的按钮/区块必须显式压回去，否则「回滚」永远露在外面。 */
+[hidden]{display:none !important}
 .btn:hover{background:#f0f2f5}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .btn.primary:hover{background:var(--accent2)}
@@ -87,6 +90,7 @@ details.note summary{cursor:pointer;font-weight:600;color:var(--ink)}
        在本地网页界面里交互式处理（雷诺校正取点、拟合核对），
        一键导出与课程模板同款的 Word 实验报告。全部计算在本机完成，不联网、不上传数据。</p>
     <div class="meta">
+      <span id="mVer">版本：—</span>
       <span id="mLab">实验目录：—</span>
       <span id="mPort">入口端口：—</span>
       <span id="mCount">模块：—</span>
@@ -103,6 +107,37 @@ details.note summary{cursor:pointer;font-weight:600;color:var(--ink)}
     <span class="status" id="status">正在检查各模块…</span>
     <button class="btn danger" id="btnStop">停止全部服务</button>
   </div>
+
+  <details class="note" id="updatePanel">
+    <summary>软件更新 / 版本号</summary>
+    <p class="status" id="updNow" style="margin:8px 0 0">版本：—</p>
+    <p class="status" style="margin:6px 0 0">
+      更新源是仓库的 <code>vX.Y.Z</code> 发版 tag（不看 main 的最新提交）。
+      安装前会把要替换的文件备份到 <code>_core\updates\backups\</code>，
+      装完自检失败会自动还原；对 <code>settings.json</code>、<code>profile.json</code>、
+      各模块 <code>data\</code> 与 <code>实验报告输出\</code> 永不覆盖。
+    </p>
+
+    <div id="updBanner" hidden style="margin:10px 0 0;padding:10px 12px;border-radius:10px;
+         background:#eef6ff;border:1px solid #bcd9f2;color:#1a5b8c">
+      <b id="updBannerTitle">发现新版本</b>
+      <a id="updNotesLink" href="#" target="_blank" rel="noopener"
+         style="margin-left:8px">查看更新说明</a>
+      <button class="btn primary" id="btnUpdApply" style="margin-left:10px">下载并安装</button>
+    </div>
+
+    <div class="bar" style="margin:12px 0 0">
+      <button class="btn primary" id="btnUpdCheck">检查更新</button>
+      <button class="btn danger" id="btnUpdRollback" hidden>回滚</button>
+      <span class="status" id="updState"></span>
+    </div>
+
+    <details id="updNotesBox" hidden style="margin-top:10px">
+      <summary>更新说明正文</summary>
+      <pre class="status" id="updNotes" style="white-space:pre-wrap;margin:8px 0 0;
+           font:inherit;max-height:340px;overflow:auto"></pre>
+    </details>
+  </details>
 
   <details class="note" id="profilePanel">
     <summary>个人档案 / 年度数据目录</summary>
@@ -226,6 +261,8 @@ function render(data) {
     if (nd) { nd.textContent = data.output_dir; nd.title = data.output_dir; }
   }
   $('grid').innerHTML = data.modules.map(card).join('');
+  renderVersion(data);
+  renderUpdate(data);
   $('status').textContent = `${live} 个模块可用 · ${new Date().toLocaleTimeString()}`;
   document.querySelectorAll('[data-start]').forEach(b =>
     b.addEventListener('click', () => start(b.dataset.start, false, true)));
@@ -309,6 +346,223 @@ async function saveProfile() {
   toast('档案已保存；刷新模块页面后生效', 5000);
   await loadProfile();
 }
+
+// ---------------------------------------------------------------- 版本号与软件更新
+let UPD = null;            // 最近一次读到的 update 状态（/api/modules 里的 update 字段）
+let UPD_HOLD = '';         // 安装/重启过程中锁住状态文字，别被 5 s 轮询覆盖
+let UPD_BUSY = false;      // 安装或回滚进行中：更新按钮禁用，禁止重复点击
+
+function verText(v, d) {
+  if (!v) return '—';
+  return 'v' + v + (d ? '（' + d + '）' : '');
+}
+
+function updSay(text, warn) {
+  const el = $('updState');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = warn ? 'var(--warn)' : '';
+}
+
+function updButtons() {
+  ['btnUpdCheck', 'btnUpdApply', 'btnUpdRollback'].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = UPD_BUSY;
+  });
+}
+
+function renderVersion(data) {
+  const el = $('mVer');
+  if (!el) return;
+  const v = data.version || '';
+  const d = data.release_date || '';
+  el.textContent = '版本：' + (v ? 'v' + v + (d ? ' · ' + d : '') : '—');
+}
+
+function renderUpdate(data) {
+  const st = (data && data.update) || {};
+  // /api/modules 里的 update 来自 public_status()：正常时 ok=true；
+  // ok=false 只说明「更新模块本身不可用」（updater 缺失或状态读不出来），
+  // 这时别再给用户可点的「检查更新」，直接把中文原因显示成黄色状态。
+  if (st.ok === false || !data.version) {
+    UPD = st;
+    const cur = st.current || data.version || '';
+    $('updNow').textContent = '当前 ' + verText(cur, st.release_date || data.release_date)
+      + ' · 上次检查：' + (st.checked_at || '还没有检查过');
+    $('updBanner').hidden = true;
+    $('btnUpdApply').hidden = true;
+    $('btnUpdRollback').hidden = true;
+    $('updNotesBox').hidden = true;
+    $('btnUpdCheck').disabled = true;
+    if (!UPD_HOLD) updSay(st.error || '更新模块不可用，暂时不能检查更新。', true);
+    return;
+  }
+  UPD = st;
+
+  const cur = st.current || data.version || '';
+  const curDate = st.release_date || data.release_date || '';
+  $('updNow').textContent = '当前 ' + verText(cur, curDate)
+    + ' · 上次检查：' + (st.checked_at || '还没有检查过');
+
+  const available = !!st.available && !!st.latest;
+  const banner = $('updBanner');
+  banner.hidden = !available;
+  const notesBox = $('updNotesBox');
+  if (available) {
+    $('updBannerTitle').textContent = '发现新版本 v' + st.latest;
+    const href = st.notes_url || st.tag_url || '';
+    const link = $('updNotesLink');
+    if (href) { link.href = href; link.hidden = false; } else { link.hidden = true; }
+    $('btnUpdApply').hidden = false;
+    const notes = String(st.notes || '').trim();
+    if (notes) {
+      $('updNotes').textContent = notes.length > 1200
+        ? notes.slice(0, 1200) + '\n…（正文较长，完整内容点上面「查看更新说明」）'
+        : notes;
+      notesBox.hidden = false;
+    } else {
+      notesBox.hidden = true;
+    }
+  } else {
+    $('btnUpdApply').hidden = true;
+    notesBox.hidden = true;
+  }
+
+  const back = $('btnUpdRollback');
+  const backups = st.backups || [];
+  if (st.can_rollback && backups.length) {
+    const latest = backups[0] || {};
+    back.hidden = false;
+    back.textContent = '回滚到 v' + (latest.version || '上一版');
+    back.dataset.backup = latest.name || '';
+    back.dataset.version = latest.version || '';
+  } else {
+    back.hidden = true;
+    back.textContent = '回滚';
+    delete back.dataset.backup;
+    delete back.dataset.version;
+  }
+
+  if (!UPD_HOLD) {
+    if (st.error) updSay(st.error, true);
+    else if (st.checked_at) updSay(available ? '' : '已经是最新版本。');
+    else updSay('');
+  }
+  updButtons();
+}
+
+async function postJson(path, payload) {
+  const r = await fetch(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  const j = await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+  return j;
+}
+
+async function checkUpdate() {
+  if (UPD_BUSY) return;
+  UPD_BUSY = true;
+  UPD_HOLD = '正在检查更新……';
+  updSay(UPD_HOLD);
+  updButtons();
+  try {
+    const j = await postJson('/api/update/check', { force: true });
+    if (!j.ok) {
+      UPD_HOLD = '';
+      updSay('检查失败：' + (j.error || '未知原因') + '（离线时也可以稍后再试）', true);
+      UPD_BUSY = false;
+      updButtons();
+      return;
+    }
+    UPD_HOLD = '';
+    UPD_BUSY = false;
+    renderUpdate({ update: j, version: j.current });
+    const stamp = j.checked_at || new Date().toLocaleString();
+    if (j.available) updSay('发现新版本 v' + j.latest + '，可以点「下载并安装」。');
+    else updSay('已经是最新版本（' + stamp + ' 检查）。');
+    toast(j.available ? '发现新版本 v' + j.latest : '已经是最新版本', 4000);
+  } catch (e) {
+    UPD_HOLD = '';
+    UPD_BUSY = false;
+    updButtons();
+    updSay('检查失败：连不上入口页服务（' + (e.message || e) + '）', true);
+  }
+}
+
+async function applyUpdate() {
+  if (UPD_BUSY || !UPD) return;
+  const latest = UPD.latest || '';
+  const ok = confirm(
+    '确定下载并安装 v' + latest + '？\n\n'
+    + '· 安装前会把要替换的文件备份到 _core\\updates\\backups\\，出问题可以回滚；\n'
+    + '· settings.json、profile.json、各模块 data\\ 与 实验报告输出\\ 不会被覆盖；\n'
+    + '· 装完后入口页和全部实验模块会自动重启，本页 8 秒后自动刷新。');
+  if (!ok) return;
+  UPD_BUSY = true;
+  UPD_HOLD = '正在下载并安装…（约 8 MB）';
+  updSay(UPD_HOLD);
+  updButtons();
+  try {
+    const j = await postJson('/api/update/apply', { tag: latest, restart: true });
+    if (!j.ok) {
+      UPD_HOLD = '';
+      UPD_BUSY = false;
+      updButtons();
+      const msg = String(j.error || '未知原因');
+      updSay('安装失败：' + msg
+        + (/备份|还原|回滚/.test(msg) ? '' : '（安装目录没有被改动）'), true);
+      return;
+    }
+    const to = j.to || latest;
+    UPD_HOLD = '已更新到 v' + to + '，服务正在重启，本页 8 秒后自动刷新';
+    updSay(UPD_HOLD);
+    setTimeout(() => location.reload(), 8000);
+  } catch (e) {
+    // 服务在回包前就被换掉了也会走到这里：按“可能已经装好了”提示，别吓用户
+    UPD_HOLD = '更新请求已发出，服务可能正在重启，本页 8 秒后自动刷新';
+    updSay(UPD_HOLD);
+    setTimeout(() => location.reload(), 8000);
+  }
+}
+
+async function rollbackUpdate() {
+  if (UPD_BUSY || !UPD) return;
+  const btn = $('btnUpdRollback');
+  const name = btn.dataset.backup || '';
+  const ver = btn.dataset.version || '上一版';
+  const ok = confirm(
+    '确定回滚到 v' + ver + '？\n\n'
+    + '· 会用备份 _core\\updates\\backups\\' + (name || '（最近一份）') + ' 还原文件；\n'
+    + '· 回滚后入口页和全部实验模块会自动重启，本页 8 秒后自动刷新；\n'
+    + '· 用户数据（settings.json、data\\、实验报告输出\\）不受影响。');
+  if (!ok) return;
+  UPD_BUSY = true;
+  UPD_HOLD = '正在回滚…';
+  updSay(UPD_HOLD);
+  updButtons();
+  try {
+    const j = await postJson('/api/update/rollback', { backup: name });
+    if (!j.ok) {
+      UPD_HOLD = '';
+      UPD_BUSY = false;
+      updButtons();
+      updSay('回滚失败：' + (j.error || '未知原因'), true);
+      return;
+    }
+    UPD_HOLD = '已回滚到 v' + (j.to || ver) + '，服务正在重启，本页 8 秒后自动刷新';
+    updSay(UPD_HOLD);
+    setTimeout(() => location.reload(), 8000);
+  } catch (e) {
+    UPD_HOLD = '回滚请求已发出，服务可能正在重启，本页 8 秒后自动刷新';
+    updSay(UPD_HOLD);
+    setTimeout(() => location.reload(), 8000);
+  }
+}
+
+$('btnUpdCheck').addEventListener('click', checkUpdate);
+$('btnUpdApply').addEventListener('click', applyUpdate);
+$('btnUpdRollback').addEventListener('click', rollbackUpdate);
 
 async function loadReports() {
   const j = await api('/api/reports');

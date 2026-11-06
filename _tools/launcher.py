@@ -6,8 +6,12 @@
     python _tools\\launcher.py "<某个工具目录>"      后台启动该工具，不弹命令行窗口
     python _tools\\launcher.py --stop                停掉入口页和全部实验模块
     python _tools\\launcher.py --install "<目录>"    在命令行窗口里装依赖，装完再后台启动
+    python _tools\\launcher.py --restart             静默重启入口页（更新装完后自己调）
+    python _tools\\launcher.py --update [--apply] [--no-restart]
+                                                     命令行检查/安装更新
 
 只有两种情况会看到命令行窗口：首次运行需要 pip 装依赖，或者本机没装 Python。
+`--restart` 与 `--update` 是自动化路径：**全程不弹消息框**，结果只打进日志和 stdout。
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ LAB_DIR = os.path.dirname(TOOLS_DIR)
 PORTAL_DIR = os.path.join(LAB_DIR, '物化实验报告工具')
 LOG_FILE = os.path.join(TOOLS_DIR, '启动日志.log')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+RESTART_WAIT = 8.0                       # 等入口端口释放的上限（秒）
 
 # 每个工具额外需要的第三方库（缺了就开个窗口 pip 安装）
 DEPS = {
@@ -223,6 +228,238 @@ def stop_all():
     return 0
 
 
+def now_str():
+    return time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _say(text=''):
+    """命令行输出。
+
+    可能根本没有 stdout（被 wscript/无窗口方式拉起时 sys.stdout 是 None），
+    也可能控制台是 GBK（编不出来的字符会抛 UnicodeEncodeError）；
+    两种情况都不许让打印本身把流程打断。
+    """
+    line = '' if text is None else str(text)
+    try:
+        if sys.stdout is None:
+            return
+        print(line, flush=True)
+    except UnicodeEncodeError:
+        try:
+            enc = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+            print(line.encode(enc, 'replace').decode(enc, 'replace'), flush=True)
+        except Exception:                 # noqa: BLE001
+            pass
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def _log(text):
+    """追加到启动日志；日志写不动也不影响主流程。"""
+    _rotate_log(LOG_FILE)
+    try:
+        with open(LOG_FILE, 'a', encoding='utf-8') as fh:
+            fh.write('[%s] %s\n' % (now_str(), text))
+    except OSError:
+        pass
+
+
+def _report(text, also_print=True):
+    """自动化路径的汇报口径：stdout 一行 + 日志一份（不弹框）。"""
+    if also_print:
+        _say(text)
+    _log(text)
+
+
+def _http_json(url, payload=None, timeout=3):
+    """发一个请求并读 JSON（payload 不为 None 时用 POST）。失败返回 {}。"""
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        headers['Content-Type'] = 'application/json'
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method='POST' if data is not None else 'GET')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+    except (urllib.error.URLError, OSError, ValueError):
+        return {}
+    try:
+        out = json.loads(raw.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def _all_tool_names(portal):
+    """全部工具目录名（入口登记的 + 额外常驻端口的），只要目录里有 run.py。"""
+    names = [mod['tool'] for mod in portal.MODULES if mod.get('tool')]
+    names += list(EXTRA_PORTS)
+    out = []
+    for name in names:
+        if name in out:
+            continue
+        if os.path.exists(os.path.join(LAB_DIR, name, 'run.py')):
+            out.append(name)
+    return out
+
+
+def restart_services():
+    """静默重启入口页：收摊（POST /api/shutdown → 等端口释放 → kill_tools 兜底）再起。
+
+    这是自动更新装完后的路径，**全程不弹消息框**：结果只进日志和 stdout。
+    容忍「入口本来就不在」（用户手动关过）的情况。
+    """
+    try:
+        portal = _portal_module()
+    except Exception as exc:              # noqa: BLE001
+        _report('[FAIL] 重启失败：读不到入口模块（%s）' % exc)
+        return 1
+
+    p_port = 0
+    try:
+        p_port = portal.find_portal_port()
+    except Exception as exc:              # noqa: BLE001
+        _report('探测入口端口出错（%s），按「入口不在」处理。' % exc)
+        p_port = 0
+
+    if p_port:
+        _http_json('http://127.0.0.1:%d/api/shutdown' % p_port, payload={})
+        _report('已请求入口页（:%d）收摊……' % p_port)
+        deadline = time.time() + RESTART_WAIT
+        released = False
+        while time.time() < deadline:
+            try:
+                still = portal.find_portal_port()
+            except Exception:             # noqa: BLE001
+                still = 0
+            if not still:
+                released = True
+                break
+            time.sleep(0.4)
+        if not released:
+            _report('入口端口 %d s 内没释放，用 kill_tools 兜底。' % int(RESTART_WAIT))
+    else:
+        _report('入口页当前没有在运行，直接起一个新的。')
+
+    try:
+        killed = portal.kill_tools(_all_tool_names(portal))
+    except Exception as exc:              # noqa: BLE001
+        killed = []
+        _log('kill_tools 出错（忽略）：%s' % exc)
+    if killed:
+        _report('已回收残留进程：%s' % '、'.join(killed))
+
+    try:
+        rc = start(PORTAL_DIR)
+    except Exception as exc:              # noqa: BLE001
+        _report('[FAIL] 重启失败：拉不起入口页（%s）' % exc)
+        return 1
+    if rc == 0:
+        _report('入口页已重新启动。')
+    else:
+        _report('[FAIL] 重启失败：入口页启动返回码 %s' % rc)
+    return rc
+
+
+# ---------------------------------------------------------------- 命令行更新
+def _updater_module():
+    """导入 _core.updater，返回 (模块, 中文错误原因)。"""
+    if LAB_DIR not in sys.path:
+        sys.path.insert(0, LAB_DIR)
+    try:
+        from _core import updater
+        return updater, ''
+    except Exception as exc:              # noqa: BLE001
+        return None, ('读不到更新模块（_core/updater.py 缺失或损坏，'
+                      '也可能本机 Python 版本过低）：%s' % exc)
+
+
+def _version_module(updater):
+    """_core.version；拿不到就退回 updater 内部那份。"""
+    try:
+        from _core import version
+        return version
+    except Exception:                     # noqa: BLE001
+        return getattr(updater, '_version', None)
+
+
+def update_cli(apply=False, no_restart=False):
+    """--update：只检查；--update --apply：检查并安装。返回 0 成功 / 1 失败。"""
+    updater, why = _updater_module()
+    if updater is None:
+        _report('[ERROR] %s' % why)
+        return 1
+    version = _version_module(updater)
+    if version is None:
+        _report('[ERROR] 读不到版本真源（_core/version.py 缺失或损坏）。')
+        return 1
+
+    # 用磁盘上的版本（安装/回滚刚写完文件时，模块里的常量还是旧值）
+    try:
+        current = updater.installed_version()
+    except Exception:                     # noqa: BLE001
+        current = str(getattr(version, 'APP_VERSION', '') or '')
+    release = str(getattr(version, 'RELEASE_DATE', '') or '')
+    _report('当前版本 v%s（%s）' % (current or '未知', release or '未知日期'))
+
+    try:
+        remote = updater.latest_remote_tag()
+    except getattr(updater, 'NoReleaseTag', ()):
+        # 远端一个 tag 都没有：不是故障，是「作者还没发版」（新克隆的仓库就是这样）
+        _report('远端仓库还没有 vX.Y.Z 发版 tag —— 当前是开发版，等作者发版后再检查。')
+        return 0
+    except updater.UpdateError as exc:
+        _report('[ERROR] 检查更新失败：%s' % exc)
+        return 1
+    except Exception as exc:              # noqa: BLE001
+        _report('[ERROR] 检查更新失败：%s' % exc)
+        return 1
+
+    latest = str(remote.get('version') or '')
+    tag = str(remote.get('tag') or '')
+    available = bool(version.is_newer(latest, current))
+    _report('最新版本 v%s' % (latest or '未知'))
+    _report('可更新：%s' % ('是' if available else '否'))
+    if available:
+        try:
+            link = updater.notes_url(tag, latest)
+        except Exception:                 # noqa: BLE001
+            link = ''
+        _report('更新说明：%s' % (link or '（仓库里还没有这一版的更新日志）'))
+
+    if not apply:
+        return 0
+    if not available:
+        _report('已经是最新版本，无需安装。')
+        return 0
+
+    _report('开始下载并安装 v%s ……' % latest)
+    try:
+        result = updater.update_now(tag=tag or None, restart=False)
+    except updater.UpdateError as exc:
+        _report('[ERROR] 安装更新失败：%s' % exc)
+        return 1
+    except Exception as exc:              # noqa: BLE001
+        _report('[ERROR] 安装更新失败：%s' % exc)
+        return 1
+
+    result = result or {}
+    to_version = str(result.get('to') or latest)
+    _report('已更新到 v%s（覆盖 %s 个文件、新增 %s 个文件）'
+            % (to_version, result.get('updated', '?'), result.get('added', '?')))
+    backup = str(result.get('backup_dir') or '')
+    _report('备份路径：%s' % (backup or '（无）'))
+
+    if no_restart:
+        _report('已按要求跳过重启（--no-restart）；请手动重启入口页让新版本生效。')
+        return 0
+
+    _report('正在重启入口页……')
+    return restart_services()
+
+
 def main(argv):
     argv = list(argv)
     if not argv:
@@ -231,6 +468,14 @@ def main(argv):
         return stop_all()
     if argv[0] == '--install':
         return install_and_start(argv[1])
+    if argv[0] == '--restart':
+        return restart_services()
+    if argv[0] == '--update':
+        return update_cli(apply='--apply' in argv[1:],
+                          no_restart='--no-restart' in argv[1:])
+    if argv[0] in ('-h', '--help'):
+        _say(__doc__)
+        return 0
     return start(argv[0])
 
 

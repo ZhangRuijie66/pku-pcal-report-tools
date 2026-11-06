@@ -3,4 +3,4 @@
 
 __all__ = ['adsorption', 'analysis', 'plotting', 'report', 'server',
            'docxkit', 'omml']
-__version__ = '1.0.0'
+from .version import APP_VERSION as __version__
