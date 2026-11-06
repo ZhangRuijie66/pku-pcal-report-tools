@@ -448,7 +448,13 @@ def download_package(tag, dest_zip, progress=None, timeout=180):
 
 
 def _safe_members(zf):
-    """过滤出安全的成员：拒绝绝对路径、`..`、符号链接与超量内容。"""
+    """过滤出安全的成员：拒绝绝对路径、`..`、符号链接与超量内容。
+
+    目录条目（名字以 `/` 结尾，GitHub 打的 zip 里每个目录都有一条）直接跳过：
+    早先按普通成员处理会把它写成一个**同名文件**，随后真正建子目录时
+    报 `FileExistsError: WinError 183`（真实 GitHub 包才会踩到，自造的测试包没有
+    目录条目，所以之前没发现）。
+    """
     out = []
     total = 0
     for info in zf.infolist():
@@ -461,6 +467,8 @@ def _safe_members(zf):
         mode = (info.external_attr >> 16) & 0o170000
         if mode == 0o120000:              # 符号链接
             raise UpdateError('更新包含符号链接，已拒绝：%s' % info.filename)
+        if info.is_dir() or name.endswith('/') or not parts:
+            continue                      # 目录条目：由后面的文件自己 makedirs
         total += max(0, int(info.file_size or 0))
         if total > MAX_PACKAGE_BYTES:
             raise UpdateError('更新包解压后超过 %d MB，已中止。'
@@ -480,19 +488,18 @@ def extract_package(zip_path, work_dir):
     except (zipfile.BadZipFile, OSError) as exc:
         raise UpdateError('更新包不是有效的 zip：%s' % exc)
     with zf:
+        # 先建齐所有目录，再写文件：GitHub 的 zip 里目录条目与文件条目混排，
+        # 且顺序不保证；逐个按需 makedirs 也够用，但显式两轮更稳。
         members = _safe_members(zf)
+        for _info, parts in members:
+            os.makedirs(os.path.join(work_dir, *parts[:-1]) or work_dir, exist_ok=True)
         for info, parts in members:
-            if not parts:
-                continue
             target = os.path.join(work_dir, *parts)
-            if parts[-1] == '':
-                continue
-            os.makedirs(os.path.dirname(target) or work_dir, exist_ok=True)
             try:
                 with zf.open(info) as src, open(target, 'wb') as dst:
                     shutil.copyfileobj(src, dst)
             except (OSError, zipfile.BadZipFile) as exc:
-                raise UpdateError('解包失败（%s）：%s' % (parts[-1], exc))
+                raise UpdateError('解包失败（%s）：%s' % ('/'.join(parts), exc))
     return _locate_package_root(work_dir)
 
 

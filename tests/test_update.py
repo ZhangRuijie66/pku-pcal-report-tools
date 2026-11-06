@@ -390,6 +390,31 @@ class ExtractPackageTests(UpdateTestBase):
         self.assertEqual(read(root / '_core' / 'version.py'), NEW_VERSION_PY)
         self.assertTrue((root / '物化实验报告工具' / 'portal.py').is_file())
 
+    def test_extract_handles_directory_entries(self):
+        """GitHub 打的 zip 每个目录都有一条 `<dir>/` 目录条目。
+
+        早先这些条目被当成普通文件，先落成一个**同名文件**，随后真正建子目录时
+        报 `FileExistsError: WinError 183` —— 自造的测试包没有目录条目，
+        所以只有对着真实 tag 下载才会踩到（v1.0.0 首发就是这么翻车的）。
+        """
+        path = self.tmp / 'withdirs.zip'
+        with zipfile.ZipFile(path, 'w') as zf:
+            zf.writestr('repo-1.0.1/', '')                       # 顶层目录
+            zf.writestr('repo-1.0.1/_core/', '')                 # 子目录
+            zf.writestr('repo-1.0.1/_core/version.py', NEW_VERSION_PY)
+            zf.writestr('repo-1.0.1/物化实验报告工具/', '')
+            zf.writestr('repo-1.0.1/物化实验报告工具/portal.py', NEW_PORTAL_PY)
+            zf.writestr('repo-1.0.1/燃烧热工具/', '')
+            zf.writestr('repo-1.0.1/燃烧热工具/pcal/', '')
+            zf.writestr('repo-1.0.1/燃烧热工具/pcal/docxkit.py', 'X = 1\n')
+        root = Path(updater.extract_package(path, self.tmp / 'work_dirs'))
+        self.assertEqual(read(root / '_core' / 'version.py'), NEW_VERSION_PY)
+        self.assertTrue((root / '物化实验报告工具' / 'portal.py').is_file())
+        self.assertTrue((root / '燃烧热工具' / 'pcal' / 'docxkit.py').is_file())
+        # 目录条目不能变成同名文件
+        self.assertTrue((root / '_core').is_dir())
+        self.assertFalse((root / '_core').is_file())
+
     def test_extract_rejects_parent_traversal(self):
         zip_path = self._make_zip([
             ('../evil.txt', 'evil\n'),
