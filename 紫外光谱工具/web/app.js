@@ -11,6 +11,10 @@ const EL_ID = { data_dir: 'dataDir' };
 
 let STATE = null;
 let SAVED = false;
+let FILE_FILES = [];        // 数据目录里的 txt（相对路径）
+let FILE_AUTO = {};         // 槽位 -> 自动匹配结果（来自 /api/files）
+let MAP_EDIT = {};          // 槽位 -> 用户在界面里选的 rel（'' = 恢复默认）
+let MAP_BUILT = false;
 
 /* ---------------------------------------------------------------- 小工具 */
 function toast(msg, ms = 2800) {
@@ -80,6 +84,8 @@ function readConfig() {
     if (cb.checked) bc.push(Number(cb.dataset.beerConc));
   });
   cfg.beer_concs = bc;
+  // 数据文件映射（槽位 -> 相对数据目录的 txt）
+  cfg.file_map = fileMapValue();
   return cfg;
 }
 
@@ -189,11 +195,248 @@ function renderState(s) {
   renderPicks(s);
   renderBeerChecks(s);
   renderWarnings(s);
+  renderFileMap(s);
+  renderFileSummary(s);
+  loadFileList();
   $('savedInfo').textContent = s.has_saved ? '已保存默认设置（settings.json）' : '尚未保存默认设置';
   drawChart();
 }
 
-/* ---------------------------------------------------------------- 图表 */
+function renderFileSummary(s) {
+  const fs = s.file_summary || {};
+  const fuzzy = fs.fuzzy_items || [];
+  const box = $('fileSummaryBox');
+  if (!box) return;
+  if (!fuzzy.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = '';
+  box.innerHTML = '<div class="msg">' + fuzzy.length +
+    ' 个数据文件是按文件名自动匹配的（换了日期/改了名时会出现），请核对：<br>' +
+    fuzzy.slice(0, 8).map((x) =>
+      '· ' + esc(x.label) + ' → <code>' + esc(shortName(x.rel)) + '</code>' +
+      '（' + ((x.score || 0) * 100).toFixed(0) + '%）').join('<br>') +
+    (fuzzy.length > 8 ? '<br>…' : '') +
+    '<br>不对就在「数据文件映射」里改，或点「全部恢复默认」。</div>';
+}
+
+/* ---------------------------------------------------------------- 数据文件映射 */
+const STATUS_LABEL = {
+  default: ['默认', ''],
+  manual: ['手动指定', 'ok'],
+  fuzzy: ['自动匹配', 'warn'],
+  ambiguous: ['多候选', 'err'],
+  missing: ['没找到', 'err'],
+};
+
+function fileMapValue() {
+  const out = {};
+  Object.keys(MAP_EDIT).forEach((k) => { if (MAP_EDIT[k]) out[k] = MAP_EDIT[k]; });
+  return out;
+}
+
+function _slotControl(slot) {
+  const cur = MAP_EDIT[slot.key];
+  const st = slot.status || 'default';
+  const info = STATUS_LABEL[st] || STATUS_LABEL.default;
+  const files = FILE_FILES.slice();
+  // 当前值不在清单里（绝对路径 / 已被删掉）也要显示出来，别静默变成空
+  const shown = cur || slot.rel || '';
+  if (shown && files.indexOf(shown) < 0) files.unshift(shown);
+  const defOpt = '<option value="">（默认：' + esc(shortName(slot.default)) + '）</option>';
+  let opts = defOpt;
+  // 模糊匹配候选排在最前面，方便一键采用
+  const sugg = slot.suggestions || [];
+  const seen = {};
+  sugg.forEach((x) => {
+    if (seen[x.rel]) return;
+    seen[x.rel] = 1;
+    if (files.indexOf(x.rel) < 0) files.push(x.rel);
+    opts += '<option value="' + esc(x.rel) + '"' + (x.rel === shown ? ' selected' : '') +
+      '>★ ' + esc(shortName(x.rel)) + '（' + (x.score * 100).toFixed(0) + '%）</option>';
+  });
+  files.forEach((rel) => {
+    if (seen[rel]) return;
+    seen[rel] = 1;
+    opts += '<option value="' + esc(rel) + '"' + (rel === shown ? ' selected' : '') +
+      '>' + esc(rel) + '</option>';
+  });
+  let badge = '';
+  if (st === 'fuzzy') {
+    badge = '<span class="badge warn">自动 ' +
+      ((slot.score || 0) * 100).toFixed(0) + '%</span>';
+  } else if (st === 'manual') {
+    badge = '<span class="badge ok">手动</span>';
+  } else if (st === 'ambiguous') {
+    badge = '<span class="badge err">需要指定</span>';
+  } else if (st === 'missing') {
+    badge = '<span class="badge err">没找到</span>';
+  } else if (cur) {
+    badge = '<span class="badge">已改</span>';
+  }
+  // 候选里最接近的、但不是当前值的那一个，给一句提示
+  let hint = '';
+  const top = sugg[0];
+  if (top && top.rel !== shown) {
+    hint = '<span class="hint" style="margin:2px 0 0">最相近：' +
+      esc(shortName(top.rel)) + '（' + (top.score * 100).toFixed(0) + '%）</span>';
+  }
+  return '<div class="field"><label>' + esc(slot.label) + badge + '</label>' +
+    '<select data-slot="' + esc(slot.key) + '">' + opts + '</select>' + hint + '</div>';
+}
+
+function shortName(rel) {
+  const s = String(rel || '');
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+function slotNeedsAttention(x) {
+  return (x.status || 'default') !== 'default';
+}
+
+function renderFileMap(s) {
+  const slots = s.file_slots || [];
+  const group = ($('fileGroup') && $('fileGroup').value) || 'all';
+  let rows = slots;
+  if (group === 'attn') rows = slots.filter(slotNeedsAttention);
+  else if (group && group !== 'all') rows = slots.filter((x) => x.kind === group);
+  const groups = {};
+  rows.forEach((x) => { (groups[x.group] = groups[x.group] || []).push(x); });
+  let html = '';
+  Object.keys(groups).forEach((g) => {
+    html += '<div class="slotgroup">' + esc(g) + '（' + groups[g].length + '）</div>';
+    groups[g].forEach((x) => { html += _slotControl(x); });
+  });
+  if (!rows.length) {
+    html = '<p class="hint">' +
+      (group === 'attn' ? '没有需要确认的槽位——全部按默认文件名找到了。'
+        : '这个分类没有槽位。') + '</p>';
+  }
+  const box = $('fileMap');
+  box.innerHTML = html;
+  box.classList.toggle('collapsed', !!($('fileCompact') && $('fileCompact').checked));
+  MAP_BUILT = true;
+
+  // 事件：改动即记进 MAP_EDIT（点「重新计算」才生效，和别的参数一致）
+  box.querySelectorAll('select[data-slot]').forEach((sel) => {
+    sel.onchange = () => {
+      const key = sel.dataset.slot;
+      if (sel.value) MAP_EDIT[key] = sel.value;
+      else delete MAP_EDIT[key];
+      updateFileMapNote();
+    };
+  });
+  updateFileMapNote();
+}
+
+function updateFileMapNote() {
+  const slots = (STATE && STATE.file_slots) || [];
+  const manual = Object.keys(MAP_EDIT).length;
+  const auto = slots.filter((x) => x.status === 'fuzzy').length;
+  const bad = slots.filter((x) => x.status === 'ambiguous' || x.status === 'missing').length;
+  let txt = '共 ' + slots.length + ' 个槽位';
+  if (auto) txt += '，其中 ' + auto + ' 个是自动匹配的（请核对）';
+  if (manual) txt += '，已手动指定 ' + manual + ' 个';
+  if (bad) txt += '，' + bad + ' 个找不到文件';
+  if (!auto && !manual && !bad) txt += '，全部按默认文件名找到';
+  $('fileMapNote').textContent = txt + '。改完点右上角「重新计算」生效。';
+}
+
+async function autoMap() {
+  busy(true, '正在按文件名匹配…');
+  try {
+    const r = await api('/api/files/auto');
+    if (!r.ok) { toast('匹配失败：' + r.error); return; }
+    const n = Object.keys(r.map).length;
+    Object.keys(r.map).forEach((k) => { MAP_EDIT[k] = r.map[k]; });
+    toast('自动匹配到 ' + n + ' 个文件' +
+      (r.unresolved.length ? '，' + r.unresolved.length + ' 个仍需手动指定' : '') +
+      '，点「重新计算」生效', 6000);
+    await recalc();
+  } catch (e) { toast('匹配失败：' + e.message, 5000); }
+  finally { busy(false); }
+}
+
+async function clearMap() {
+  Object.keys(MAP_EDIT).forEach((k) => { delete MAP_EDIT[k]; });
+  toast('已恢复全部默认文件名，点「重新计算」生效');
+  await recalc();
+}
+
+/* ---------------------------------------------------------------- 单文件查看 */
+async function pickFile() {
+  const cur = $('singlePath').value.trim();
+  const dir = cur ? cur.replace(/[\\/][^\\/]*$/, '') : ($('dataDir').value.trim());
+  busy(true, '请在弹出的窗口里选择文件…');
+  try {
+    const r = await api('/api/pickfile?initial=' + encodeURIComponent(dir));
+    busy(false);
+    if (r.path) {
+      $('singlePath').value = r.path;
+      await viewSingle();
+    } else {
+      toast('已取消');
+    }
+  } catch (e) {
+    busy(false);
+    toast('打开选择窗口失败：' + e.message, 5000);
+  }
+}
+
+async function viewSingle(pathArg) {
+  const path = pathArg || $('singlePath').value.trim();
+  if (!path) { toast('先选一个文件'); return; }
+  $('singlePath').value = path;
+  $('singleNote').textContent = '读取中…';
+  try {
+    const info = await api('/api/file/info?path=' + encodeURIComponent(path));
+    const i = info.info || {};
+    let txt = info.name + '：' + i.n + ' 个数据点，最强点 pixel ' +
+      fmt(i.pixel, 0) + '，强度 ' + Number(i.intensity).toPrecision(4);
+    if (isFinite(i.lam)) txt += '（按当前标定约 ' + fmt(i.lam, 1) + ' nm）';
+    if (info.slot) txt += '；这是槽位「' + info.slot.label + '」用的文件';
+    $('singleNote').textContent = txt;
+    const q = new URLSearchParams();
+    q.set('path', path);
+    q.set('cal', $('singleCal').value);
+    q.set('smooth', $('singleSmooth').value || 1);
+    q.set('t', Date.now());
+    $('singleChartBox').style.display = '';
+    $('singleChart').src = '/api/preview/single?' + q.toString();
+  } catch (e) {
+    $('singleNote').textContent = '读取失败：' + e.message;
+    $('singleChartBox').style.display = 'none';
+    $('singleChart').removeAttribute('src');
+  }
+}
+
+function fillSingleSelect() {
+  const sel = $('singleSelect');
+  if (!sel) return;
+  const cur = sel.value;
+  let html = '<option value="">（从数据目录里挑）</option>';
+  FILE_FILES.forEach((rel) => {
+    html += '<option value="' + esc(rel) + '"' + (rel === cur ? ' selected' : '') + '>' +
+      esc(rel) + '</option>';
+  });
+  sel.innerHTML = html;
+}
+
+async function loadFileList() {
+  const dir = $('dataDir').value.trim() || ((STATE && STATE.data_dir) || '');
+  try {
+    const r = await api('/api/files?dir=' + encodeURIComponent(dir));
+    if (!r.ok) return;
+    FILE_FILES = r.files || [];
+    FILE_AUTO = r.auto || {};
+    fillSingleSelect();
+  } catch (e) { /* 扫描失败不影响主流程 */ }
+}
+
+
 function chartQuery() {
   const v = $('chartKind').value;
   const parts = v.split(':');
@@ -303,13 +546,29 @@ async function scanDir() {
     if (!r.ok) { $('scanInfo').innerHTML = '<span class="err">' + esc(r.error) + '</span>'; return; }
     let html = '找到 ' + r.count + ' 个 txt 文件；需要 ' + r.expected + ' 个。';
     if (r.missing && r.missing.length) {
-      html += '<br><span class="err">缺少：' + r.missing.length + ' 个文件</span>';
-      html += '<br><span style="font-size:11px">' + r.missing.slice(0, 4).map(esc).join('<br>') +
-        (r.missing.length > 4 ? '<br>…' : '') + '</span>';
+      html += '<br><span class="err">缺 ' + r.missing.length + ' 个文件</span>';
+      html += '<br><span style="font-size:11px">' + r.missing.slice(0, 4).map((m) =>
+        esc(m.label) + (m.suggestions.length
+          ? ' → 疑似 ' + esc(shortName(m.suggestions[0].rel))
+          : '')).join('<br>') + (r.missing.length > 4 ? '<br>…' : '') + '</span>';
+      html += '<br><button class="btn" id="btnScanAuto" style="margin-top:6px">' +
+        '自动匹配到相近文件</button>';
+    } else if (r.fuzzy && r.fuzzy.length) {
+      html += '<br><span class="warn">' + r.fuzzy.length +
+        ' 个文件按名称自动匹配（见「数据文件映射」）</span>';
+      html += '<br><span class="ok">数据齐全，可以计算。</span>';
     } else {
       html += '<br><span class="ok">数据齐全，可以计算。</span>';
     }
     $('scanInfo').innerHTML = html;
+    const btn = $('btnScanAuto');
+    if (btn) btn.onclick = autoMap;
+    // 顺手刷新单文件下拉框，并用最新的槽位状态重画映射卡片
+    await loadFileList();
+    if (STATE && r.slots) {
+      STATE.file_slots = r.slots;
+      renderFileMap(STATE);
+    }
   } catch (e) { $('scanInfo').textContent = '扫描失败：' + e.message; }
 }
 
@@ -415,6 +674,23 @@ function bindUI() {
   $('chartKind').onchange = drawChart;
   $('btnGcalcOpen').onclick = openGcalc;
   $('btnGcalcRead').onclick = readGcalc;
+  // 数据文件映射
+  $('btnAutoMap').onclick = autoMap;
+  $('btnClearMap').onclick = clearMap;
+  $('fileGroup').onchange = () => { if (STATE) renderFileMap(STATE); };
+  $('fileCompact').onchange = () => { if (STATE) renderFileMap(STATE); };
+  // 单文件查看
+  $('btnPickFile').onclick = pickFile;
+  $('btnSingleView').onclick = () => viewSingle();
+  $('singleSelect').onchange = () => {
+    const v = $('singleSelect').value;
+    if (v) viewSingle(v);
+  };
+  $('singleCal').onchange = () => { if ($('singlePath').value.trim()) viewSingle(); };
+  $('singleSmooth').onchange = () => { if ($('singlePath').value.trim()) viewSingle(); };
+  $('singlePath').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); viewSingle(); }
+  });
   document.querySelectorAll('.field input, .field select').forEach((el) => {
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') recalc(); });
   });

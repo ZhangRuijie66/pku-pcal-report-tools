@@ -20,6 +20,8 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import numpy as np
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 WEB_DIR = os.path.join(ROOT, 'web')
@@ -42,6 +44,50 @@ SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 STATE = {'analysis': None, 'config': None, 'key': None, 'gcalc': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
+SINGLE_LOCK = threading.Lock()    # 单文件查看的谱缓存（按路径 + 大小 + mtime）
+SINGLE_CACHE = {}
+
+
+# ---------------------------------------------------------------- 选择文件
+def pick_file(initial=None):
+    """弹出系统「选择文件」窗口，返回绝对路径；取消时返回 ''。
+
+    与 pick_folder 一样跑在独立子进程里（tkinter），不阻塞服务；
+    自动化测试用 PCAL_PICK_FILE_AUTO 指定返回值。
+    """
+    auto = os.environ.get('PCAL_PICK_FILE_AUTO')
+    if auto:
+        return os.path.normpath(auto) if os.path.isfile(auto) else ''
+    code = (
+        "import sys, tkinter as tk\n"
+        "from tkinter import filedialog\n"
+        "root = tk.Tk()\n"
+        "root.withdraw()\n"
+        "try:\n"
+        "    root.attributes('-topmost', True)\n"
+        "except Exception:\n"
+        "    pass\n"
+        "root.update()\n"
+        "init = sys.argv[1] if len(sys.argv) > 1 else ''\n"
+        "kwargs = dict(parent=root, title='选择光谱数据文件（txt）',\n"
+        "              filetypes=[('光谱数据', '*.txt'), ('所有文件', '*.*')])\n"
+        "if init:\n"
+        "    kwargs['initialdir'] = init\n"
+        "p = filedialog.askopenfilename(**kwargs)\n"
+        "root.destroy()\n"
+        "sys.stdout.write(p or '')\n"
+    )
+    env = dict(os.environ)
+    env['PYTHONIOENCODING'] = 'utf-8'
+    try:
+        out = subprocess.run([sys.executable, '-c', code, initial or ''],
+                             capture_output=True, timeout=900, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    txt = out.stdout.decode('utf-8', 'replace').strip()
+    if not txt:
+        return ''
+    return os.path.normpath(txt) if os.path.isfile(txt) else ''
 
 
 # ---------------------------------------------------------------- 选择文件夹
@@ -119,6 +165,19 @@ def _coerce(cfg, payload):
         if key not in base:
             continue
         ref = base[key]
+        if isinstance(ref, dict):
+            # file_map / molecule_default / conc_pick 这类字典：
+            # 以前整块被覆盖，于是前端没传的键会被清空；
+            # 现在按「传了就覆盖、没传保留」合并，并做一次白名单清洗。
+            if not isinstance(value, dict):
+                continue
+            if key == 'file_map':
+                cfg[key] = uv.clean_file_map(value)
+            else:
+                merged = dict(cfg.get(key) or {})
+                merged.update({k: v for k, v in value.items() if v not in (None, '')})
+                cfg[key] = merged
+            continue
         if isinstance(ref, (int, float)) and not isinstance(ref, bool):
             try:
                 value = float(value) if value not in (None, '') else ref
@@ -138,8 +197,9 @@ def _config_from(payload=None):
 
 
 def _analysis(cfg, force=False):
-    key = json.dumps({k: cfg.get(k) for k in ('data_dir', 'smooth_window', 'stray_mode',
-                                              'stray', 'stray_a3', 'path_cm',
+    key = json.dumps({k: cfg.get(k) for k in ('data_dir', 'file_map', 'smooth_window',
+                                              'stray_mode', 'stray',
+                                              'stray_a3', 'path_cm',
                                               'anchor_pad', 'beer_keys')},
                      sort_keys=True, default=str)
     with LOCK:
@@ -163,7 +223,9 @@ def _summary(an):
             stray=it['stray'],
             lmax_obs=it['peak_obs']['lam'], A_obs=it['peak_obs']['A'],
             lmax=it['peak']['lam'], A=it['peak']['A'], eps=it['eps'],
-            cal=it['cal_label']))
+            cal=it['cal_label'],
+            sample_file=it.get('sample_file'), blank_file=it.get('blank_file'),
+            sample_path=it.get('sample_path'), blank_path=it.get('blank_path')))
     return {
         'ok': True,
         'config': cfg,
@@ -174,7 +236,8 @@ def _summary(an):
                       a=c['a'], sigma_a=c['sigma_a'], b=c['b'],
                       sigma_b=c['sigma_b'], r2=c['r2'],
                       lam_lo=c['lam_lo'], lam_hi=c['lam_hi'],
-                      points=c['points'], fallback=c.get('fallback', False))
+                      points=c['points'], fallback=c.get('fallback', False),
+                      file_name=c.get('file_name'), path=c.get('path'))
                  for c in an.cals.values()],
         'samples': samples,
         'molecules': an.molecule_table,
@@ -191,10 +254,67 @@ def _summary(an):
         'conc_items': [dict(key=it['key'], conc=it['conc'],
                             lmax=it['peak']['lam'], A=it['peak']['A'])
                        for it in getattr(an, 'conc_items', [])],
+        # 数据文件槽位：每个槽位解析到哪个文件、是否模糊匹配来的、还有哪些候选
+        'file_slots': _slot_view(an),
+        'file_summary': _file_summary(an),
     }
 
 
+def _slot_view(an):
+    """槽位列表 + 解析状态，给前端「数据文件映射」卡片用。
+
+    只列报告真正会读的那几条：同一浓度测了两次也只占一行
+    （用哪一次由「测量选择」决定）。
+    """
+    slots = uv.file_slots(getattr(an, 'picks_mol', None),
+                          getattr(an, 'picks_conc', None))
+    rows = []
+    for slot in slots:
+        entry = dict((getattr(an, 'slots', {}) or {}).get(slot['key']) or {})
+        rows.append(dict(
+            key=slot['key'], kind=slot['kind'], group=slot['group'],
+            label=slot['label'], note=slot.get('note', ''),
+            default=slot['default'],
+            rel=entry.get('rel') or slot['default'],
+            path=entry.get('path') or '',
+            status=entry.get('status') or 'default',
+            score=entry.get('score'),
+            overridden=bool(entry.get('overridden')),
+            suggestions=[dict(rel=x['rel'], score=x['score'], path=x['path'])
+                         for x in (entry.get('suggestions') or [])][:6],
+        ))
+    return rows
+
+
+def _file_summary(an):
+    """给状态栏/卡片用的一句话统计 + 有多少槽位是自动匹配来的。"""
+    slots = getattr(an, 'slots', {}) or {}
+    counts = {'default': 0, 'manual': 0, 'fuzzy': 0}
+    for entry in slots.values():
+        counts[entry.get('status', 'default')] = \
+            counts.get(entry.get('status', 'default'), 0) + 1
+    fuzzy = [dict(key=k, label=v['label'], rel=v.get('rel'),
+                  score=v.get('score'), default=v['default'])
+             for k, v in slots.items() if v.get('status') == 'fuzzy']
+    return dict(total=len(slots), default=counts.get('default', 0),
+                manual=counts.get('manual', 0), fuzzy=counts.get('fuzzy', 0),
+                fuzzy_items=fuzzy)
+
+
 # ---------------------------------------------------------------- 预览图
+def _mol_items(an, codes):
+    """按分子编号取当前选中的测量（不写死 sample key，换测量时图也跟着走）。"""
+    picks = getattr(an, 'picks_mol', {}) or {}
+    items, labels = [], []
+    for code in codes:
+        key = picks.get(code) or uv.MOLECULE_DEFAULT.get(code)
+        it = an.samples.get(key)
+        if it is not None:
+            items.append(it)
+            labels.append(code)
+    return items, labels
+
+
 def _preview(kind, cfg, query):
     an = _analysis(cfg)
     import matplotlib.pyplot as plt
@@ -216,14 +336,9 @@ def _preview(kind, cfg, query):
             return png(plotting.make_beer_figure(an.beer))
     if kind == 'spectra':
         group = (query.get('group') or ['long'])[0]
-        if group == 'short':
-            items = [an.samples[k] for k in ('A1', 'B1c', 'B2') if k in an.samples]
-            labels = ['A1', 'B1', 'B2']
-            xlim = (250, 620)
-        else:
-            items = [an.samples[k] for k in ('A2', 'A3c5', 'A4') if k in an.samples]
-            labels = ['A2', 'A3', 'A4']
-            xlim = (450, 880)
+        codes = ('A1', 'B1', 'B2') if group == 'short' else ('A2', 'A3', 'A4')
+        items, labels = _mol_items(an, codes)
+        xlim = (250, 620) if group == 'short' else (450, 880)
         return png(plotting.make_spectra_figure(items, labels=labels, xlim=xlim))
     if kind == 'voigt':
         a3k = (getattr(an, 'picks_mol', {}) or {}).get('A3') or 'A3c5b'
@@ -233,13 +348,219 @@ def _preview(kind, cfg, query):
             if fig is not None:
                 return png(fig)
     if kind == 'source':
-        return png(plotting.make_source_figure(an.samples['A3c5'],
-                                               an.samples['A3_DW']))
+        src = [an.samples[k] for k in uv.SOURCE_SAMPLE_KEYS if k in an.samples]
+        if len(src) == 2:
+            return png(plotting.make_source_figure(src[0], src[1]))
     # 空图
     fig, ax = plt.subplots(figsize=(6, 3), dpi=100)
     ax.text(0.5, 0.5, 'no data', ha='center', va='center')
     ax.axis('off')
     return png(fig)
+
+
+# ---------------------------------------------------------------- 单个文件
+def _single_spec(path):
+    """读一个 txt（带缓存：同一路径 + 大小 + 修改时间不变就不重读）。"""
+    if not os.path.isfile(path):
+        raise ValueError('文件不存在：%s' % path)
+    try:
+        st = os.stat(path)
+        stamp = (st.st_size, int(st.st_mtime))
+    except OSError as exc:
+        raise ValueError('读不到文件信息：%s' % exc)
+    real = os.path.abspath(path)
+    with SINGLE_LOCK:
+        hit = SINGLE_CACHE.get(real)
+        if hit and hit[0] == stamp:
+            return hit[1]
+    spec = uv.read_single(path)
+    with SINGLE_LOCK:
+        if len(SINGLE_CACHE) > 24:            # 看过的文件不无限积攒
+            SINGLE_CACHE.clear()
+        SINGLE_CACHE[real] = (stamp, spec)
+    return spec
+
+
+def _single_info(path, cfg=None):
+    """单个文件的概要：点数、最强 pixel/波长/强度、以及它对应哪个槽位。"""
+    spec = _single_spec(path)
+    cfg = cfg or STATE.get('config') or _config_from()
+    cal = None
+    if STATE.get('analysis') is not None:
+        # 用当前标定把 pixel 翻成波长；标定本身不可靠就算了，只报 pixel
+        day2 = STATE['analysis'].cals.get('d2_long')
+        cal = day2
+    info = uv.single_peak_info(spec, cal=cal)
+    rel = None
+    try:
+        rel = os.path.relpath(path, cfg.get('data_dir') or '')
+        if rel.startswith('..'):
+            rel = None
+    except ValueError:
+        rel = None
+    slot = None
+    for row in _slot_view(STATE['analysis']) if STATE.get('analysis') else []:
+        if os.path.normcase(os.path.normpath(row['path'])) == \
+                os.path.normcase(os.path.normpath(path)):
+            slot = dict(key=row['key'], label=row['label'], status=row['status'])
+            break
+    return dict(ok=True, path=os.path.abspath(path), name=os.path.basename(path),
+                rel=rel, slot=slot, cal=info.get('lam'),
+                info=info, data_dir=cfg.get('data_dir'))
+
+
+def _single_preview(path, cal='auto', smooth=1):
+    """单文件预览图：原始谱（上）+ 若给了标定则换算成波长（下）。"""
+    import matplotlib.pyplot as plt
+    spec = _single_spec(path)
+    y = np.asarray(spec['difference'], float)
+    idx = np.asarray(spec['index'], float)
+    ys = uv.smooth(y, int(smooth or 1))
+
+    cal_info = None
+    if cal and cal != 'off' and STATE.get('analysis') is not None:
+        key = cal if cal != 'auto' else 'd2_long'
+        cal_info = STATE['analysis'].cals.get(key)
+    if cal_info:
+        fig, axes = plt.subplots(1, 2, figsize=(10.6, 3.6), dpi=120)
+        ax = axes[0]
+        ax.plot(idx, y, color='0.72', linewidth=0.6, label='原始')
+        if int(smooth or 1) > 1:
+            ax.plot(idx, ys, color='black', linewidth=0.9, label='平滑 %d 点' % int(smooth))
+        ax.set_xlabel('pixel')
+        ax.set_ylabel('光强（difference）')
+        ax.set_xlim(0, float(np.max(idx)) if len(idx) else 1)
+        ax.legend(fontsize=8)
+        _style_dark(ax)
+        ax = axes[1]
+        lam = cal_info['a'] * idx + cal_info['b']
+        ax.plot(lam, y, color='0.72', linewidth=0.6, label='原始')
+        if int(smooth or 1) > 1:
+            ax.plot(lam, ys, color='black', linewidth=0.9, label='平滑 %d 点' % int(smooth))
+        ax.set_xlabel('波长 / nm')
+        ax.set_ylabel('光强（difference）')
+        ax.set_xlim(float(np.min(lam)), float(np.max(lam)))
+        ax.legend(fontsize=8)
+        _style_dark(ax)
+        fig.tight_layout()
+        return fig
+    fig, ax = plt.subplots(figsize=(7.4, 3.6), dpi=120)
+    ax.plot(idx, y, color='0.72', linewidth=0.6, label='原始')
+    if int(smooth or 1) > 1:
+        ax.plot(idx, ys, color='black', linewidth=0.9, label='平滑 %d 点' % int(smooth))
+    ax.set_xlabel('pixel')
+    ax.set_ylabel('光强（difference）')
+    ax.set_xlim(0, float(np.max(idx)) if len(idx) else 1)
+    ax.legend(fontsize=8)
+    _style_dark(ax)
+    fig.tight_layout()
+    return fig
+
+
+def _style_dark(ax):
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.0)
+    ax.tick_params(direction='in', length=3.5, width=0.9, labelsize=10,
+                   top=True, right=True)
+
+
+# ---------------------------------------------------------------- 数据文件映射
+def _picks_from_cfg(cfg):
+    """从配置里解析「测量选择」，用来决定哪些槽位需要文件。"""
+    pm = dict(uv.MOLECULE_DEFAULT)
+    for code, key in (cfg.get('molecule_default') or {}).items():
+        if key in uv.MOLECULE_CANDIDATES.get(code, []):
+            pm[code] = key
+    pc = dict(uv.CONC_PICK_DEFAULT)
+    for slot, key in (cfg.get('conc_pick') or {}).items():
+        if key in uv.CONC_CANDIDATES.get(slot, []):
+            pc[slot] = key
+    return pm, pc
+
+
+def _files(query):
+    """数据目录里的 txt 清单（相对路径），以及每个槽位的模糊匹配候选。
+
+    ?dir=  覆盖数据目录（切换目录时前端先探一遍）
+    ?slot=（可选）只算这个槽位的候选
+
+    只算「当前测量选择下真正要用的」槽位——同一浓度测了两次时只算选中的那条。
+    """
+    cfg = STATE.get('config') or _config_from()
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not os.path.isdir(data_dir):
+        return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'files': []}
+    files = uv._index_files(data_dir)
+    pm, pc = _picks_from_cfg(cfg)
+    slot_key = (query.get('slot') or [''])[0]
+    slots = [s for s in uv.file_slots(pm, pc) if not slot_key or s['key'] == slot_key]
+    auto = {}
+    for slot in slots:
+        target = slot['default']
+        best_rel, best_score = uv.fuzzy_match(target, data_dir, files)
+        auto[slot['key']] = dict(
+            default=target, match=best_rel, score=round(best_score, 4),
+            auto=bool(best_rel and best_score >= uv.FUZZY_ACCEPT),
+            suggestions=[dict(rel=rel, score=s)
+                         for s, rel in uv.suggest_files(target, files, top=6)])
+    return dict(ok=True, data_dir=data_dir, count=len(files),
+                files=files, auto=auto, accept=uv.FUZZY_ACCEPT)
+
+
+def _auto_map(query):
+    """一键自动匹配：给当前用到的每个槽位生成 {槽位: rel} 映射（只收高置信度的）。"""
+    cfg = STATE.get('config') or _config_from()
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not os.path.isdir(data_dir):
+        return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'map': {}}
+    files = uv._index_files(data_dir)
+    pm, pc = _picks_from_cfg(cfg)
+    out, low = {}, []
+    taken = {}
+    for slot in uv.file_slots(pm, pc):
+        best_rel, score = uv.fuzzy_match(slot['default'], data_dir, files)
+        if best_rel and score >= uv.FUZZY_ACCEPT:
+            # 同一份文件被两个槽位抢：只留给分最高的那个
+            if best_rel in taken and taken[best_rel][1] >= score:
+                low.append(dict(key=slot['key'], label=slot['label'],
+                                reason='候选文件已被「%s」占用' % taken[best_rel][0]))
+                continue
+            taken[best_rel] = (slot['label'], score)
+            out[slot['key']] = best_rel
+        else:
+            low.append(dict(key=slot['key'], label=slot['label'],
+                            best=best_rel, score=round(score, 4),
+                            suggestions=[dict(rel=rel, score=s)
+                                         for s, rel in uv.suggest_files(
+                                             slot['default'], files, top=4)]))
+    return dict(ok=True, data_dir=data_dir, map=out, unresolved=low,
+                accept=uv.FUZZY_ACCEPT)
+
+
+def _file_info(query):
+    path = (query.get('path') or [''])[0]
+    if not path:
+        return {'ok': False, 'error': '缺少 path 参数'}
+    cfg = STATE.get('config') or _config_from()
+    if not os.path.isabs(path):
+        path = os.path.join(cfg.get('data_dir') or '', path)
+    return _single_info(path, cfg)
+
+
+def _preview_single(query):
+    path = (query.get('path') or [''])[0]
+    if not path:
+        raise ValueError('缺少 path 参数')
+    cfg = STATE.get('config') or _config_from()
+    if not os.path.isabs(path):
+        path = os.path.join(cfg.get('data_dir') or '', path)
+    cal = (query.get('cal') or ['auto'])[0]
+    try:
+        smooth = int((query.get('smooth') or ['1'])[0] or 1)
+    except ValueError:
+        smooth = 1
+    fig = _single_preview(path, cal=cal, smooth=smooth)
+    return plotting.figure_png(fig, dpi=110)
 
 
 # ---------------------------------------------------------------- 导出
@@ -322,12 +643,26 @@ def _export(cfg):
     logs = []
     rpt.build_report(an, cfg, out, plots, TEMPLATE,
                      progress=lambda m: logs.append(m))
+    # 报告里实际用了哪个文件必须留下来：模糊匹配会挑替身，
+    # workspace.json 里的绝对路径 + 哈希是唯一的事后追溯依据。
+    used = dict((getattr(an, 'paths', {}) or {}))
+    fuzzy = [dict(key=k, label=v['label'], rel=v.get('rel'),
+                  score=v.get('score'), default=v['default'])
+             for k, v in (getattr(an, 'slots', {}) or {}).items()
+             if v.get('status') == 'fuzzy']
     try:
-        workspace.save(out_dir, {'config': cfg}, cfg, '紫外', TEMPLATE,
-                       extra={'spectra': sorted(getattr(an, 'spectra', {}) or {})})
+        workspace.save(out_dir,
+                       {'config': cfg, 'file_slots': used, 'fuzzy': fuzzy},
+                       cfg, '紫外', TEMPLATE,
+                       extra={'spectra': sorted(getattr(an, 'spectra', {}) or {}),
+                              'file_slots': used, 'fuzzy_matched': fuzzy})
     except Exception as exc:                         # noqa: BLE001
         logs.append('工作区快照写入失败：%s' % exc)
-    return dict(ok=True, path=out, note=note, logs=logs, figures=plots)
+    if fuzzy:
+        logs.append('%d 个文件是按文件名自动匹配的，详见 workspace.json 的 fuzzy_matched'
+                    % len(fuzzy))
+    return dict(ok=True, path=out, note=note, logs=logs, figures=plots,
+                fuzzy=fuzzy, file_slots=used)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -405,6 +740,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/pickdir':
                 initial = (q.get('initial') or [''])[0]
                 return self._json({'ok': True, 'path': pick_folder(initial)})
+            if path == '/api/pickfile':
+                initial = (q.get('initial') or [''])[0]
+                return self._json({'ok': True, 'path': pick_file(initial)})
+            if path == '/api/files':
+                return self._json(_files(q))
+            if path == '/api/file/info':
+                return self._json(_file_info(q))
+            if path == '/api/preview/single':
+                with PREVIEW_LOCK:
+                    png = _preview_single(q)
+                return self._send(200, png, 'image/png')
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)
@@ -422,6 +768,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_export(cfg))
             if u.path == '/api/gcalc/open':
                 return self._json(_gcalc_open(self._body()))
+            if u.path == '/api/files/auto':
+                return self._json(_auto_map(
+                    urllib.parse.parse_qs(u.query)))
             if u.path == '/api/settings':
                 cfg = _config_from(self._body())
                 data = save_settings(cfg)
@@ -486,21 +835,47 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- 扫描数据目录
 def _scan(data_dir):
+    """扫描：当前要用的文件齐不齐、哪些能模糊匹配上。
+
+    返回的 ``ready`` 只在「当前测量选择下全部槽位都能解析」时为真；
+    ``fuzzy`` 是被自动匹配的槽位（换了一批改名数据时该确认的地方）。
+    ``slots`` 与 /api/state 里的 file_slots 同形，前端直接拿去重画映射卡片。
+    """
     if not data_dir or not os.path.isdir(data_dir):
         return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'files': []}
+    cfg = STATE.get('config') or _config_from()
     files = uv.spectrum_files(data_dir)
-    need = set()
-    for c in uv.CALIBRATIONS:
-        need.add(c['file'])
-    for s in uv.SAMPLES:
-        need.add(s['sample'])
-        need.add(s['blank'])
-    missing = [n for n in sorted(need)
-               if not os.path.exists(os.path.join(data_dir, n))]
-    return {'ok': True, 'data_dir': data_dir, 'count': len(files),
-            'files': [os.path.relpath(p, data_dir) for p in files[:200]],
-            'missing': missing, 'expected': len(need),
-            'ready': not missing}
+    # 换目录时映射还是旧的，按「新目录 + 当前映射」重新解析
+    pm, pc = _picks_from_cfg(cfg)
+    paths, missing, detail = uv.resolve_slots(cfg.get('file_map'), data_dir,
+                                              picks_mol=pm, picks_conc=pc)
+    fuzzy = [dict(key=k, label=v['label'], rel=v['rel'],
+                  score=round(v['score'] or 0, 4))
+             for k, v in detail.items() if v.get('status') == 'fuzzy']
+    rows = []
+    for slot in uv.file_slots(pm, pc):
+        entry = detail.get(slot['key']) or {}
+        rows.append(dict(
+            key=slot['key'], kind=slot['kind'], group=slot['group'],
+            label=slot['label'], note=slot.get('note', ''),
+            default=slot['default'],
+            rel=entry.get('rel') or slot['default'],
+            path=entry.get('path') or '',
+            status=entry.get('status') or 'default',
+            score=entry.get('score'),
+            overridden=bool(entry.get('overridden')),
+            suggestions=[dict(rel=x['rel'], score=x['score'], path=x['path'])
+                         for x in (entry.get('suggestions') or [])][:6],
+        ))
+    return dict(ok=True, data_dir=data_dir, count=len(files),
+                files=[os.path.relpath(p, data_dir) for p in files[:200]],
+                expected=len(detail), ready=not missing,
+                slots=rows, fuzzy=fuzzy, auto=uv.FUZZY_ACCEPT,
+                missing=[dict(key=m['key'], label=m['label'],
+                              requested=m.get('requested'),
+                              suggestions=[dict(rel=x['rel'], score=x['score'])
+                                           for x in (m.get('suggestions') or [])[:4]])
+                         for m in missing])
 
 
 # ---------------------------------------------------------------- 启动

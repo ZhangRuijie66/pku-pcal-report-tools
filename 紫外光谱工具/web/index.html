@@ -63,6 +63,20 @@ td{white-space:nowrap}
   padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .foot{color:var(--sub);font-size:12px;text-align:center;padding:0 0 18px}
+/* 数据文件映射：26 个槽位一次性铺开会把左侧栏拉得很长，收进限高滚动区 */
+.slotlist{max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px;
+  border-top:1px solid var(--line);margin-top:4px}
+.slotlist.collapsed{display:none}
+.slotlist .slotgroup{margin:8px 0 2px;font-size:12px;font-weight:700;color:var(--sub)}
+.slotlist .field{margin:6px 0}
+.slotlist .field>label{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.slotlist select{font-size:12px}
+.slotlist .badge{font-size:11px;padding:0 6px;border-radius:999px;
+  background:#eef4ff;color:var(--accent2);white-space:nowrap}
+.slotlist .badge.warn{background:#fff7ed;color:#9a3412}
+.slotlist .badge.err{background:#fef3f2;color:var(--err)}
+.slotlist .badge.ok{background:#ecfdf3;color:var(--ok)}
+
 @media (max-width:1100px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
 </style>
 </head>
@@ -94,7 +108,71 @@ td{white-space:nowrap}
     </section>
 
     <section class="card">
-      <h2>报告封面</h2>
+      <h2>单个文件查看</h2>
+      <p class="hint">不参与报告计算，只是把某一个 txt 单独画出来核对
+        （换了新数据先在这里看一眼，确认导出的确实是光谱）。</p>
+      <div class="field">
+        <label>文件</label>
+        <input type="text" id="singlePath" placeholder="点「选择文件…」或从下面挑">
+        <div class="btnrow">
+          <button class="btn" id="btnPickFile">选择文件…</button>
+          <button class="btn" id="btnSingleView">查看</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>从数据目录里挑</label>
+        <select id="singleSelect"><option value="">（先扫描数据目录）</option></select>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>标定</label>
+          <select id="singleCal">
+            <option value="auto">用当前标定</option>
+            <option value="d1_long">第一周长波</option>
+            <option value="d2_long">第二周长波</option>
+            <option value="d2_short">第二周短波</option>
+            <option value="off">只看 pixel</option>
+          </select>
+        </div>
+        <div class="field"><label>平滑点数</label>
+          <input type="number" step="1" min="1" id="singleSmooth" value="1">
+        </div>
+      </div>
+      <p class="hint" id="singleNote">还没选文件。</p>
+      <div class="chartbox" style="min-height:180px;display:none" id="singleChartBox">
+        <img id="singleChart" alt="单文件预览" style="max-height:340px">
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>数据文件映射</h2>
+      <p class="hint">换人使用、或换了测量日期时，光谱仪导出的文件名会变。
+        这里可以逐个槽位指定文件；留空则按文件名自动匹配
+        （时间戳不同不影响，语义后缀如 <code>A3-5</code> 相同即可）。
+        带 <span class="pill">自动</span> 的是程序替你挑的，请核对一遍。</p>
+      <div class="btnrow">
+        <button class="btn" id="btnAutoMap">自动匹配文件</button>
+        <button class="btn" id="btnClearMap">全部恢复默认</button>
+      </div>
+      <div class="grid2" style="margin-top:10px">
+        <div class="field"><label>只看某一类</label>
+          <select id="fileGroup">
+            <option value="all">全部槽位</option>
+            <option value="attn">需要确认的</option>
+            <option value="cal">标定文件</option>
+            <option value="sample">样品文件</option>
+            <option value="blank">空白文件</option>
+          </select>
+        </div>
+        <div class="field"><label>&nbsp;</label>
+          <label class="hint" style="display:flex;align-items:center;gap:6px;margin:0">
+            <input type="checkbox" id="fileCompact" style="width:auto"> 收起清单
+          </label>
+        </div>
+      </div>
+      <p class="hint" id="fileMapNote">—</p>
+      <div id="fileMap" class="slotlist"></div>
+    </section>
+
       <div class="field"><label>姓名</label><input type="text" id="student_name"></div>
       <div class="field"><label>学号</label><input type="text" id="student_id"></div>
       <div class="field"><label>合作者（本实验两人合作）</label>
@@ -182,6 +260,8 @@ td{white-space:nowrap}
   </aside>
 
   <div class="content">
+    <section class="card" id="fileSummaryBox" style="display:none"></section>
+
     <section class="card">
       <div class="chartbar">
         <h2 style="margin:0">预览</h2>

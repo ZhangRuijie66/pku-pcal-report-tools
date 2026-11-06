@@ -138,6 +138,453 @@ SAMPLES = [
          blank='4\\2026-10-21 & 14-03-45-乙醇.txt', source='氘灯'),
 ]
 
+# ---------------------------------------------------------------- 数据文件槽位
+# 槽位 = **报告真正用到的那条数据**，不是「原始数据文件夹里的每个 txt」。
+# 同一个浓度测了两次（A3c5 / A3c5b）时报告只用选中的那一条，
+# 所以界面上这个浓度只有一行，不需要也不可能让用户去指定两次。
+#
+# key 形如：
+#   cal:d1_long     标定的光源谱
+#   sample:A3c5b    报告采用的样品谱（哪个 key 由「测量选择」决定）
+#   blank:b_A3_0    空白谱（多条样品共用同一份空白时只占一个槽位）
+SLOT_CAL = 'cal:'
+SLOT_SAMPLE = 'sample:'
+SLOT_BLANK = 'blank:'
+
+# 报告里除「测量选择」之外还要用的样品：3.2 节光源对比固定对比这两条。
+SOURCE_SAMPLE_KEYS = ('A3c5', 'A3_DW')
+
+# 空白文件登记表：SAMPLES 里的 blank 字段按路径匹配到这里，
+# 同一份空白被多条样品共用时只出现一次（否则界面上会有十几个重复的下拉框）。
+BLANKS = [
+    dict(key='b_A4_EtOH', label='A4（第一周）',
+         file='2026-10-14 & 17-11-53-A4-乙醇.txt'),
+    dict(key='b_A3_0', label='A3 浓度系列',
+         file='2\\2026-10-21 & 12-56-02-A3-0.txt'),
+    dict(key='b_A3_DW', label='A3 双光源',
+         file='3\\2026-10-21 & 13-11-41-A3-0-D+W.txt'),
+    dict(key='b_A2_0', label='A2',
+         file='3\\2026-10-21 & 13-23-50-A2-0.txt'),
+    dict(key='b_EtOH', label='短波段（A1/B1/B2）',
+         file='4\\2026-10-21 & 14-03-45-乙醇.txt'),
+]
+
+
+def _norm_key(path):
+    """路径比较用的规范形式（Windows 不区分大小写）。"""
+    return os.path.normcase(os.path.normpath(str(path or '')))
+
+
+def _ensure_blanks():
+    """SAMPLES 里出现、但 BLANKS 没登记的空白，自动补一条（不让 run 崩）。"""
+    known = {_norm_key(b['file']) for b in BLANKS}
+    for s in SAMPLES:
+        norm = _norm_key(s['blank'])
+        if norm in known:
+            continue
+        key = 'b_' + re.sub(r'\W+', '_', str(s['key']))
+        BLANKS.append(dict(key=key, label='%s' % s['key'], file=s['blank']))
+        known.add(norm)
+
+
+_ensure_blanks()
+SAMPLES_BY_KEY = {s['key']: s for s in SAMPLES}
+BLANKS_BY_KEY = {b['key']: b for b in BLANKS}
+_SLOTS = {}
+
+
+def blank_of_sample(s):
+    """样品对应的空白登记项。"""
+    norm = _norm_key(s['blank'])
+    for b in BLANKS:
+        if _norm_key(b['file']) == norm:
+            return b
+    return None
+
+
+def used_sample_keys(picks_mol=None, picks_conc=None, extras=None):
+    """报告真正会读的样品 key（顺序：浓度系列 → 其余分子 → 光源对比）。"""
+    pm = dict(MOLECULE_DEFAULT)
+    pm.update({k: v for k, v in (picks_mol or {}).items() if v in MOLECULE_CANDIDATES.get(k, [])})
+    pc = dict(CONC_PICK_DEFAULT)
+    pc.update({k: v for k, v in (picks_conc or {}).items() if v in CONC_CANDIDATES.get(k, [])})
+    out = []
+
+    def add(key):
+        if key and key in SAMPLES_BY_KEY and key not in out:
+            out.append(key)
+
+    for c in CONC_VALUES:
+        add(pc.get(conc_label(c)))
+    for code in ('A1', 'A2', 'A3', 'A4', 'B1', 'B2'):
+        add(pm.get(code))
+    for key in (SOURCE_SAMPLE_KEYS if extras is None else extras):
+        add(key)
+    return out
+
+
+def _pick_sig(picks_mol, picks_conc):
+    pm = picks_mol or {}
+    pc = picks_conc or {}
+    return (tuple(sorted(pm.items())), tuple(sorted(pc.items())))
+
+
+def file_slots(picks_mol=None, picks_conc=None):
+    """界面上的槽位清单：标定 → 浓度系列 → 其余分子 → 空白。
+
+    每个浓度、每个分子各**一行**：重复测量里只列「测量选择」当前选中的那一条。
+    多条用途指向同一份文件时合并成一行（如 A3 在浓度系列和其余分子里都取 5 μmol/L）。
+    """
+    sig = _pick_sig(picks_mol, picks_conc)
+    if sig in _SLOTS:
+        return [dict(s) for s in _SLOTS[sig]]
+    pm = dict(MOLECULE_DEFAULT)
+    pm.update({k: v for k, v in (picks_mol or {}).items()
+               if v in MOLECULE_CANDIDATES.get(k, [])})
+    pc = dict(CONC_PICK_DEFAULT)
+    pc.update({k: v for k, v in (picks_conc or {}).items()
+               if v in CONC_CANDIDATES.get(k, [])})
+
+    out, order = {}, []
+
+    def put(key, kind, group, label, default, note=''):
+        if key in out:                       # 同一份文件被多处用到 → 合并标签
+            if label not in out[key]['label'].split('、'):
+                out[key]['label'] += '、' + label
+            return
+        out[key] = dict(key=key, kind=kind, group=group, label=label,
+                        default=default, note=note)
+        order.append(key)
+
+    for c in CALIBRATIONS:
+        put(SLOT_CAL + c['key'], 'cal', '标定文件', c['short'], c['file'])
+    for c in CONC_VALUES:
+        key = pc.get(conc_label(c))
+        s = SAMPLES_BY_KEY.get(key)
+        if not s:
+            continue
+        # 标签带测量 key，因为同一个浓度可能测过两次（切换「测量选择」会换文件）
+        put(SLOT_SAMPLE + key, 'sample', '浓度系列',
+            '%g μmol·L⁻¹' % c, s['sample'],
+            note='测量 %s' % key)
+    for code in ('A1', 'A2', 'A3', 'A4', 'B1', 'B2'):
+        key = pm.get(code)
+        s = SAMPLES_BY_KEY.get(key)
+        if not s:
+            continue
+        mol = MOLECULES.get(code) or {}
+        put(SLOT_SAMPLE + key, 'sample', '其余分子',
+            '%s · %s' % (code, mol.get('short', code)), s['sample'],
+            note='测量 %s' % key)
+    for key in SOURCE_SAMPLE_KEYS:
+        s = SAMPLES_BY_KEY.get(key)
+        if not s:
+            continue
+        put(SLOT_SAMPLE + key, 'sample', '光源对比',
+            '光源对比 · %s' % s.get('source', key), s['sample'],
+            note='测量 %s' % key)
+    # 空白只列「被用到的样品」需要的那几份
+    for key in used_sample_keys(pm, pc):
+        s = SAMPLES_BY_KEY[key]
+        b = blank_of_sample(s)
+        if b:
+            put(SLOT_BLANK + b['key'], 'blank', '空白文件', b['label'], b['file'])
+    rows = [dict(out[k]) for k in order]
+    _SLOTS[sig] = rows
+    return [dict(s) for s in rows]
+
+
+def all_slot_keys():
+    """所有**可能**出现的槽位（校验 file_map 用，与当前选择无关）。
+
+    file_map 里允许保留「当前没选中」的测量，这样来回切换测量时
+    之前指定的文件不会丢。
+    """
+    keys = {SLOT_CAL + c['key'] for c in CALIBRATIONS}
+    keys |= {SLOT_SAMPLE + s['key'] for s in SAMPLES}
+    keys |= {SLOT_BLANK + b['key'] for b in BLANKS}
+    return keys
+
+
+def clean_file_map(mapping):
+    """只保留合法槽位，值统一成路径字符串（绝对路径原样保留）。"""
+    valid = all_slot_keys()
+    out = {}
+    for key, value in (mapping or {}).items():
+        if key not in valid or not isinstance(value, str):
+            continue
+        value = value.strip().strip('"').strip()
+        if not value or len(value) > 1024:
+            continue
+        out[key] = os.path.normpath(value.replace('/', os.sep))
+    return out
+
+
+# ---------------------------------------------------------------- 模糊匹配
+# 别人（或换一天）用同一套光谱仪软件时，文件名只在「时间戳」上不同：
+#   2026-10-21 & 12-56-02-A3-0.txt   ←  语义后缀 A3-0
+# 甚至会被改成 A3-5(2).txt / A3-5 - 副本.txt。所以匹配以**语义后缀**为主、
+# 整名相似度为辅、同目录加成，逐条打分后取最高分。
+FUZZY_ACCEPT = 0.80      # ≥ 此分自动采用（界面上标「自动匹配」，可改回）
+FUZZY_SUGGEST = 0.45     # ≥ 此分才列进候选下拉框
+
+def _stem_of(rel):
+    return os.path.splitext(os.path.basename(str(rel or '')))[0]
+
+
+_STAMP_RE = re.compile(r'^[\s\d\-_.:/&+]*')
+_TAG_TOK_RE = re.compile(r'[A-Za-z]+\d*|\d+|[^\x00-\x7f]')
+# 复制/重命名时 Windows 与浏览器自动加的后缀：`- 副本`、` (2)`、`_copy`
+_COPY_SUFFIX_RE = re.compile(
+    r'(?:\s*-\s*副本|\s*副本|\s*-\s*copy|\s*\(\d{1,2}\)|_\d{1,2}|_copy)+$',
+    re.IGNORECASE)
+
+
+def split_stamp(rel):
+    """把文件名拆成（时间戳前缀, 语义后缀）。
+
+    `2026-10-21 & 12-56-02-A3-0` → (`2026-10-21 & 12-56-02-`, `A3-0`)；
+    没有时间戳的名字（如 `氘灯标定`）整串都算语义后缀。
+    复制产生的 `- 副本` / `(2)` 后缀先剥掉，否则同一份文件会被判成两个。
+    """
+    stem = _stem_of(rel)
+    m = _STAMP_RE.match(stem)
+    tag = stem[m.end():].strip(' -_')
+    tag = _COPY_SUFFIX_RE.sub('', tag).strip(' -_') or tag
+    return stem[:m.end()].strip(), tag or stem
+
+
+def tag_tokens(tag):
+    """语义后缀 → 词元：`A3-5(2)` → ['a3', '5', '2']。
+
+    中文按单字切：词元集合用来惩罚「多/少一个 -数字」这种差别
+    （A3-5 与 A3-5-2 是两次不同测量，不能混为一谈）。
+    """
+    return [m.group(0).lower() for m in _TAG_TOK_RE.finditer(tag or '')]
+
+
+def _plain(s):
+    return re.sub(r'[^0-9a-z\u4e00-\u9fff]+', '', str(s or '').lower())
+
+
+def has_copy_suffix(rel):
+    """文件名是否带 `- 副本` / `(2)` / `_copy` 这类复制后缀。"""
+    stem = _stem_of(rel)
+    return bool(_COPY_SUFFIX_RE.search(split_stamp(rel)[1] or '')) or \
+        bool(_COPY_SUFFIX_RE.search(stem) and not _COPY_SUFFIX_RE.sub('', stem) == stem)
+
+
+def _plain_stem(rel):
+    """剥掉时间戳与复制后缀后的纯文本（判等用）。"""
+    return _plain(split_stamp(rel)[1])
+
+
+def match_score(target, cand):
+    """target/cand 为相对数据目录的 txt 路径，返回 0~1 的相似度。
+
+    权重之和正好 1.0，且**不提前饱和**：`0.74·语义后缀 + 0.20·整名 +
+    0.04·同目录 + 0.02·同时间戳`。留出头寸很关键——同名的 A3-0.5 在
+    文件夹 1 和 2 里各有一份（1 是第一批短积分、2 是第二批），
+    只有「同目录」这一项能把它们分开；早先写成先算 1.0 再 `min(1.0, …)`
+    加分，两者都封顶成 1.0，排序退化成按路径字母序 → 静默选了文件夹 1 的那份。
+    """
+    import difflib
+    t_stamp, t_tag = split_stamp(target)
+    c_stamp, c_tag = split_stamp(cand)
+    t_norm, c_norm = _plain(t_tag), _plain(c_tag)
+    if not t_norm or not c_norm:
+        return 0.0
+
+    t_tok, c_tok = set(tag_tokens(t_tag)), set(tag_tokens(c_tag))
+    if t_tag and t_tag == c_tag:
+        tag_sim = 1.0
+    else:
+        tag_sim = difflib.SequenceMatcher(None, t_norm, c_norm).ratio()
+        if t_tok and c_tok:
+            # 词元集合不同（多/少一个浓度或重复序号）要明确扣分
+            penalty = 1.0 - len(t_tok & c_tok) / float(max(len(t_tok), len(c_tok)))
+            tag_sim *= (1.0 - 0.5 * penalty)
+    # 整名相似度：用剥掉时间戳/副本后缀的形式，免得 `(2)` 拖低同一份文件的分数
+    full_sim = difflib.SequenceMatcher(
+        None, _plain_stem(target), _plain_stem(cand)).ratio()
+
+    score = 0.74 * tag_sim + 0.20 * full_sim
+    # 同一子文件夹（文件夹 1/2/3/4 是按测量批次分的）——唯一能分开同名文件的判据
+    t_dir = os.path.dirname(os.path.normpath(str(target)))
+    c_dir = os.path.dirname(os.path.normpath(str(cand)))
+    if os.path.normcase(t_dir) == os.path.normcase(c_dir) and t_dir not in ('', '.'):
+        score += 0.04
+    # 时间戳完全一致（同一批数据里只是改名）
+    if t_stamp and t_stamp == c_stamp:
+        score += 0.02
+    return max(0.0, min(1.0, score))
+
+
+def _index_files(data_dir):
+    """数据目录里的全部 txt（相对路径），按路径排序。"""
+    if not data_dir or not os.path.isdir(data_dir):
+        return []
+    out = []
+    for path in spectrum_files(data_dir):
+        try:
+            out.append(os.path.relpath(path, data_dir))
+        except ValueError:                 # 不同盘符
+            out.append(os.path.basename(path))
+    return out
+
+
+def suggest_files(target, files, top=5):
+    """给一个目标文件名挑候选：[(score, rel), …]，按分数降序。"""
+    scored = []
+    for rel in files:
+        s = match_score(target, rel)
+        if s >= FUZZY_SUGGEST:
+            scored.append((round(float(s), 4), rel))
+    # 分数高的在前；同分时优先不带「副本/(2)」的原件，再按路径
+    scored.sort(key=lambda x: (-x[0], has_copy_suffix(x[1]), x[1]))
+    # 同一份文件的原件与副本各留一条，别让下拉框被 5 个 `(2)(3)(4)` 副本占满
+    seen, out = set(), []
+    for s, rel in scored:
+        key = (_plain_stem(rel), has_copy_suffix(rel))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((s, rel))
+        if len(out) >= top:
+            break
+    return out
+
+
+def fuzzy_match(default_rel, data_dir, files=None):
+    """给缺失的默认文件找个替身；返回 (rel, score) 或 (None, 0)。"""
+    files = _index_files(data_dir) if files is None else files
+    if not files:
+        return None, 0.0
+    best, best_score = None, 0.0
+    for s, rel in suggest_files(default_rel, files, top=1):
+        best, best_score = rel, s
+    return best, best_score
+
+
+def resolve_slots(file_map=None, data_dir='', fuzzy=True,
+                  picks_mol=None, picks_conc=None):
+    """槽位 → 绝对路径；返回 (paths, missing, detail)。
+
+    只解析当前「测量选择」下**报告真正会读**的那几条数据：
+    同一浓度的两次测量只要求一条，所以界面上每个浓度只有一行。
+
+    解析顺序：① 用户映射里的路径 ② 登记的默认路径 ③ 模糊匹配。
+
+    ③ 只在「文件确实不在」时才做，且：
+      · 分数 ≥ FUZZY_ACCEPT 自动采用，并在 detail 里标 ``fuzzy``，
+        界面据此显示「自动匹配到 xxx.txt」，用户不满意可以改；
+      · 分数不够就退回进 ``missing``，但把候选一并带回去，界面上一键采用。
+
+    ``missing`` 的每一项都带 ``suggestions``：宁可整份计算明确报错说清缺哪一个，
+    也不要静默退回默认文件——那样报告里的数字会和界面上的选择不一致。
+    """
+    fm = clean_file_map(file_map)
+    base = data_dir or ''
+    files = _index_files(base) if fuzzy else []
+    paths, missing, detail = {}, [], {}
+    for slot in file_slots(picks_mol, picks_conc):
+        key = slot['key']
+        default_rel = slot['default']
+        mapped = fm.get(key)
+        target_rel = mapped or default_rel
+        path = target_rel if os.path.isabs(target_rel) else os.path.join(base, target_rel)
+        path = os.path.normpath(path)
+        entry = dict(key=key, label=slot['label'], kind=slot['kind'],
+                     group=slot['group'], default=default_rel,
+                     requested=target_rel, overridden=bool(mapped),
+                     path=path, rel=None, score=None, status='default',
+                     suggestions=[])
+        if os.path.isfile(path):
+            entry['rel'] = target_rel if not os.path.isabs(target_rel) else None
+            entry['status'] = 'manual' if mapped else 'default'
+            paths[key] = path
+            detail[key] = entry
+            continue
+
+        # ---- 文件不在：先按「请求的名字」，再按「默认的名字」做模糊匹配
+        cand_rel, cand_score = None, 0.0
+        for probe in ([target_rel, default_rel] if mapped else [default_rel]):
+            if os.path.isabs(probe):
+                probe = os.path.basename(probe)
+            rel, score = fuzzy_match(probe, base, files)
+            if rel and score > cand_score:
+                cand_rel, cand_score = rel, score
+        entry['suggestions'] = [
+            dict(rel=rel, score=s, path=os.path.normpath(os.path.join(base, rel)))
+            for s, rel in suggest_files(
+                os.path.basename(target_rel) if os.path.isabs(target_rel) else target_rel,
+                files)]
+        if cand_rel and cand_score >= FUZZY_ACCEPT:
+            full = os.path.normpath(os.path.join(base, cand_rel))
+            entry.update(path=full, rel=cand_rel, score=cand_score, status='fuzzy')
+            paths[key] = full
+            detail[key] = entry
+            continue
+        entry['score'] = cand_score or None
+        entry['status'] = 'ambiguous' if entry['suggestions'] else 'missing'
+        paths[key] = path                 # 保留原路径，报错时好说明找的是什么
+        missing.append(entry)
+        detail[key] = entry
+    return paths, missing, detail
+
+
+class DataFilesMissing(RuntimeError):
+    """有槽位对应的数据文件不存在。"""
+
+    def __init__(self, missing):
+        self.missing = list(missing or [])
+        shown = ['%s → %s' % (m['label'], os.path.basename(m.get('path') or ''))
+                 for m in self.missing[:4]]
+        more = '' if len(self.missing) <= 4 else '…（共 %d 个）' % len(self.missing)
+        hint = ''
+        fuzzy = [m for m in self.missing if m.get('suggestions')]
+        if fuzzy:
+            hint = '（%d 个缺失项找到了相近文件，可在「数据文件映射」里一键采用）' % len(fuzzy)
+        elif not any(m.get('overridden') for m in self.missing):
+            hint = '（可在「数据文件映射」里逐个挑，或点「自动匹配文件」）'
+        super().__init__('缺少 %d 个数据文件：%s%s%s。请检查「数据目录」或「数据文件映射」。'
+                         % (len(self.missing), '；'.join(shown), more, hint))
+
+
+# ---------------------------------------------------------------- 单个文件
+def read_single(path):
+    """读一个 txt 供界面单独查看；错误信息要能直接给用户看。"""
+    if not os.path.isfile(path):
+        raise ValueError('文件不存在：%s' % path)
+    try:
+        return load_spectrum(path)
+    except ValueError:
+        raise ValueError('不是光谱仪导出的四列 txt（index / original / '
+                         'background / difference）：%s' % os.path.basename(path))
+
+
+def single_peak_info(spec, cal=None, window=9):
+    """单个谱的最强点：pixel、强度、以及（给了标定时）波长。"""
+    y = np.asarray(spec['difference'], float)
+    idx = np.asarray(spec['index'], float)
+    if not len(y):
+        return dict(n=0, pixel=float('nan'), intensity=float('nan'),
+                    lam=float('nan'), imin=float('nan'), imax=float('nan'))
+    sm = _moving_average(y, window)
+    i = int(np.argmax(sm))
+    info = dict(n=int(len(y)), pixel=float(idx[i]), intensity=float(y[i]),
+                imin=float(np.nanmin(y)), imax=float(np.nanmax(y)),
+                lam=float('nan'))
+    if cal:
+        info['lam'] = float(cal['a'] * idx[i] + cal['b'])
+    return info
+
+
+def smooth(y, window):
+    """带镜像填充的移动平均（对外接口，绘图用）。"""
+    return _moving_average(y, window)
+
+
 # ---------------------------------------------------------------- 测量选择
 # 同一个样品/浓度如果测了多次，用「选择模块」决定报告里用哪一条。
 # 下面是每个槽位的候选测量；默认一律取候选里的**最后一次**（用户 2026-10-21 指定），

@@ -162,8 +162,13 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         cal_pngs[key] = save(plotting.make_calibration_figure(cal),
                              'calib_%s.png' % key)
 
-    source_png = save(plotting.make_source_figure(
-        analysis.samples['A3c5'], analysis.samples['A3_DW']), 'source_A3.png')
+    # 3.2 光源对比：两条谱由 SOURCE_SAMPLE_KEYS 固定，和「数据文件映射」一一对应
+    src_keys = [k for k in uv.SOURCE_SAMPLE_KEYS if k in analysis.samples]
+    source_png = None
+    if len(src_keys) == 2:
+        source_png = save(plotting.make_source_figure(
+            analysis.samples[src_keys[0]], analysis.samples[src_keys[1]]),
+            'source_A3.png')
 
     conc_items = list(analysis.conc_items)
     conc_png = save(plotting.make_concentration_figure(conc_items), 'conc_A3.png')

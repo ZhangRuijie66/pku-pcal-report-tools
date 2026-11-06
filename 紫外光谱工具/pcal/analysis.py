@@ -33,6 +33,9 @@ def default_config():
         'pressure_2': 101.8,
         # ---- 数据与处理
         'data_dir': DEFAULT_DATA_DIR,
+        # 数据文件映射：{槽位 key: 相对 data_dir 的 txt 路径（或绝对路径）}。
+        # 空 = 全部用 uv.py 里登记的默认文件名；只在文件名变了时逐项覆盖。
+        'file_map': {},
         'smooth_window': uv.DEFAULT_SMOOTH,
         # 杂散光校正：'auto' = 只对 A3 浓度系列启用（这批数据的测量条件决定的），
         # 'off' = 全部不扣，'manual' = 全部按 stray 比例扣
@@ -60,7 +63,7 @@ def default_config():
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'partner_name', 'date',
     'room_temp_1', 'room_temp_2', 'pressure_1', 'pressure_2',
-    'data_dir', 'smooth_window', 'stray', 'stray_mode', 'stray_a3',
+    'data_dir', 'file_map', 'smooth_window', 'stray', 'stray_mode', 'stray_a3',
     'path_cm', 'anchor_pad', 'voigt_peaks',
     'molecule_default', 'conc_pick', 'beer_concs', 'box_a', 'box_n_B1', 'box_n_B2',
     'gcalc_dir', 'gcalc_logs_dir',
@@ -74,6 +77,8 @@ def merge_saved(cfg, saved):
         if k in PERSIST_KEYS and v is not None:
             if k == 'molecule_default' and isinstance(v, dict):
                 cfg[k].update(v)
+            elif k == 'file_map' and isinstance(v, dict):
+                cfg[k].update(uv.clean_file_map(v))
             else:
                 cfg[k] = v
     return cfg
@@ -114,35 +119,75 @@ class Analysis:
         self.molecule_table = []
         self.warnings = []
         self.spectra = {}
+        self.paths = {}          # 槽位 key → 实际使用的绝对路径
+        self.missing = []        # 找不到的数据文件（带候选）
+        self.slots = {}          # 槽位 → 解析详情（界面/报告用）
+        self.file_map_used = {}  # 实际生效的映射（绝对路径，写进 workspace.json）
 
     # ------------------------------------------------------------ 主流程
     def run(self, spectra=None):
-        """spectra: {相对路径: load_spectrum 结果}，不给则按 data_dir 现读。"""
+        """spectra: {绝对路径: load_spectrum 结果}，不给则按数据目录现读。"""
         cfg = self.cfg
         data_dir = cfg.get('data_dir') or DEFAULT_DATA_DIR
         self.spectra = spectra or {}
         self.warnings = []
 
+        # 测量选择必须在读文件之前定下来：报告只读选中的那一条，
+        # 所以「数据文件映射」里每个浓度也只有一行。
+        picks_mol = _valid_picks(cfg.get('molecule_default'),
+                                 uv.MOLECULE_CANDIDATES, uv.MOLECULE_DEFAULT)
+        picks_conc = _valid_picks(cfg.get('conc_pick'),
+                                  uv.CONC_CANDIDATES, uv.CONC_PICK_DEFAULT)
+        self.picks_mol = picks_mol
+        self.picks_conc = picks_conc
+
+        # 0) 槽位 → 路径。文件不在时先做模糊匹配（改名/换机器的场景），
+        #    仍然找不到就直接抛 DataFilesMissing，绝不静默退回默认文件名
+        #    （那样报告里的数字会与界面上的选择不一致）。
+        paths, self.missing, self.slots = uv.resolve_slots(
+            cfg.get('file_map'), data_dir,
+            picks_mol=picks_mol, picks_conc=picks_conc)
+        if self.missing:
+            raise uv.DataFilesMissing(self.missing)
+        self.paths = paths
+        self.file_map_used = dict(paths)
+        for key, entry in self.slots.items():
+            if entry.get('status') == 'fuzzy':
+                self.warnings.append(
+                    '%s 的文件不在，已按文件名自动匹配到 %s（%.0f%% 相似）'
+                    % (entry['label'], entry['rel'], 100 * entry['score']))
+
         # 1) 三次标定
         for c in uv.CALIBRATIONS:
-            path = os.path.join(data_dir, c['file'])
+            path = paths[uv.SLOT_CAL + c['key']]
             spec = self._spec(path)
             cal = uv.calibrate(spec, prior=c['prior'])
             cal = dict(cal)
             cal.update(key=c['key'], label=c['label'], short=c['short'],
-                       day=c['day'], file=c['file'], path=path, spec=spec)
+                       day=c['day'], file=c['file'], path=path, spec=spec,
+                       file_name=os.path.basename(path))
             cal['lam_lo'] = cal['a'] * 1 + cal['b']
             cal['lam_hi'] = cal['a'] * len(spec['index']) + cal['b']
             self.cals[c['key']] = cal
             if cal.get('fallback'):
                 self.warnings.append('标定 %s 自动寻峰失败，退回先验系数' % c['short'])
 
-        # 2) 逐条样品谱
+        # 2) 逐条样品谱 —— 只处理报告用得到的那几条，
+        #    但「测量选择」可以切到别的测量，所以候选里的都要能算；
+        #    真正缺文件的候选在读之前就已由 resolve_slots 报错了。
+        needed = set(uv.used_sample_keys(picks_mol, picks_conc))
+        skipped = []
         cal_by_key = self.cals
         for s in uv.SAMPLES:
             mol = uv.MOLECULES[s['mol']]
-            sp = self._spec(os.path.join(data_dir, s['sample']))
-            bp = self._spec(os.path.join(data_dir, s['blank']))
+            blank_slot = uv.blank_of_sample(s)
+            sp_path = paths.get(uv.SLOT_SAMPLE + s['key'])
+            bp_path = paths.get(uv.SLOT_BLANK + (blank_slot or {}).get('key'))
+            if sp_path is None or bp_path is None or s['key'] not in needed:
+                skipped.append(s['key'])
+                continue
+            sp = self._spec(sp_path)
+            bp = self._spec(bp_path)
             cal = cal_by_key[s['cal']]
             stray = self._stray_for(s)
             # 吸收光谱不做平滑：直接用原始点，基线也在原始点上取中位数。
@@ -191,15 +236,12 @@ class Analysis:
                 A_corr=A_corr, A_corr_plain=A_corr_plain,
                 voigt=vf, voigt_obs=vf_obs,
                 peak=peak, peak_obs=peak_obs, eps=eps,
-                cal_label=cal['short'])
+                cal_label=cal['short'],
+                sample_path=sp_path, blank_path=bp_path,
+                sample_file=os.path.basename(sp_path),
+                blank_file=os.path.basename(bp_path))
 
-        # 3) 测量选择：浓度系列 + 其余分子
-        picks_mol = _valid_picks(cfg.get('molecule_default'),
-                                 uv.MOLECULE_CANDIDATES, uv.MOLECULE_DEFAULT)
-        picks_conc = _valid_picks(cfg.get('conc_pick'),
-                                  uv.CONC_CANDIDATES, uv.CONC_PICK_DEFAULT)
-        self.picks_mol = picks_mol
-        self.picks_conc = picks_conc
+        # 3) 浓度系列与分子表（测量选择在第 0 步已定，这里直接用）
         self.conc_items = [self.samples[picks_conc[uv.conc_label(c)]]
                            for c in uv.CONC_VALUES
                            if picks_conc.get(uv.conc_label(c)) in self.samples]
