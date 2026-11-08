@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>正在启动…</title>
+<!--
+  模块启动过渡页。
+
+  为什么需要它：点入口页的「启动这个模块」时，模块进程要导入 numpy/scipy/
+  matplotlib/python-docx 并建好服务（实测 1.2~4.7 s），这段时间浏览器里是一个
+  **纯白标签页**——用户不知道是卡住了还是在加载。本页由入口页在
+  `window.open()` 时直接写入，模块就绪后前端把它导航到真实地址。
+
+  设计要点：
+    · 单文件、无外部依赖（离线可用，和模块前端一致）；
+    · 纯前端计时，不轮询后端（轮询在后端由 /api/start 完成）；
+    · 显示「可能要几秒」的预期，超过 10 s 给出可操作提示（看日志）；
+    · 主题跟随浅色（模块界面都是浅色，别闪一下黑）。
+-->
+<style>
+  :root {
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --bg: #f8fafc;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+                 "PingFang SC", "Hiragino Sans GB", sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #eef2ff 0%, var(--bg) 60%);
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .wrap { width: 100%; max-width: 460px; text-align: center; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 40px 32px 32px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, .06);
+  }
+
+  /* 旋转圆环 + 中间呼吸的圆点 */
+  .spinner {
+    width: 64px; height: 64px;
+    margin: 0 auto 22px;
+    position: relative;
+  }
+  .spinner::before {
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 4px solid var(--accent-soft);
+    border-top-color: var(--accent);
+    animation: spin .9s linear infinite;
+  }
+  .spinner::after {
+    content: "";
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 12px; height: 12px;
+    margin: -6px 0 0 -6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse {
+    0%, 100% { transform: scale(.75); opacity: .5; }
+    50%      { transform: scale(1.15); opacity: 1; }
+  }
+
+  h1 {
+    font-size: 19px;
+    font-weight: 600;
+    margin: 0 0 8px;
+    letter-spacing: .2px;
+  }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 4px; line-height: 1.7; }
+  .elapsed { color: var(--muted); font-size: 12.5px; margin-top: 18px; font-variant-numeric: tabular-nums; }
+
+  /* 进度条：不确定进度（模块没有上报百分比，用流动条而不是假百分比） */
+  .bar {
+    margin: 22px auto 0;
+    height: 4px;
+    width: 100%;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    overflow: hidden;
+    position: relative;
+  }
+  .bar::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 40%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: slide 1.3s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0%   { left: -40%; }
+    100% { left: 100%; }
+  }
+
+  /* 超过预期时间后才出现的提示，正常情况不打扰 */
+  .hint {
+    display: none;
+    margin-top: 20px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+    font-size: 13px;
+    line-height: 1.65;
+    text-align: left;
+  }
+  .hint.on { display: block; }
+  .hint code {
+    background: #fef3c7;
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .steps { margin: 14px 0 0; padding: 0; list-style: none; }
+  .steps li {
+    font-size: 13.5px;
+    color: var(--muted);
+    line-height: 1.9;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+  }
+  .steps li .tick {
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    border: 1.5px solid var(--line);
+    flex: 0 0 auto;
+    position: relative;
+  }
+  .steps li.done { color: var(--ink); }
+  .steps li.done .tick { border-color: #10b981; background: #10b981; }
+  .steps li.done .tick::after {
+    content: "";
+    position: absolute;
+    left: 4px; top: 1px;
+    width: 4px; height: 8px;
+    border: solid #fff;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+  }
+
+  /* 系统开了「减少动态效果」时不转圈、不流动：用静态的浅色环 + 走秒数传达进度，
+     避免前庭敏感的用户被持续旋转的动画影响。 */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner::before { animation: none; border-top-color: var(--accent-soft); }
+    .spinner::after  { animation: none; opacity: .85; }
+    .bar::after      { animation: none; left: 0; width: 100%; opacity: .55; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="spinner" aria-hidden="true"></div>
+    <h1 id="title">正在启动实验模块…</h1>
+    <p class="sub" id="sub">首次启动要把计算库加载进来，通常需要几秒钟。</p>
+
+    <ul class="steps" id="steps">
+      <li id="s1"><span class="tick"></span>启动本地服务</li>
+      <li id="s2"><span class="tick"></span>加载计算模块</li>
+      <li id="s3"><span class="tick"></span>准备界面</li>
+    </ul>
+
+    <div class="bar" aria-hidden="true"></div>
+    <div class="elapsed" id="elapsed">已等待 0.0 秒</div>
+
+    <div class="hint" id="hint">
+      已经等了 <b id="hintSec">15</b> 秒还没打开。可以这样排查：
+      <ul style="margin:8px 0 0;padding-left:18px;line-height:1.8">
+        <li>稍等一会儿，紫外光谱这类要建图的模块会比较慢；</li>
+        <li>回入口页看看这个模块的卡片是不是变成了「运行中」；</li>
+        <li>还是不行就打开 <code>_tools\启动日志.log</code> 看最后的报错。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var started = Date.now();
+  var elElapsed = document.getElementById('elapsed');
+  var elHint = document.getElementById('hint');
+  var elHintSec = document.getElementById('hintSec');
+  var steps = ['s1', 's2', 's3'];
+
+  // 步骤打勾只是「预期进度」，让等待有反馈；模块真正就绪后本页会被导航走。
+  var marks = [700, 1800, 3000];
+  marks.forEach(function (ms, i) {
+    setTimeout(function () {
+      var li = document.getElementById(steps[i]);
+      if (li) li.classList.add('done');
+    }, ms);
+  });
+
+  setInterval(function () {
+    var sec = (Date.now() - started) / 1000;
+    elElapsed.textContent = '已等待 ' + sec.toFixed(1) + ' 秒';
+    if (sec >= 15) {
+      elHint.classList.add('on');
+      elHintSec.textContent = Math.floor(sec);
+    }
+  }, 100);
+
+  // 入口页在 window.open 时可能已经通过 postMessage 装了标题，取不到就用默认
+  window.addEventListener('message', function (ev) {
+    var d = ev.data;
+    if (d && d.type === 'pcal-boot-title' && d.title) {
+      document.getElementById('title').textContent = d.title;
+      document.title = d.title;
+    }
+  });
+
+  // 模块本身也可以在就绪后调 navigation；这里兜底：若本页被直接打开
+  // （例如用户手滑收藏），3 秒后提示回入口页。
+  window.addEventListener('load', function () {
+    if (!window.opener) {
+      document.getElementById('sub').textContent =
+        '如果你不是从入口页点进来的，这个页面不会自己跳转。请回入口页重新打开。';
+    }
+  });
+}());
+</script>
+</body>
+</html>

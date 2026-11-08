@@ -9,6 +9,8 @@ const DATA_FIELDS = ['n_cyclohexane', 'n_ethanol'];
 
 let STATE = null;
 let DATA = null;
+let DATA_DIR = '';
+let FILE_PICKER = null;
 
 /* ---------------------------------------------------------------- 小工具 */
 function toast(msg, ms = 2800) {
@@ -73,6 +75,7 @@ function readConfig() {
     if (el) cfg[k] = el.value === '' ? null : Number(el.value);
   });
   cfg.composition_mode = $('composition_mode').value;
+  cfg.data_dir = DATA_DIR || null;
   return cfg;
 }
 
@@ -275,6 +278,8 @@ function renderState(s) {
   fillConfig(s.config);
   fillData(s.data);
   $('dataFile').textContent = s.data_file || '';
+  DATA_DIR = s.data_dir || DATA_DIR || '';
+  paintDataDir();
   setStatus('数据文件：' + (s.data_file || '—'));
   renderResults(s);
   renderWarnings(s);
@@ -294,12 +299,66 @@ function drawChart() {
   $('chartHint').textContent = hints[kind] || '';
 }
 
+/* ---------------------------------------------------------------- 数据目录
+ * 本模块没有文件导入解析（数据靠表格手录），所以这里只做一件事：
+ * 从数据目录挑一份以前的 <实验>数据.json 快照载入现成的管道。
+ * 载入**不写盘**，要落盘仍走上面的「保存数据」(/api/data)。
+ */
+function paintDataDir() {
+  const el = $('dataDir');
+  if (el) el.textContent = DATA_DIR || '—';
+}
+
+async function pickDataDir() {
+  if (!window.PcalFiles) { toast('文件选择组件未加载'); return; }
+  const dir = await PcalFiles.pickFolder(DATA_DIR);
+  if (!dir) return;
+  DATA_DIR = dir;
+  paintDataDir();
+  await saveDefault();                    // 记住这个目录（与「存为默认」同一条路）
+  if (FILE_PICKER) await FILE_PICKER.load(DATA_DIR);
+  toast('数据目录已切换到 ' + dir, 4000);
+}
+
+async function loadSnapshot(rel) {
+  if (!confirm('载入「' + rel + '」会替换当前表格里的内容（尚未保存的编辑会丢）。\n继续？')) {
+    return;
+  }
+  busy(true, '载入数据快照…');
+  try {
+    const r = await api('/api/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir: DATA_DIR, rel }),
+    });
+    fillData(r.data || {});
+    await recalc();
+    toast('已载入 ' + (r.name || rel) + '（还没写盘，确认后请点「保存数据」）', 6000);
+  } catch (e) { toast('载入失败：' + e.message, 5000); }
+  finally { busy(false); }
+}
+
+async function initFiles() {
+  if (!window.PcalFiles) return;
+  try {
+    FILE_PICKER = PcalFiles.mount($('filePick'), {
+      placeholder: '搜索数据文件，如 双液系数据',
+      exts: ['.json'],
+      onPick: (rel) => loadSnapshot(rel),
+    });
+    await FILE_PICKER.load(DATA_DIR);
+  } catch (e) {
+    toast('文件选择器初始化失败：' + e.message, 5000);
+  }
+}
+
 /* ---------------------------------------------------------------- 动作 */
 async function boot() {
   setStatus('正在初始化…');
   try {
     const s = await api('/api/state');
     renderState(s);
+    await initFiles();
     const q = new URLSearchParams(location.search);
     const home = q.get('home');
     if (home) {
@@ -441,6 +500,7 @@ function bindUI() {
   $('btnSaveDefault').onclick = saveDefault;
   $('btnSaveData').onclick = saveData;
   $('btnSample').onclick = loadSample;
+  $('btnPickDir').onclick = pickDataDir;
   $('btnAddBottle').onclick = addBottle;
   $('btnAddBoil').onclick = addBoil;
   $('curveTable').addEventListener('click', (e) => {

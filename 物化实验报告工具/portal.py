@@ -747,12 +747,43 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj, ensure_ascii=False))
 
+    # 静态资源白名单：只允许入口页自己要用的几个前端文件。
+    # 不白名单的话 /static/../profile.json 能读到个人档案、
+    # /static/../../_tools/launcher.py 能读到源码（审计规则 D.3）。
+    STATIC_TYPES = {
+        '.html': 'text/html; charset=utf-8',
+        '.js': 'application/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.ico': 'image/x-icon',
+    }
+
+    def _static(self, rel):
+        if not rel or '\\' in rel or rel.startswith('/') or '..' in rel.split('/'):
+            return self._json({'ok': False, 'error': 'not found'}, 404)
+        target = os.path.normpath(os.path.join(WEB_DIR, rel))
+        root = os.path.normpath(WEB_DIR) + os.sep
+        if not target.startswith(root):
+            return self._json({'ok': False, 'error': 'not found'}, 404)
+        ctype = self.STATIC_TYPES.get(os.path.splitext(target)[1].lower())
+        if not ctype:
+            return self._json({'ok': False, 'error': 'not found'}, 404)
+        try:
+            with open(target, 'rb') as fh:
+                body = fh.read()
+        except OSError:
+            return self._json({'ok': False, 'error': 'not found'}, 404)
+        return self._send(200, body, ctype)
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         try:
             if u.path in ('/', '/index.html'):
                 with open(os.path.join(WEB_DIR, 'index.html'), 'r', encoding='utf-8') as fh:
                     return self._send(200, fh.read(), 'text/html; charset=utf-8')
+            if u.path.startswith('/static/'):
+                return self._static(u.path[len('/static/'):])
             if u.path == '/api/modules':
                 payload = {'ok': True, 'portal_port': STATE['portal_port'],
                            'lab_dir': LAB_DIR,

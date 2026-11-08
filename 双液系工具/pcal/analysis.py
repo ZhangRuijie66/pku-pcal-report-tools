@@ -24,6 +24,9 @@ def default_config():
         'sigma_n': 0.0005,             # 折射率读数标准差（最后一位估读）
         'lit_T_K': 337.95,             # 文献恒沸点（CRC，见参照报告引用）
         'lit_w': 0.3128,               # 文献恒沸组成：乙醇质量分数（会按口径换算）
+        # 浏览/挑数据文件的文件夹（数据本体在 data/双液系数据.json）。
+        # None = 交给 server.default_data_dir() 运行时推导，不写死盘符。
+        'data_dir': None,
         'report_title': '双液体系沸点-成分图的绘制',
     }
 
@@ -31,7 +34,7 @@ def default_config():
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
     'room_temp', 'pressure', 'composition_mode', 'sigma_n',
-    'lit_T_K', 'lit_w',
+    'lit_T_K', 'lit_w', 'data_dir',
 )
 
 

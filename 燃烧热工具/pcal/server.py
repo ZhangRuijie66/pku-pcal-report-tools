@@ -9,7 +9,6 @@ import io
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -42,6 +41,8 @@ from pcal.analysis import (Analysis, SUBSTANCES, PERSIST_KEYS, default_config,
 from pcal import report as rpt             # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal import dataloc                   # noqa: E402  数据目录可移植定位
+from pcal import filepick                  # noqa: E402  系统文件选择窗口
 from pcal.atomicio import atomic_write_json  # noqa: E402
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
@@ -233,44 +234,19 @@ def _results(it, an):
 
 
 # ---------------------------------------------------------------- HTTP
-def pick_folder(initial=None):
+def pick_folder(initial=None, title=None):
     """弹出系统「选择文件夹」窗口，返回绝对路径；取消时返回 ''。
 
-    窗口由独立子进程（tkinter）打开，不阻塞服务进程。
-    设置环境变量 PCAL_PICK_AUTO 可直接返回指定目录（自动化测试用）。
+    实现统一走共享层 ``pcal/filepick.py``：窗口由独立子进程（tkinter）打开，
+    不阻塞服务进程；``PCAL_PICK_AUTO`` 环境变量可直接返回指定目录
+    （自动化测试用），口径与其它 10 个模块完全一致。
     """
-    auto = os.environ.get('PCAL_PICK_AUTO')
-    if auto:
-        return os.path.normpath(auto) if os.path.isdir(auto) else ''
-    code = (
-        "import sys, tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "try:\n"
-        "    root.attributes('-topmost', True)\n"
-        "except Exception:\n"
-        "    pass\n"
-        "root.update()\n"
-        "kwargs = dict(parent=root, title='选择数据文件夹')\n"
-        "init = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-        "if init:\n"
-        "    kwargs['initialdir'] = init\n"
-        "p = filedialog.askdirectory(**kwargs)\n"
-        "root.destroy()\n"
-        "sys.stdout.write(p or '')\n"
-    )
-    env = dict(os.environ)
-    env['PYTHONIOENCODING'] = 'utf-8'
-    try:
-        out = subprocess.run([sys.executable, '-c', code, initial or ''],
-                             capture_output=True, timeout=900, env=env)
-    except (OSError, subprocess.SubprocessError):
-        return ''
-    txt = out.stdout.decode('utf-8', 'replace').strip()
-    if not txt:
-        return ''
-    return os.path.normpath(txt) if os.path.isdir(txt) else ''
+    return filepick.pick_folder(initial, title or '选择数据文件夹')
+
+
+def pick_file(initial=None, exts=None, title=None):
+    """弹出系统「选择文件」窗口，返回绝对路径；取消或后缀不符返回 ''。"""
+    return filepick.pick_file(initial, exts, title or '选择数据文件')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -348,6 +324,18 @@ class Handler(BaseHTTPRequestHandler):
                 q = urllib.parse.parse_qs(u.query)
                 initial = (q.get('initial') or [''])[0]
                 return self._json({'ok': True, 'path': pick_folder(initial)})
+            if path == '/api/pickfile':
+                q = urllib.parse.parse_qs(u.query)
+                initial = (q.get('initial') or [''])[0]
+                exts = (q.get('exts') or [''])[0]
+                return self._json({'ok': True,
+                                   'path': pick_file(initial, exts or None)})
+            if path == '/api/files':
+                # 数据目录的文件清单（相对路径 + 总数），前端 PcalFiles 自己过滤。
+                # 只读：不给绝对路径、不写盘，越界（绝对路径/上跳）一律当目录不存在。
+                q = urllib.parse.parse_qs(u.query)
+                d = (q.get('dir') or [''])[0]
+                return self._json(_files_index(d))
 
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:  # noqa: BLE001
@@ -572,25 +560,26 @@ def _unique_path(path, max_tries=50):
 def _default_data_dir():
     """
     数据文件夹的默认值：优先用上次记住的那个（换目录/换机器后也能接着用），
-    再试套件根下的「数据」文件夹（可移植包用法）、课程原始数据目录（相对
-    套件根，跟着包走）、本工具目录里的「样例数据」，最后退回本工具目录。
+    再按共享层 ``pcal/dataloc.find_data_dir`` 的优先级推一个**一定存在**的目录：
+    套件根下的「数据」→ 课程原始数据目录「1 燃烧热」（相对套件根，跟着包走）
+    → 本工具目录里的「样例数据」→ 本工具目录本身。
 
     **不写死任何一台机器上的绝对路径**：可移植包解压到别人电脑上以后，
     这里推出的目录一定存在（最后一档是本工具目录），不会抛 FileNotFoundError。
     """
     saved = (load_settings().get('data_dir') or '').strip()
-    if saved and os.path.isdir(saved):
-        return saved
-    suite = os.path.dirname(ROOT)
-    cands = [
-        os.path.join(suite, '数据'),      # 可移植包：同级放个「数据」文件夹
-        os.path.join(suite, '1 燃烧热'),   # 课程原始数据（相对套件根）
-        os.path.join(ROOT, '样例数据'),
-    ]
-    for c in cands:
-        if os.path.isdir(c):
-            return c
-    return ROOT
+    return dataloc.find_data_dir(ROOT, saved,
+                                 extra=('1 燃烧热',),
+                                 tool_subdirs=('样例数据',))
+
+
+def _files_index(d):
+    """``/api/files``：数据目录里的数据文件清单（相对路径，给前端搜索用）。
+
+    只读端点。目录为空时退回默认数据目录，换机器打开也不会一片空白。
+    """
+    data_dir = (d or '').strip() or _default_data_dir()
+    return filepick.index_payload(data_dir)
 
 
 def _scan_dir(d):

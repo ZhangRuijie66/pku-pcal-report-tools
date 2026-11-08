@@ -25,6 +25,7 @@ sys.path.insert(0, ROOT)
 
 from pcal import phase, plotting                       # noqa: E402
 from pcal import report as rpt                         # noqa: E402
+from pcal import dataloc, filepick
 from pcal import profile
 from pcal import workspace
 from pcal.atomicio import atomic_write_json
@@ -41,6 +42,69 @@ MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不�
 
 class BodyTooLarge(ValueError):
     """Content-Length 非法或超过 MAX_BODY_BYTES。"""
+
+
+# ---------------------------------------------------------------- 数据目录
+# 数据本体在 data/双液系数据.json；「数据目录」指从哪里挑**数据快照**来载入。
+# 推导顺序见 dataloc：记住的 ＞ 课程原始数据目录（相对套件根）＞ 本工具 data/。
+# 最后一档一定存在，换机器解压后不会开天窗。
+_COURSE_DIRS = ('物理化学实验/物理化学实验/双液系',)
+_LOCAL_DATA = os.path.join(ROOT, 'data')
+
+
+def default_data_dir(saved=''):
+    """推一个**一定存在**的数据目录，绝不写死任何一台机器的绝对路径。"""
+    return dataloc.find_data_dir(ROOT, saved,
+                                 extra=_COURSE_DIRS + (_LOCAL_DATA,))
+
+
+def _browse_dir(query=None, cfg=None):
+    """当前浏览目录：请求参数 ＞ config ＞ settings.json ＞ 推导默认。"""
+    asked = str(((query or {}).get('dir') or [''])[0] or '').strip()
+    if asked:
+        return asked
+    saved = str((cfg or {}).get('data_dir') or '').strip()
+    if not saved:
+        saved = str(load_settings().get('data_dir') or '')
+    return default_data_dir(saved)
+
+
+def _files_payload(query):
+    """GET /api/files：列出数据目录里的文件（相对路径，前端自己过滤）。"""
+    with LOCK:
+        cfg = STATE.get('config')
+    d = _browse_dir(query, cfg)
+    if not os.path.isdir(d):
+        return {'ok': False, 'dir': d, 'files': [], 'total': 0,
+                'error': '目录不存在：%s' % d}
+    return filepick.index_payload(d, dataloc.list_data_files(d))
+
+
+def _load_snapshot(payload):
+    """POST /api/load：把数据目录里的一份 .json 快照载入内存。
+
+    **不写盘**（写盘仍只由 /api/data 负责）：载入后用户确认结果再点
+    「保存数据」才落盘，避免「点一下就把真实读数换成另一份」那种静默覆盖。
+    路径只允许数据目录内部 + .json（dataloc.resolve_rel 拒绝 ../ 穿越）。
+    """
+    with LOCK:
+        cfg = STATE.get('config')
+    d = _browse_dir({'dir': [str(payload.get('dir') or '')]}, cfg)
+    rel = str(payload.get('rel') or '').strip()
+    path = dataloc.resolve_rel(d, rel) if (d and rel) else ''
+    if not path or not os.path.isfile(path):
+        return {'ok': False, 'error': '找不到文件：%s' % rel}
+    if not path.lower().endswith('.json'):
+        return {'ok': False, 'error': '只能载入 .json 数据文件：%s' % rel}
+    try:
+        data = _normalize_data(load_data(path))
+    except (OSError, ValueError) as exc:
+        return {'ok': False, 'error': '读不出数据文件：%s' % exc}
+    with LOCK:
+        STATE['data'] = data
+        STATE['key'] = None          # 让下一次 _analysis 强制重算
+    return {'ok': True, 'name': os.path.basename(path), 'rel': rel,
+            'dir': os.path.abspath(d), 'data': data}
 
 
 
@@ -177,7 +241,9 @@ def _summary(an):
     return {
         'ok': True, 'config': cfg, 'defaults': default_config(),
         'has_saved': bool(load_settings()), 'settings_file': SETTINGS_FILE,
-        'data_file': DATA_FILE, 'data': data,
+        'data_file': DATA_FILE,
+        'data_dir': default_data_dir(str((cfg or {}).get('data_dir') or '')),
+        'data': data,
         'curve': curve, 'rows': an['rows'], 'azeotrope': azeo,
         'sigma_n': an['sigma_n'], 'sigma_parts': an['sigma_parts'],
         'lit_w': an['lit_w'], 'lit_x': an['lit_x'], 'lit_T_K': an['lit_T_K'],
@@ -352,6 +418,17 @@ class Handler(BaseHTTPRequestHandler):
                 with PREVIEW_LOCK:
                     png = _preview(kind, cfg, data, q)
                 return self._send(200, png, 'image/png')
+            if path == '/api/files':
+                return self._json(_files_payload(q))
+            if path == '/api/pickdir':
+                initial = (q.get('initial') or [''])[0] or _browse_dir(q)
+                return self._json({'ok': True,
+                                   'path': filepick.pick_folder(initial)})
+            if path == '/api/pickfile':
+                initial = (q.get('initial') or [''])[0] or _browse_dir(q)
+                exts = [e for e in (q.get('exts') or [''])[0].split(';') if e]
+                return self._json({'ok': True, 'path': filepick.pick_file(
+                    initial, exts or dataloc.DATA_EXTS)})
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:                        # noqa: BLE001
             return self._error(exc)
@@ -382,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
                     save_data(DATA_FILE, data)
                     STATE['data'] = data
                 return self._json({'ok': True, 'data_file': DATA_FILE})
+            if u.path == '/api/load':
+                return self._json(_load_snapshot(self._body()))
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
         except BodyTooLarge as exc:
             return self._json({'ok': False, 'error': str(exc)}, 413)

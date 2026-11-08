@@ -96,7 +96,39 @@ async function scanDir(dir, autoFill) {
     state.rounds = defaultRoundsFromFiles(files.files);
   }
   renderRounds();
+  await loadFileBrowser(dir);
   return files.files;
+}
+
+/* ---------------------------------------------------------------- 文件浏览
+ * 共享层 web/files.js 提供的 PcalFiles：把 /api/files 的清单渲染成可搜索列表。
+ * 这里只做「看和找」：点一行只弹个提示告诉你选的是哪个文件，不改变上面那些
+ * 轮次已经选好的文件（避免静默改掉用户的取点配置与角色）。
+ */
+let fileBrowser = null;
+
+function ensureFileBrowser() {
+  if (fileBrowser) return fileBrowser;
+  const host = $('fileBrowser');
+  if (!host || !window.PcalFiles) return null;
+  fileBrowser = PcalFiles.mount(host, {
+    placeholder: '搜索文件名，如 苯甲酸 / 方糖',
+    exts: ['.csv'],
+    onPick: (rel, info) => {
+      state.browsedFile = rel;
+      toast('已定位：' + rel + '（在「数据轮次」里选它即可）', 5000);
+    },
+  });
+  return fileBrowser;
+}
+
+async function loadFileBrowser(dir) {
+  const picker = ensureFileBrowser();
+  if (!picker) return;
+  try {
+    const j = await picker.load(dir);
+    if (j && j.error) toast('文件清单读取失败：' + j.error, 5000);
+  } catch (e) { /* 浏览面板失败不影响主流程 */ }
 }
 
 /* ---------------------------------------------------------------- 默认值 */

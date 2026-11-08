@@ -11,6 +11,8 @@ const NAME_CN = { water: '水', cyclo: '环己烷' };
 
 let STATE = null;
 let DATA = null;
+let DATA_DIR = '';
+let FILE_PICKER = null;
 
 /* ---------------------------------------------------------------- 小工具 */
 function toast(msg, ms = 2800) {
@@ -70,6 +72,7 @@ function readConfig() {
     if (!el) return;
     cfg[k] = el.value === '' ? null : Number(el.value);
   });
+  cfg.data_dir = DATA_DIR || null;
   return cfg;
 }
 
@@ -189,6 +192,8 @@ function renderState(s) {
   fillConfig(s.config);
   fillData(s.data);
   $('dataFile').textContent = s.data_file || '';
+  DATA_DIR = s.data_dir || DATA_DIR || '';
+  paintDataDir();
   setStatus('数据文件：' + (s.data_file || '—'));
   renderResults(s);
   renderWarnings(s);
@@ -208,12 +213,64 @@ function drawChart() {
   $('chartHint').textContent = hints[kind] || '';
 }
 
+/* ---------------------------------------------------------------- 数据目录
+ * 数据本体在 data/蒸气压数据.json；「数据目录」只用来翻/挑要**导入**的文件
+ * （xlsx/csv/txt）。默认由后端 dataloc.find_data_dir 在运行时推导，换机器
+ * 解压后一定指到一个存在的目录，不会开天窗。
+ * 选定文件后一律走下面现成的 importFile()，不另写一套解析。
+ */
+function paintDataDir() {
+  const el = $('dataDir');
+  if (el) el.textContent = DATA_DIR || '—';
+}
+
+async function fileFromDir(rel) {
+  const r = await api('/api/fileb64?dir=' + encodeURIComponent(DATA_DIR)
+    + '&rel=' + encodeURIComponent(rel));
+  const bin = atob(r.b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], r.name || String(rel).split('/').pop());
+}
+
+async function pickDataDir() {
+  if (!window.PcalFiles) { toast('文件选择组件未加载'); return; }
+  const dir = await PcalFiles.pickFolder(DATA_DIR);
+  if (!dir) return;
+  DATA_DIR = dir;
+  paintDataDir();
+  await saveDefault();                    // 记住这个目录（与「存为默认」同一条路）
+  if (FILE_PICKER) await FILE_PICKER.load(DATA_DIR);
+  toast('数据目录已切换到 ' + dir, 4000);
+}
+
+async function initFiles() {
+  if (!window.PcalFiles) return;
+  try {
+    FILE_PICKER = PcalFiles.mount($('filePick'), {
+      placeholder: '搜索文件名，如 蒸发热 / 2026-10',
+      exts: ['.xlsx', '.xlsm', '.csv', '.txt', '.tsv'],
+      onPick: async (rel) => {
+        busy(true, '从数据目录读取文件…');
+        try { await importFile(await fileFromDir(rel)); }
+        catch (e) { toast('导入失败：' + e.message, 5000); }
+        finally { busy(false); }
+      },
+    });
+    await FILE_PICKER.load(DATA_DIR);
+  } catch (e) {
+    // 选择器坏掉不该拖垮整个页面：原有 <input type=file> 仍然可用
+    toast('文件选择器初始化失败：' + e.message, 5000);
+  }
+}
+
 /* ---------------------------------------------------------------- 动作 */
 async function boot() {
   setStatus('正在初始化…');
   try {
     const s = await api('/api/state');
     renderState(s);
+    await initFiles();
     const q = new URLSearchParams(location.search);
     const home = q.get('home');
     if (home) {
@@ -322,8 +379,7 @@ async function loadSample() {
   finally { busy(false); }
 }
 
-async function importFile() {
-  const f = $('fileInput').files[0];
+async function importFile(f = $('fileInput').files[0]) {
   if (!f) { toast('先选择一个 xlsx/csv 文件'); return; }
   busy(true, '读取文件…');
   try {
@@ -385,7 +441,8 @@ function bindUI() {
   $('btnSaveDefault').onclick = saveDefault;
   $('btnSaveData').onclick = saveData;
   $('btnSample').onclick = loadSample;
-  $('fileInput').onchange = importFile;
+  $('fileInput').onchange = () => importFile();
+  $('btnPickDir').onclick = pickDataDir;
   $('btnPaste').onclick = importPaste;
   $('btnAddWater').onclick = () => addRow('water');
   $('btnAddCyclo').onclick = () => addRow('cyclo');

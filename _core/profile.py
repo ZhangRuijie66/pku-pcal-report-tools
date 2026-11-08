@@ -71,3 +71,24 @@ def merge_saved(saved):
         if isinstance(path, str) and path.strip():
             out['data_dir'] = path.strip()
     return out
+
+
+def personal(*, required=()):
+    """给 ``run.py --test`` 等自检脚本用的封面字段。
+
+    **不要在自检脚本里硬编码姓名/学号**：可移植包会被别人解压，那个人的
+    自检报告就会印出作者的名字。这里从 profile.json 读，读不到就留空，
+    并在 ``missing`` 里告诉调用方缺哪些字段（由调用方决定提示还是忽略）。
+
+    返回 ``(config 片段, 缺失字段列表)``。
+    """
+    prof = load()
+    out = {}
+    missing = []
+    for key in PERSONAL_KEYS:
+        value = prof.get(key)
+        value = '' if value in (None, '') else str(value).strip()
+        out[key] = value
+        if not value and key in required:
+            missing.append(key)
+    return out, missing

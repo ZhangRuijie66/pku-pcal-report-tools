@@ -4,9 +4,42 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 
 from . import dipole
 from .atomicio import atomic_write_json
+
+# 默认数据目录：**运行时推导**，不写死任何一台机器上的绝对路径。
+# 偶极矩的数据是手工录入的 JSON（<工具>/data/偶极矩数据.json），随工具目录走；
+# 课程给的「数据处理2.xlsx」只是**导入来源**，不能拿它当数据目录——
+# 那会把「数据文件存哪儿」从工具目录悄悄挪到课程原始数据目录，
+# 既有用户的 data/偶极矩数据.json 就不再被读到（静默丢数据）。
+_TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+#: 本模块自己的数据目录（手工录入的结构化数据，随工具走）
+DATA_SUBDIR = 'data'
+DATA_FILENAME = '偶极矩数据.json'
+DEFAULT_DATA_DIR = os.path.join(_TOOL_DIR, DATA_SUBDIR)
+
+#: 导入用的候选目录（相对套件根）：课程原始数据处理表常在这里。
+#: 只用于「从文件夹选文件并导入」，不影响数据文件存哪儿。
+IMPORT_DIR_CANDIDATES = (
+    os.path.join('物理化学实验', '物理化学实验', '偶极矩'),
+    '偶极矩',                                                 # 精简布局
+)
+
+
+def _default_data_dir():
+    """默认数据目录：固定 ``<工具>/data``（不存在也没关系，写盘时自动建）。
+
+    刻意**不**把课程原始数据目录纳入候选：那是导入来源，不是数据家的位置。
+    换机器/换版本时这个路径始终跟着工具目录走，绝不写死盘符。
+    """
+    return DEFAULT_DATA_DIR
+
+
+#: 默认数据文件绝对路径（工具目录下 data/偶极矩数据.json）
+DEFAULT_DATA_FILE = os.path.join(DEFAULT_DATA_DIR, DATA_FILENAME)
 
 
 def default_config():
@@ -19,6 +52,8 @@ def default_config():
         'date': '',
         'room_temp': None,
         'pressure': None,
+        # ---- 数据目录（导入 xlsx/csv 时从这里找；换机器后自动推导，不写死盘符）
+        'data_dir': DEFAULT_DATA_DIR,
         # ---- 处理
         'M1': 84.159,                # 环己烷摩尔质量（手册值，视为常数）
         'M2': 74.121,                # 正丁醇摩尔质量（手册值，视为常数）
@@ -34,9 +69,27 @@ def default_config():
 
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
-    'room_temp', 'pressure', 'M1', 'M2', 'lit_mu',
+    'room_temp', 'pressure', 'data_dir', 'M1', 'M2', 'lit_mu',
     'sigma_n', 'sigma_rho2', 'sigma_c_check', 'sigma_T_check', 'P_atom_frac',
 )
+
+
+def data_file_for(cfg, default_file=None):
+    """当前配置对应的数据文件路径。
+
+    偶极矩的数据是**单个 JSON**（不是目录里散落的多份文件），所以约定：
+    ``<data_dir>/偶极矩数据.json``。数据目录换了，数据文件跟着走，
+    避免「界面上换了目录、存盘却还写回工具目录」这种静默错位。
+    """
+    cfg = cfg or {}
+    path = str(cfg.get('data_file') or '').strip()
+    if path:
+        return path
+    data_dir = str(cfg.get('data_dir') or '').strip()
+    if data_dir and os.path.normcase(os.path.abspath(data_dir)) != os.path.normcase(
+            os.path.abspath(DEFAULT_DATA_DIR)):
+        return os.path.join(data_dir, DATA_FILENAME)
+    return default_file or DEFAULT_DATA_FILE
 
 
 def merge_saved(cfg, saved):

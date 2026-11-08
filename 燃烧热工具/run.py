@@ -9,6 +9,22 @@ from __future__ import annotations
 import os
 import sys
 
+
+# GBK 控制台兜底：自检会打印 ⚠/·/Δ/α 这类字符，cp936 编不出来会抛
+# UnicodeEncodeError 把整个 --test 打断（只影响打印，不该中止计算）。
+def _safe_stdout():
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, 'encoding', '') or '').lower()
+        if stream is None or 'utf' in enc:
+            continue
+        try:
+            stream.reconfigure(errors='replace')
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_safe_stdout()
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
@@ -55,6 +71,13 @@ def _csv_files(data_dir):
 
 def self_test():
     """无界面自检：用默认数据目录里的 csv 走完整流程并输出一份报告。"""
+    # 封面字段从个人档案读：可移植包被别人解压后，自检报告不该印出作者的名字。
+    # 没填就到入口页「个人档案」里补，这里留空也能跑通（只在报告里空着）。
+    from pcal import profile as _profile
+    _who, _missing = _profile.personal(required=('student_name', 'student_id'))
+    if _missing:
+        print('提示：个人档案里还没填 %s，自检报告的封面会是空的。'
+              % '、'.join(_missing))
     from pcal import combustion as cb
     from pcal import report as rpt
     from pcal.analysis import Analysis, default_config, default_round
@@ -76,10 +99,10 @@ def self_test():
         return 0
 
     cfg = default_config()
-    cfg['student_name'] = '李晨曦'
-    cfg['student_id'] = '2300012602'
-    cfg['group'] = '20'
-    cfg['group_no'] = '1'
+    cfg["student_name"] = _who["student_name"]
+    cfg["student_id"] = _who["student_id"]
+    cfg["group"] = _who["group"]
+    cfg["group_no"] = _who["group_no"]
     cfg['date'] = '2026/09/16'
 
     datasets = {}

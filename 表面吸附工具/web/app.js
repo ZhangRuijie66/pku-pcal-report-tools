@@ -11,6 +11,8 @@ const PROC_FIELDS = ['conc_axis', 'zero_correction', 'height_mode',
 
 let STATE = null;
 let DATA = null;
+let DATA_DIR = '';
+let FILE_PICKER = null;
 let HMODE = 'both';      // 液柱读数方式：both / left / right
 let HSUM_AUTO = null;    // 后端由现有读数估计的两臂高度之和 / cm
 
@@ -124,6 +126,7 @@ function readConfig() {
   cfg.height_sum = $('height_sum').value === '' ? 0 : Number($('height_sum').value);
   cfg.repeat_n_bubble = repeatN('bubble');
   cfg.repeat_n_plate = repeatN('plate');
+  cfg.data_dir = DATA_DIR || null;
   return cfg;
 }
 function fillData(d) {
@@ -348,6 +351,8 @@ function renderState(s) {
   fillConfig(s.config);
   fillData(s.data);
   $('dataFile').textContent = s.data_file || '';
+  DATA_DIR = s.data_dir || DATA_DIR || '';
+  paintDataDir();
   setStatus('数据文件：' + (s.data_file || '—'));
   renderResults(s);
   renderWarnings(s);
@@ -368,12 +373,61 @@ function drawChart() {
   $('chartHint').textContent = hints[kind] || '';
 }
 
+/* ---------------------------------------------------------------- 数据目录
+ * 数据本体在 data/表面吸附数据.json；「数据目录」只用来翻/挑要**导入**的
+ * CSV/TXT。默认由后端 dataloc.find_data_dir 运行时推导，换机器解压后一定
+ * 指到一个存在的目录，不会开天窗。
+ * 选定文件后一律调现成的 importFile()，不另写一套解析。
+ */
+function paintDataDir() {
+  const el = $('dataDir');
+  if (el) el.textContent = DATA_DIR || '—';
+}
+
+async function fileTextFromDir(rel) {
+  const r = await api('/api/filetext?dir=' + encodeURIComponent(DATA_DIR)
+    + '&rel=' + encodeURIComponent(rel));
+  return { text: r.text || '', name: r.name || String(rel).split('/').pop() };
+}
+
+async function pickDataDir() {
+  if (!window.PcalFiles) { toast('文件选择组件未加载'); return; }
+  const dir = await PcalFiles.pickFolder(DATA_DIR);
+  if (!dir) return;
+  DATA_DIR = dir;
+  paintDataDir();
+  await saveDefault();                    // 记住这个目录（与「存为默认」同一条路）
+  if (FILE_PICKER) await FILE_PICKER.load(DATA_DIR);
+  toast('数据目录已切换到 ' + dir, 4000);
+}
+
+async function initFiles() {
+  if (!window.PcalFiles) return;
+  try {
+    FILE_PICKER = PcalFiles.mount($('filePick'), {
+      placeholder: '搜索文件名，如 表面吸附 / 气泡 / 2026-10',
+      exts: ['.csv', '.txt', '.tsv'],
+      onPick: async (rel) => {
+        busy(true, '从数据目录读取文件…');
+        try { await importFile(await fileTextFromDir(rel)); }
+        catch (e) { toast('导入失败：' + e.message, 5000); }
+        finally { busy(false); }
+      },
+    });
+    await FILE_PICKER.load(DATA_DIR);
+  } catch (e) {
+    // 选择器坏掉不该拖垮整个页面：原有 <input type=file> 仍然可用
+    toast('文件选择器初始化失败：' + e.message, 5000);
+  }
+}
+
 /* ---------------------------------------------------------------- 动作 */
 async function boot() {
   setStatus('正在初始化…');
   try {
     const s = await api('/api/state');
     renderState(s);
+    await initFiles();
     const q = new URLSearchParams(location.search);
     const home = q.get('home');
     if (home) {
@@ -504,8 +558,8 @@ async function loadSample() {
   finally { busy(false); }
 }
 
-async function importFile() {
-  const f = $('fileInput').files[0];
+async function importFile(picked = null) {
+  const f = picked || $('fileInput').files[0];
   if (!f) { toast('先选择一个 CSV/TXT 文件'); return; }
   const kind = $('importKind').value;
   busy(true, '读取文件…');
@@ -623,7 +677,8 @@ function bindUI() {
   $('btnXlsx').onclick = () => exportTable('xlsx');
   $('btnCsv').onclick = () => exportTable('csv');
   $('btnSample').onclick = loadSample;
-  $('fileInput').onchange = importFile;
+  $('fileInput').onchange = () => importFile();
+  $('btnPickDir').onclick = pickDataDir;
   $('btnAddBubble').onclick = () => addRow('bubble');
   $('btnAddPlate').onclick = () => addRow('plate');
   $('chartKind').onchange = drawChart;

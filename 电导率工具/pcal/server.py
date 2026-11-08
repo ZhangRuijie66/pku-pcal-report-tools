@@ -9,7 +9,6 @@ import io
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -28,12 +27,15 @@ OUT_DIR = os.path.join(os.path.dirname(ROOT), '实验报告输出')
 sys.path.insert(0, ROOT)
 
 from pcal import conduct                         # noqa: E402
+from pcal import dataloc                         # noqa: E402
+from pcal import filepick                        # noqa: E402
 from pcal import plotting                        # noqa: E402
 from pcal import report as rpt                   # noqa: E402
 from pcal import profile
 from pcal import workspace
 from pcal.atomicio import atomic_write_json
-from pcal.analysis import (Analysis, PERSIST_KEYS, default_config,  # noqa: E402
+from pcal.analysis import (Analysis, DATA_DIR_CANDIDATES, DATA_FILENAME,  # noqa: E402
+                           PERSIST_KEYS, default_config,
                            default_config_with_saved)
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
@@ -51,38 +53,19 @@ class BodyTooLarge(ValueError):
 
 # ---------------------------------------------------------------- 选择文件夹
 def pick_folder(initial=None):
-    auto = os.environ.get('PCAL_PICK_AUTO')
-    if auto:
-        return os.path.normpath(auto) if os.path.isdir(auto) else ''
-    code = (
-        "import sys, tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "try:\n"
-        "    root.attributes('-topmost', True)\n"
-        "except Exception:\n"
-        "    pass\n"
-        "root.update()\n"
-        "kwargs = dict(parent=root, title='选择数据文件夹（电导率数据.json 所在目录）')\n"
-        "init = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-        "if init:\n"
-        "    kwargs['initialdir'] = init\n"
-        "p = filedialog.askdirectory(**kwargs)\n"
-        "root.destroy()\n"
-        "sys.stdout.write(p or '')\n"
-    )
-    env = dict(os.environ)
-    env['PYTHONIOENCODING'] = 'utf-8'
-    try:
-        out = subprocess.run([sys.executable, '-c', code, initial or ''],
-                             capture_output=True, timeout=900, env=env)
-    except (OSError, subprocess.SubprocessError):
-        return ''
-    txt = out.stdout.decode('utf-8', 'replace').strip()
-    if not txt:
-        return ''
-    return os.path.normpath(txt) if os.path.isdir(txt) else ''
+    """弹「选择文件夹」，返回绝对路径；取消返回 ''。
+
+    实现已收进共享层 ``pcal/filepick.py``（tkinter 子进程，不阻塞服务线程，
+    自动化测试用 ``PCAL_PICK_AUTO`` 接管）。这里只保留同签名入口，
+    免得到处改调用点。
+    """
+    return filepick.pick_folder(initial, title='选择数据文件夹（电导率数据.json 所在目录）')
+
+
+def pick_file(initial=None, exts=None):
+    """弹「选择文件」，返回绝对路径；取消返回 ''。同 :func:`pick_folder`。"""
+    return filepick.pick_file(initial, exts or ('.json',),
+                              title='选择电导率数据文件（json）')
 
 
 # ---------------------------------------------------------------- 设置文件
@@ -182,6 +165,62 @@ def _summary(an):
         'data_dir': cfg.get('data_dir'),
         'template': TEMPLATE,
         'report_name': _report_filename(cfg),
+    }
+
+
+# ---------------------------------------------------------------- 数据文件
+def _files(query):
+    """``GET /api/files``：数据目录里的数据文件清单（相对路径）+ 目录信息。
+
+    电导率的数据是**手记读数**，目录里只有一份 ``电导率数据.json``；但用户常把
+    整学期的实验资料放在同一个文件夹里，所以这里仍然列全（递归）让前端能搜。
+    ``?dir=`` 覆盖当前数据目录（切换目录时前端先探一遍）。
+    """
+    cfg = STATE.get('config') or _config_from()
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not data_dir:
+        data_dir = dataloc.find_data_dir(ROOT, extra=DATA_DIR_CANDIDATES,
+                                         tool_subdirs=('样例数据',))
+    payload = filepick.index_payload(data_dir)
+    # 哪个是本实验真正在读的那份数据文件（前端标出来，免得点到别的 json）
+    payload['data_filename'] = DATA_FILENAME
+    payload['target'] = os.path.join(os.path.abspath(data_dir), DATA_FILENAME)
+    payload['target_rel'] = DATA_FILENAME
+    payload['target_exists'] = os.path.isfile(payload['target'])
+    return payload
+
+
+def _file_info(query):
+    """``GET /api/file/info``：单个文件的只读摘要（大小 / 修改时间 / 是不是当前数据）。
+
+    只返回元信息，**不读内容**——手记读数里的字符串要保留末位 0，
+    展示/编辑一律走 ``/api/state`` 与 ``/api/data``。
+    """
+    rel = (query.get('path') or [''])[0]
+    cfg = STATE.get('config') or _config_from()
+    data_dir = cfg.get('data_dir') or ''
+    # resolve_rel 在 data_dir 为空时会退化成「相对进程 cwd」解析，
+    # 那样 /api/file/info?path=../x 就能探到工具目录外面去。先挡住。
+    if not data_dir:
+        return {'ok': False, 'error': '还没有设置数据目录'}
+    path = rel if os.path.isabs(rel) else dataloc.resolve_rel(data_dir, rel)
+    # 绝对路径也要落在数据目录里：本实验的数据文件位置是固定的
+    # （<data_dir>/电导率数据.json），没有理由让端点读目录外的任意文件。
+    if path and os.path.isabs(rel):
+        root = os.path.normpath(os.path.abspath(data_dir)) + os.sep
+        if not (os.path.normpath(path) + os.sep).startswith(root):
+            path = ''
+    if not path or not os.path.isfile(path):
+        return {'ok': False, 'error': '文件不存在：%s' % (rel or '（空）')}
+    st = os.stat(path)
+    return {
+        'ok': True,
+        'rel': rel,
+        'path': path,
+        'name': os.path.basename(path),
+        'size': st.st_size,
+        'mtime': int(st.st_mtime),
+        'is_target': os.path.basename(path) == DATA_FILENAME,
     }
 
 
@@ -343,6 +382,15 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/pickdir':
                 initial = (q.get('initial') or [''])[0]
                 return self._json({'ok': True, 'path': pick_folder(initial)})
+            if path == '/api/pickfile':
+                initial = (q.get('initial') or [''])[0]
+                exts = [e for e in (q.get('exts') or [''])[0].split(';') if e]
+                return self._json({'ok': True,
+                                   'path': pick_file(initial, exts or None)})
+            if path == '/api/files':
+                return self._json(_files(q))
+            if path == '/api/file/info':
+                return self._json(_file_info(q))
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)

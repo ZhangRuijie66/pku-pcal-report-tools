@@ -448,6 +448,40 @@ async function loadFileList() {
     FILE_AUTO = r.auto || {};
     fillSingleSelect();
   } catch (e) { /* 扫描失败不影响主流程 */ }
+  loadFileBrowser(dir);
+}
+
+/* ---------------------------------------------------------------- 文件浏览
+ * 共享层 web/files.js 提供的 PcalFiles：把 /api/files 的清单渲染成可搜索列表。
+ * 槽位匹配仍是 uv.py 那一套（不推翻），这里只多给一个「找文件」的入口：
+ * 点一行就把相对路径填进「单文件查看」的路径框，方便换新数据时先看一眼。
+ */
+let fileBrowser = null;
+
+function ensureFileBrowser() {
+  if (fileBrowser) return fileBrowser;
+  const host = $('fileBrowser');
+  if (!host || !window.PcalFiles) return null;
+  fileBrowser = PcalFiles.mount(host, {
+    placeholder: '搜索文件名，如 A3 / 氘灯 / 空白',
+    exts: ['.txt'],
+    onPick: (rel) => {
+      const p = $('singlePath');
+      if (!p) return;
+      p.value = rel;
+      toast('已选：' + rel + '，点「查看」画出来', 4000);
+      viewSingle(rel);
+    },
+  });
+  return fileBrowser;
+}
+
+async function loadFileBrowser(dir) {
+  const picker = ensureFileBrowser();
+  if (!picker) return;
+  try {
+    await picker.load(dir);
+  } catch (e) { /* 浏览面板失败不影响主流程 */ }
 }
 
 

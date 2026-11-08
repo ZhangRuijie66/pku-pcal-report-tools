@@ -68,6 +68,9 @@ function readConfig() {
     if (!el) return;
     cfg[k] = el.value === '' ? null : Number(el.value);
   });
+  // 数据目录：后端据此找数据处理表、决定数据文件存哪儿（PERSIST_KEYS 里有它）
+  const dir = $('dataDir');
+  if (dir) cfg.data_dir = dir.value.trim();
   return cfg;
 }
 
@@ -197,10 +200,117 @@ function renderState(s) {
   fillConfig(s.config);
   fillData(s.data);
   $('dataFile').textContent = s.data_file || '';
+  const dir = $('dataDir');
+  if (dir) dir.value = (s.config && s.config.data_dir) || '';
   setStatus('数据文件：' + (s.data_file || '—'));
   renderResults(s);
   renderWarnings(s);
   drawChart();
+  loadFiles((s.config && s.config.data_dir) || '');
+}
+
+/* ---------------------------------------------------------------- 数据文件夹
+ * 课程给的是「数据处理2.xlsx」（偶极矩表格布局）。以前只能靠浏览器上传；
+ * 文件在学期目录里攒了几百个时，从文件夹里直接选要顺手得多——
+ * 解析走得还是 _parse_bytes 那一份，跟上传完全同一套逻辑。
+ */
+let PICKER = null;
+let FILES_DIR = null;
+
+async function loadFiles(dir) {
+  const box = $('filePicker');
+  if (!box) return;
+  if (!dir) {
+    box.innerHTML = '<div class="pcal-files-empty">还没有设置数据文件夹。</div>';
+    $('filesMeta').textContent = '—';
+    return;
+  }
+  if (!window.PcalFiles) {
+    box.innerHTML = '<div class="pcal-files-empty">文件选择组件没加载（/static/files.js）。</div>';
+    return;
+  }
+  try {
+    if (!PICKER) {
+      PICKER = PcalFiles.mount(box, {
+        placeholder: '搜索文件名，如 数据处理 / 偶极矩',
+        exts: ['.xlsx', '.xlsm', '.xls', '.csv', '.txt', '.tsv'],
+        // 点一行：按课程处理表布局解析并填表
+        onPick: (rel) => importFromDir(rel),
+        onPickFile: (abs) => importFromPath(abs),
+      });
+    }
+    if (FILES_DIR === dir && PICKER.files.length) return;   // 目录没变，别重复拉
+    // PICKER.load 内部就是 GET /api/files（见 _core/web_files.js），
+    // 拉回 {dir, files, total}；文件总数显示在标题栏。
+    const j = await PICKER.load(dir);
+    FILES_DIR = dir;
+    $('filesMeta').textContent = (j && j.ok)
+      ? '共 ' + j.total + ' 个文件'
+      : ((j && j.error) || '读取失败');
+  } catch (e) {
+    box.innerHTML = '<div class="pcal-files-empty">读取文件列表失败：' + esc(e.message) + '</div>';
+  }
+}
+
+/** 把服务端解析出来的 rows 合并进当前数据（与浏览器上传同一套字段）。 */
+function applyImportedRows(rows, source) {
+  DATA = DATA || {};
+  if (rows.solutions && rows.solutions.length) {
+    DATA.solutions = rows.solutions.map((x) => ({
+      m1: x.m1, m2: x.m2, rho: x.rho, c_sample: x.c_sample || [],
+    }));
+  }
+  if (rows.cyclo) {
+    DATA.cyclo = Object.assign(DATA.cyclo || {}, rows.cyclo);
+    if (rows.cyclo.rho != null) DATA.cyclo.rho = rows.cyclo.rho;
+  }
+  if (rows.butanol) {
+    DATA.butanol = Object.assign(DATA.butanol || {}, rows.butanol);
+  }
+  fillData(DATA);
+  toast('已从 ' + source + ' 导入（温度、C′空、比重瓶数据保持原值）', 5000);
+}
+
+async function importFromDir(rel) {
+  busy(true, '读取文件…');
+  try {
+    const r = await api('/api/import/read?path=' + encodeURIComponent(rel));
+    await recalc();
+    applyImportedRows(r.rows, r.name || rel);
+  } catch (e) {
+    toast('导入失败：' + e.message, 6000);
+  } finally { busy(false); }
+}
+
+async function importFromPath(abs) {
+  busy(true, '读取文件…');
+  try {
+    const r = await api('/api/import/read?path=' + encodeURIComponent(abs));
+    await recalc();
+    applyImportedRows(r.rows, r.name || abs);
+  } catch (e) {
+    toast('导入失败：' + e.message, 6000);
+  } finally { busy(false); }
+}
+
+async function pickDataDir() {
+  const cur = ($('dataDir') && $('dataDir').value.trim()) || '';
+  busy(true, '请在弹出的窗口里选择数据文件夹…');
+  try {
+    const path = window.PcalFiles ? await PcalFiles.pickFolder(cur)
+                                  : (await api('/api/pickdir?initial=' +
+                                      encodeURIComponent(cur))).path;
+    busy(false);
+    if (!path) { toast('已取消'); return; }
+    $('dataDir').value = path;
+    FILES_DIR = null;
+    PICKER = null;
+    toast('已选择：' + path, 4000);
+    await recalc();
+  } catch (e) {
+    busy(false);
+    toast('打开选择窗口失败：' + e.message, 6000);
+  }
 }
 
 /* ---------------------------------------------------------------- 图表 */
@@ -383,6 +493,7 @@ function bindUI() {
   $('btnSaveData').onclick = saveData;
   $('btnSample').onclick = loadSample;
   $('fileInput').onchange = importFile;
+  $('btnBrowse').onclick = pickDataDir;
   $('btnAddSol').onclick = addRow;
   $('chartKind').onchange = drawChart;
   document.querySelectorAll('table').forEach((tbl) => {

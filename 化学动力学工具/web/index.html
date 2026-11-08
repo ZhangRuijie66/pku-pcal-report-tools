@@ -68,6 +68,16 @@ td input[type=checkbox]{transform:scale(1.05)}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#111827;color:#fff;
   padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.pcal-files-bar{display:flex;gap:6px;align-items:center}
+.pcal-files-search{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:7px;font:inherit;background:#fff}
+.pcal-files-btn{padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:7px;font-size:12px;cursor:pointer;white-space:nowrap}
+.pcal-files-meta{color:var(--sub);font-size:12px;margin:4px 0}
+.pcal-files-list{max-height:168px;overflow:auto;border:1px solid var(--line);border-radius:7px;background:#fff}
+.pcal-files-row{display:flex;gap:6px;width:100%;padding:3px 7px;border:0;border-bottom:1px solid #f1f3f5;background:#fff;font:inherit;font-size:12.5px;text-align:left;cursor:pointer}
+.pcal-files-row:hover{background:#f5f8ff}
+.pcal-files-row.on{background:#eaf1ff}
+.pcal-files-dir{color:var(--sub);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcal-files-empty{padding:8px;color:var(--sub);font-size:12.5px}
 .foot{color:var(--sub);font-size:12px;text-align:center;padding:0 0 18px}
 @media (max-width:1200px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
 </style>
@@ -94,6 +104,19 @@ td input[type=checkbox]{transform:scale(1.05)}
       </div>
       <p class="hint">动力学数据可以直接导入 Polariputer 动态测量保存的 xlsx（列 time / angle），
         也可以在每个分组里点「导入」或直接粘贴两列 t、α。数据保存在 <code id="dataFile">—</code>。</p>
+      <div class="field"><label>数据目录（从文件夹挑文件导入，可搜索）</label>
+        <div class="btnrow" style="margin:0 0 6px">
+          <button class="btn mini" id="btnPickDir">选择文件夹…</button>
+          <span class="hint" style="margin:0"><code id="dataDir">—</code></span>
+        </div>
+        <div class="grid2" style="margin:0 0 6px">
+          <div class="field" style="margin:0"><label>导入到</label>
+            <select id="fileTarget"></select>
+          </div>
+        </div>
+        <div id="filePick"></div>
+        <p class="hint" style="margin:6px 0 0">选定文件后走与「导入」按钮完全相同的解析路径。</p>
+      </div>
     </section>
 
     <section class="card">
@@ -191,6 +214,7 @@ td input[type=checkbox]{transform:scale(1.05)}
 <div class="toast" id="toast"></div>
 <input type="file" id="calFile" accept=".xlsx,.csv,.txt,.tsv" style="display:none">
 <input type="file" id="groupFile" accept=".xlsx,.csv,.txt,.tsv" style="display:none">
+<script src="/static/files.js"></script>
 <script src="/static/draft.js"></script>
 <script src="/static/app.js"></script>
 </body>

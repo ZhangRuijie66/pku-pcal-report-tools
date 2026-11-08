@@ -27,6 +27,9 @@ def default_config():
         'lit_dh_cyclo': vapor.DEFAULT_LIT['cyclo']['dh'],
         'trouton': vapor.TROUTON,
         'shift_check': 1.0,          # 水的「整体温度偏高 Δt ℃」复算，0 = 关
+        # 浏览/导入文件的文件夹（不是数据本身：数据在 data/蒸气压数据.json）。
+        # None = 交给 server.default_data_dir() 运行时推导，不写死盘符。
+        'data_dir': None,
         'report_title': '液体饱和蒸气压的测定',
     }
 
@@ -35,7 +38,7 @@ PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
     'room_temp', 'pressure', 'p1',
     'lit_tb_water', 'lit_dh_water', 'lit_tb_cyclo', 'lit_dh_cyclo',
-    'trouton', 'shift_check',
+    'trouton', 'shift_check', 'data_dir',
 )
 
 

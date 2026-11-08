@@ -16,6 +16,22 @@ from __future__ import annotations
 import os
 import sys
 
+
+# GBK 控制台兜底：自检会打印 ⚠/·/Δ/α 这类字符，cp936 编不出来会抛
+# UnicodeEncodeError 把整个 --test 打断（只影响打印，不该中止计算）。
+def _safe_stdout():
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, 'encoding', '') or '').lower()
+        if stream is None or 'utf' in enc:
+            continue
+        try:
+            stream.reconfigure(errors='replace')
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_safe_stdout()
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 

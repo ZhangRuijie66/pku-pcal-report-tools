@@ -80,6 +80,33 @@ details.note summary{cursor:pointer;font-weight:600;color:var(--ink)}
 .toast{position:fixed;right:18px;bottom:18px;background:#1f2328;color:#fff;padding:10px 16px;
   border-radius:9px;opacity:0;transform:translateY(8px);transition:.25s;z-index:60;max-width:62ch}
 .toast.on{opacity:1;transform:none}
+
+/* ---- 首屏骨架屏 ---------------------------------------------------------
+   入口页首次 load() 前是一段空白：/api/modules 虽快（~20 ms），但浏览器要先
+   建好连接、等 fetch 回来才渲染，加上冷启动时服务本身刚起，用户会看到一瞬
+   白屏。骨架屏让这一刻有「正在加载」的形，而不是空白。 */
+.skel{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);padding:18px;display:flex;flex-direction:column;gap:10px}
+.sk{background:linear-gradient(90deg,#eef1f5 25%,#f7f9fb 37%,#eef1f5 63%);
+  background-size:400% 100%;animation:skShine 1.4s ease-in-out infinite;border-radius:7px}
+@keyframes skShine{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.sk.t{height:17px;width:58%}
+.sk.d{height:11px;width:92%}
+.sk.d2{height:11px;width:74%}
+.sk.g{height:20px;width:44%;border-radius:20px;margin-top:6px}
+.sk.b{height:32px;width:132px;border-radius:9px;margin-top:auto}
+@media (prefers-reduced-motion:reduce){ .sk{animation:none} }
+
+/* ---- 卡片「启动中」-----------------------------------------------------
+   点「启动这个模块」后，模块进程要 1.2~4.7 s 才通过健康检查。这期间卡片
+   必须自己说清楚在干什么，否则用户会重复点击。 */
+.card.busy{border-color:#bcd9f2;box-shadow:0 0 0 3px rgba(31,119,180,.10)}
+.card.busy .foot::before{
+  content:"";width:14px;height:14px;border-radius:50%;flex:0 0 auto;
+  border:2px solid #d6e6f5;border-top-color:var(--accent);
+  animation:cardSpin .8s linear infinite}
+@keyframes cardSpin{to{transform:rotate(360deg)}}
+.foot .elapsed{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -229,15 +256,23 @@ function card(m) {
     </div>`;
   }
   const live = m.running;
+  const isBusy = !!busy[m.key];
   const dot = live ? 'on' : (m.ok === false && m.error ? 'err' : 'off');
   const badge = live ? '<span class="badge ok">运行中</span>' : '';
-  const link = live
-    ? `<a class="btn primary" href="${esc(m.url)}" target="_blank" rel="noopener">进入实验界面 →</a>
+  let link;
+  if (live) {
+    link = `<a class="btn primary" href="${esc(m.url)}" target="_blank" rel="noopener">进入实验界面 →</a>
        <button class="btn" data-stop="${esc(m.key)}">停止</button>
-       <span class="url">${esc(m.raw_url)}</span>`
-    : `<button class="btn primary" data-start="${esc(m.key)}">启动这个模块</button>
+       <span class="url">${esc(m.raw_url)}</span>`;
+  } else if (isBusy) {
+    // 正在启动：这一步要 1.2~4.7 s，必须让用户看见进度，否则会重复点击
+    link = `<button class="btn primary" disabled>正在启动…</button>
+       <span class="elapsed" data-elapsed="${esc(m.key)}">0.0 s</span>`;
+  } else {
+    link = `<button class="btn primary" data-start="${esc(m.key)}">启动这个模块</button>
        ${m.error ? `<span class="status" style="color:#b45309">${esc(m.error)}</span>` : ''}`;
-  return `<div class="card ${live ? 'live' : ''}">
+  }
+  return `<div class="card ${live ? 'live' : ''} ${isBusy ? 'busy' : ''}">
     ${badge}
     <h2><span class="dot ${dot}"></span>${esc(m.title)}</h2>
     <p class="desc">${esc(m.desc)}</p>
@@ -275,8 +310,42 @@ async function load() {
   if (!j.ok) return toast(j.error || '读取失败');
   render(j);
 }
+
+/* 首屏骨架：在第一次 /api/modules 回来之前先占位，避免一瞬白屏。
+   卡片数量未知，先摆 6 张（和常见屏幕一屏差不多），拿到数据后整体替换。 */
+function skeleton(n) {
+  const one = `<div class="skel">
+      <div class="sk t"></div>
+      <div class="sk d"></div>
+      <div class="sk d2"></div>
+      <div class="sk g"></div>
+      <div class="sk b"></div>
+    </div>`;
+  return new Array(n || 6).fill(one).join('');
+}
+
+/* 记录每个模块「启动中」的起始时间，用于在卡片上跑秒数。 */
+const busy = {};
+let busyTimer = null;
+
+function startBusyTicker() {
+  if (busyTimer) return;
+  busyTimer = setInterval(() => {
+    const keys = Object.keys(busy);
+    if (!keys.length) { clearInterval(busyTimer); busyTimer = null; return; }
+    keys.forEach((k) => {
+      const el = document.querySelector('[data-elapsed="' + k + '"]');
+      if (el) el.textContent = ((Date.now() - busy[k]) / 1000).toFixed(1) + ' s';
+    });
+  }, 200);
+}
 async function start(key, force, openWhenReady) {
-  const win = openWhenReady ? window.open('', '_blank') : null;
+  // 打开一个过渡页而不是空窗口：模块要 1.2~4.7 s 才起来，
+  // 这段时间白屏会让人以为点坏了。过渡页里自己转圈并显示步骤。
+  const win = openWhenReady ? window.open('/static/boot.html', '_blank') : null;
+  busy[key] = Date.now();
+  startBusyTicker();
+  await load();
   $('status').textContent = '正在启动…';
   let j = await api('/api/start?key=' + encodeURIComponent(key) + (force ? '&force=1' : ''));
   // starting=true 表示进程活着但还没通过健康检查（并发点两下会走到这里），
@@ -290,6 +359,7 @@ async function start(key, force, openWhenReady) {
       j = await api('/api/start?key=' + encodeURIComponent(key));
     }
   }
+  delete busy[key];
   if (!j.ok) {
     if (win) win.close();
     toast('启动失败：' + (j.error || ''), 6000);
@@ -636,6 +706,8 @@ $('btnStop').addEventListener('click', async () => {
   $('status').textContent = '已全部停止，这个标签页可以关掉了。';
   toast('服务已停止', 8000);
 });
+// 先把骨架屏摆上，再去请求：这样从页面可见到卡片出现之间不会是一整片空白。
+$('grid').innerHTML = skeleton(6);
 load();
 setInterval(() => { if (!document.hidden) load(); }, 5000);
 </script>

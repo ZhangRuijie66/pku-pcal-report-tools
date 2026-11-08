@@ -23,8 +23,8 @@ from __future__ import annotations
 import re
 
 APP_NAME = '物化实验报告工具'
-APP_VERSION = '1.0.3'
-RELEASE_DATE = '2026-11-08'
+APP_VERSION = '1.1.0'
+RELEASE_DATE = '2026-11-09'
 
 # 更新源（用户 2026-11-06 确认：认 git tag，不看 main 的最新提交）
 REPO_SLUG = 'ZhangRuijie66/pku-pcal-report-tools'

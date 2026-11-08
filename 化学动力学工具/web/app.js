@@ -10,6 +10,8 @@ let STATE = null;
 let DATA = null;
 let CURRENT_ORDER = '4M';
 let PENDING_GROUP = -1;
+let DATA_DIR = '';
+let FILE_PICKER = null;
 
 /* ---------------------------------------------------------------- 小工具 */
 function toast(msg, ms = 2800) {
@@ -71,6 +73,7 @@ function readConfig() {
   });
   cfg.alpha_inf_mode = $('alpha_inf_mode').value;
   cfg.order_group = $('order_group').value || CURRENT_ORDER;
+  cfg.data_dir = DATA_DIR || null;
   return cfg;
 }
 
@@ -275,6 +278,9 @@ function renderState(s) {
   fillConfig(s.config);
   fillData(s.data);
   $('dataFile').textContent = s.data_file || '';
+  DATA_DIR = s.data_dir || DATA_DIR || '';
+  paintDataDir();
+  refreshFileTargets();
   setStatus('数据文件：' + (s.data_file || '—'));
   renderResults(s);
   renderWarnings(s);
@@ -306,6 +312,7 @@ async function boot() {
   try {
     const s = await api('/api/state');
     renderState(s);
+    await initFiles();
     const q = new URLSearchParams(location.search);
     const home = q.get('home');
     if (home) {
@@ -468,6 +475,75 @@ function deleteCal(i) {
   renderCal();
 }
 
+/* ---------------------------------------------------------------- 数据目录
+ * 数据本体在 data/化学动力学数据.json；「数据目录」只用来翻/挑要**导入**的
+ * xlsx/csv（Polariputer 导出）。默认由后端 dataloc.find_data_dir 运行时推导，
+ * 换机器解压后一定指到一个存在的目录，不会开天窗。
+ * 选定文件后一律调现成的 importFile()，不另写一套解析。
+ */
+function paintDataDir() {
+  const el = $('dataDir');
+  if (el) el.textContent = DATA_DIR || '—';
+}
+
+/* 「导入到」下拉：标定表 + 每个动力学分组，跟着分组增删刷新 */
+function refreshFileTargets() {
+  const sel = $('fileTarget');
+  if (!sel) return;
+  const keep = sel.value;
+  const labels = (STATE && STATE.group_labels) || [];
+  let html = '<option value="-1">旋光度–浓度标定表</option>';
+  labels.forEach((lab, i) => {
+    html += '<option value="' + i + '">动力学分组 ' + esc(lab) + '</option>';
+  });
+  sel.innerHTML = html;
+  if (keep !== '' && Array.prototype.some.call(sel.options,
+    (o) => o.value === keep)) sel.value = keep;
+}
+
+async function fileFromDir(rel) {
+  const r = await api('/api/fileb64?dir=' + encodeURIComponent(DATA_DIR)
+    + '&rel=' + encodeURIComponent(rel));
+  const bin = atob(r.b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], r.name || String(rel).split('/').pop());
+}
+
+async function pickDataDir() {
+  if (!window.PcalFiles) { toast('文件选择组件未加载'); return; }
+  const dir = await PcalFiles.pickFolder(DATA_DIR);
+  if (!dir) return;
+  DATA_DIR = dir;
+  paintDataDir();
+  await saveDefault();                    // 记住这个目录（与「存为默认」同一条路）
+  if (FILE_PICKER) await FILE_PICKER.load(DATA_DIR);
+  toast('数据目录已切换到 ' + dir, 4000);
+}
+
+async function initFiles() {
+  if (!window.PcalFiles) return;
+  refreshFileTargets();
+  try {
+    FILE_PICKER = PcalFiles.mount($('filePick'), {
+      placeholder: '搜索文件名，如 4M / 蔗糖 / 2026-10',
+      exts: ['.xlsx', '.xlsm', '.csv', '.txt', '.tsv'],
+      onPick: async (rel) => {
+        const target = Number($('fileTarget').value);
+        const kind = target < 0 ? 'calibration' : 'group';
+        busy(true, '从数据目录读取文件…');
+        try { await importFile(kind, await fileFromDir(rel), target); }
+        catch (e) { toast('导入失败：' + e.message, 5000); }
+        finally { busy(false); }
+      },
+    });
+    await FILE_PICKER.load(DATA_DIR);
+  } catch (e) {
+    // 选择器坏掉不该拖垮整个页面：原有 <input type=file> 仍然可用
+    toast('文件选择器初始化失败：' + e.message, 5000);
+  }
+}
+
 /* ---------------------------------------------------------------- 绑定 */
 function bindUI() {
   $('btnCalc').onclick = recalc;
@@ -477,6 +553,7 @@ function bindUI() {
   $('btnSample').onclick = loadSample;
   $('btnAddCal').onclick = addCal;
   $('btnAddGroup').onclick = addGroup;
+  $('btnPickDir').onclick = pickDataDir;
   $('btnImportCal').onclick = () => $('calFile').click();
   $('calFile').onchange = async () => {
     const f = $('calFile').files[0];

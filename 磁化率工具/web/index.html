@@ -63,6 +63,29 @@ th{background:#f7f8fa;color:var(--sub);font-weight:600}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#111827;color:#fff;
   padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 共享文件选择组件（_core/web_files.js → /static/files.js）的样式 */
+.filebox{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.filebox-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  font-size:12px;color:var(--sub);margin-bottom:6px}
+.pcal-files-bar{display:flex;gap:6px}
+.pcal-files-search{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);
+  border-radius:7px;font:inherit;background:#fff;color:var(--text)}
+.pcal-files-search:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)}
+.pcal-files-btn{padding:6px 10px;border:1px solid var(--line);background:#fff;
+  border-radius:7px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.pcal-files-btn:hover{border-color:#c9d1da;background:#fafbfc}
+.pcal-files-meta{font-size:12px;color:var(--sub);margin:5px 0 3px}
+.pcal-files-list{max-height:200px;overflow:auto;border:1px solid var(--line);
+  border-radius:7px;background:#fff}
+.pcal-files-row{display:flex;align-items:baseline;gap:8px;width:100%;padding:4px 8px;
+  border:0;border-bottom:1px solid #f1f3f5;background:none;text-align:left;
+  font:inherit;font-size:12.5px;cursor:pointer;color:var(--text)}
+.pcal-files-row:last-child{border-bottom:0}
+.pcal-files-row:hover{background:#f7f9fc}
+.pcal-files-row.on{background:#eef4ff}
+.pcal-files-name{word-break:break-all}
+.pcal-files-dir{color:var(--sub);font-size:11.5px;margin-left:auto;white-space:nowrap}
+.pcal-files-empty{padding:10px;color:var(--sub);font-size:12.5px;text-align:center}
 @media (max-width:1150px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
 </style>
 </head>
@@ -85,9 +108,24 @@ th{background:#f7f8fa;color:var(--sub);font-weight:600}
         <button class="btn" id="btnSample">载入示例数据</button>
         <button class="btn" id="btnSaveData">保存数据</button>
       </div>
-      <div class="field">
+      <div class="field" style="margin-top:8px">
         <label>导入 JSON 数据</label>
         <input type="file" id="fileInput" accept=".json" style="padding:4px 0">
+      </div>
+      <div class="field">
+        <label>数据文件夹（在这里找磁化率数据.json，不用从浏览器上传）</label>
+        <input type="text" id="dataDir" placeholder="点「选择文件夹…」或直接粘贴路径">
+        <div class="btnrow">
+          <button class="btn" id="btnBrowse">选择文件夹…</button>
+        </div>
+      </div>
+      <div class="filebox">
+        <div class="filebox-head">
+          <span>这个文件夹里的数据文件</span>
+          <span class="sub" id="filesMeta">—</span>
+        </div>
+        <div id="filePicker"></div>
+        <p class="hint">点 <code>磁化率数据.json</code> 即载入它。</p>
       </div>
       <p class="hint">数据保存在 <code id="dataFile">—</code>，可随工具一起拷走。
         JSON 结构：<code>temperature_C</code> + <code>tube</code> /
@@ -144,6 +182,7 @@ th{background:#f7f8fa;color:var(--sub);font-weight:600}
 <div class="overlay" id="overlay"><div class="box"><div class="spin"></div><span id="overlayText">处理中…</span></div></div>
 
 <script src="/static/draft.js"></script>
+<script src="/static/files.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -62,6 +62,16 @@ td input[type=number]:focus{outline:2px solid rgba(31,111,235,.16);border-color:
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#111827;color:#fff;
   padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.pcal-files-bar{display:flex;gap:6px;align-items:center}
+.pcal-files-search{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:7px;font:inherit;background:#fff}
+.pcal-files-btn{padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:7px;font-size:12px;cursor:pointer;white-space:nowrap}
+.pcal-files-meta{color:var(--sub);font-size:12px;margin:4px 0}
+.pcal-files-list{max-height:168px;overflow:auto;border:1px solid var(--line);border-radius:7px;background:#fff}
+.pcal-files-row{display:flex;gap:6px;width:100%;padding:3px 7px;border:0;border-bottom:1px solid #f1f3f5;background:#fff;font:inherit;font-size:12.5px;text-align:left;cursor:pointer}
+.pcal-files-row:hover{background:#f5f8ff}
+.pcal-files-row.on{background:#eaf1ff}
+.pcal-files-dir{color:var(--sub);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcal-files-empty{padding:8px;color:var(--sub);font-size:12.5px}
 .foot{color:var(--sub);font-size:12px;text-align:center;padding:0 0 18px}
 @media (max-width:1150px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
 </style>
@@ -101,6 +111,13 @@ td input[type=number]:focus{outline:2px solid rgba(31,111,235,.16);border-color:
           border:1px solid var(--line);border-radius:7px" placeholder="50.05, 81.93"></textarea>
       </div>
       <div class="btnrow"><button class="btn" id="btnPaste">导入粘贴文本</button></div>
+      <div class="field"><label>数据目录（从这里挑要导入的文件，可搜索）</label>
+        <div class="btnrow" style="margin:0 0 6px">
+          <button class="btn mini" id="btnPickDir">选择文件夹…</button>
+          <span class="hint" style="margin:0"><code id="dataDir">—</code></span>
+        </div>
+        <div id="filePick"></div>
+      </div>
       <p class="hint">与每支液体最高压强相差 ≤1.5 kPa 的行会自动识别为「大气压沸点」，
         不进入变压系列。数据保存在 <code id="dataFile">—</code>。</p>
     </section>
@@ -191,6 +208,7 @@ td input[type=number]:focus{outline:2px solid rgba(31,111,235,.16);border-color:
 <div class="foot">全部计算在本机完成，不联网、不上传数据。报告输出到与报告同名的文件夹，连图一起拷走即可。</div>
 <div class="overlay" id="overlay"><div class="box"><div class="spin"></div><div id="overlayText">处理中…</div></div></div>
 <div class="toast" id="toast"></div>
+<script src="/static/files.js"></script>
 <script src="/static/draft.js"></script>
 <script src="/static/app.js"></script>
 </body>

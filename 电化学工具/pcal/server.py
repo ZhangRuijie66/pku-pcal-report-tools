@@ -9,7 +9,6 @@ import io
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -28,13 +27,16 @@ OUT_DIR = os.path.join(os.path.dirname(ROOT), '实验报告输出')
 sys.path.insert(0, ROOT)
 
 from pcal import echem                           # noqa: E402
+from pcal import dataloc                         # noqa: E402
+from pcal import filepick                        # noqa: E402
 from pcal import plotting                        # noqa: E402
 from pcal import report as rpt                   # noqa: E402
 from pcal import profile
 from pcal import workspace
 from pcal.atomicio import atomic_write_json
-from pcal.analysis import (Analysis, PERSIST_KEYS, default_config,  # noqa: E402
-                           default_config_with_saved)
+from pcal.analysis import (Analysis, DATA_DIR_CANDIDATES, FILE_SLOTS,  # noqa: E402
+                           PERSIST_KEYS, default_config,
+                           default_config_with_saved, resolve_slots)
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 STATE = {'analysis': None, 'config': None, 'key': None}
@@ -53,41 +55,16 @@ class BodyTooLarge(ValueError):
 def pick_folder(initial=None):
     """弹出系统「选择文件夹」窗口，返回绝对路径；取消时返回 ''。
 
-    窗口由独立的子进程（tkinter）打开，避免阻塞服务进程；
-    设置环境变量 PCAL_PICK_AUTO 可以直接返回指定目录（自动化测试用）。
+    实现已收进共享层 ``pcal/filepick.py``（tkinter 子进程，不阻塞服务线程，
+    自动化测试用 ``PCAL_PICK_AUTO`` 接管）。这里只保留同签名入口。
     """
-    auto = os.environ.get('PCAL_PICK_AUTO')
-    if auto:
-        return os.path.normpath(auto) if os.path.isdir(auto) else ''
-    code = (
-        "import sys, tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "try:\n"
-        "    root.attributes('-topmost', True)\n"
-        "except Exception:\n"
-        "    pass\n"
-        "root.update()\n"
-        "kwargs = dict(parent=root, title='选择数据文件夹（CHI 导出的 txt 所在目录）')\n"
-        "init = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-        "if init:\n"
-        "    kwargs['initialdir'] = init\n"
-        "p = filedialog.askdirectory(**kwargs)\n"
-        "root.destroy()\n"
-        "sys.stdout.write(p or '')\n"
-    )
-    env = dict(os.environ)
-    env['PYTHONIOENCODING'] = 'utf-8'
-    try:
-        out = subprocess.run([sys.executable, '-c', code, initial or ''],
-                             capture_output=True, timeout=900, env=env)
-    except (OSError, subprocess.SubprocessError):
-        return ''
-    txt = out.stdout.decode('utf-8', 'replace').strip()
-    if not txt:
-        return ''
-    return os.path.normpath(txt) if os.path.isdir(txt) else ''
+    return filepick.pick_folder(initial, title='选择数据文件夹（CHI 导出的 txt 所在目录）')
+
+
+def pick_file(initial=None, exts=None):
+    """弹出系统「选择文件」窗口，返回绝对路径；取消时返回 ''。"""
+    return filepick.pick_file(initial, exts or ('.txt',),
+                              title='选择 CHI 导出的 CV 数据文件（txt）')
 
 
 # ---------------------------------------------------------------- 设置文件
@@ -180,7 +157,127 @@ def _summary(an):
         'report_name': _report_filename(cfg),
         'files_found': sorted(an.files.keys()),
         'txt_files': echem.scan_directory(cfg.get('data_dir')),
+        # 槽位解析结果（含自动匹配的匹配度）：界面据此标「自动 NN%」
+        'file_slots': _slot_payload(an),
     }
+
+
+def _slot_payload(an):
+    """把槽位解析结果转成前端要的形状（列表，顺序与 FILE_SLOTS 一致）。"""
+    detail = getattr(an, 'slots', None) or {}
+    out = []
+    for key, label, why in FILE_SLOTS:
+        entry = dict(detail.get(key) or {})
+        out.append({
+            'key': key,
+            'label': label,
+            'why': why,
+            'requested': entry.get('requested') or '',
+            'default': entry.get('default') or '',
+            'rel': entry.get('rel') or '',
+            'score': entry.get('score'),
+            'status': entry.get('status') or 'missing',
+            'reason': entry.get('why') or '',
+            'suggestions': entry.get('suggestions') or [],
+            'found': entry.get('status') in ('default', 'manual', 'fuzzy'),
+        })
+    return out
+
+
+# ---------------------------------------------------------------- 数据文件
+def _data_dir(query=None):
+    """当前要用的数据目录：``?dir=`` 覆盖 > 已算过的 cfg > 默认推导。
+
+    优先级与 ``dataloc.find_data_dir`` 一致（记住的目录存在就沿用），
+    但这里不允许返回空串——空串会让 ``list_data_files`` 直接返回 []。
+    """
+    query = query or {}
+    cfg = STATE.get('config') or _config_from()
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not data_dir:
+        data_dir = dataloc.find_data_dir(ROOT, extra=DATA_DIR_CANDIDATES,
+                                         tool_subdirs=('样例数据',))
+    return data_dir
+
+
+def _files(query):
+    """``GET /api/files``：数据目录里的数据文件清单 + 每个槽位的候选与匹配度。
+
+    这是电化学「数据文件映射」升级的核心：CHI 工作站导出的文件名每年不同，
+    原来的下拉框只能列目录里已有的文件、靠用户肉眼认。现在每个槽位都给出
+
+    * ``status``：``default``（用户没改过，且文件在）/ ``manual``（用户指定）/
+      ``fuzzy``（原文件名不在，按模糊匹配自动采用）/ ``ambiguous`` /
+      ``missing``；
+    * ``score``：匹配度 0~1（界面显示成「自动 NN%」）；
+    * ``suggestions``：≥0.45 的候选，按分数降序，可一键采用。
+
+    ``?dir=`` 覆盖数据目录；``?slot=`` 只算某个槽位（刷新单个下拉框时用）。
+    """
+    data_dir = _data_dir(query)
+    if not os.path.isdir(data_dir):
+        return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'files': []}
+    files = dataloc.list_data_files(data_dir, exts=('.txt',))
+    cfg = STATE.get('config') or _config_from()
+    detail = resolve_slots(data_dir, cfg, files)
+    want = (query.get('slot') or [''])[0]
+    slots = []
+    for key, label, why in FILE_SLOTS:
+        if want and key != want:
+            continue
+        entry = dict(detail.get(key) or {})
+        slots.append({
+            'key': key,
+            'label': label,
+            'why': why,
+            'requested': entry.get('requested') or '',
+            'default': entry.get('default') or '',
+            'rel': entry.get('rel') or '',
+            'score': entry.get('score'),
+            'status': entry.get('status') or 'missing',
+            'reason': entry.get('why') or '',
+            'suggestions': entry.get('suggestions') or [],
+        })
+    payload = filepick.index_payload(data_dir, files)
+    payload.update({'slots': slots,
+                    'accept': dataloc.FUZZY_ACCEPT,
+                    'suggest': dataloc.FUZZY_SUGGEST})
+    return payload
+
+
+def _auto_map(query):
+    """``POST /api/files/auto``：把高置信度（≥0.80）的自动匹配写进映射并保存。
+
+    只写**分数够**的槽位；分数不够的一个都不动，把候选回给前端让用户自己挑。
+    这样「一键自动匹配」永远不会把一份错的文件悄悄塞进报告。
+    """
+    data_dir = _data_dir(query)
+    if not os.path.isdir(data_dir):
+        return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'map': {}}
+    files = dataloc.list_data_files(data_dir, exts=('.txt',))
+    cfg = _config_from()
+    detail = resolve_slots(data_dir, cfg, files)
+    out, low = {}, []
+    for key, label, _why in FILE_SLOTS:
+        entry = dict(detail.get(key) or {})
+        if entry.get('status') == 'fuzzy':
+            out[key] = entry['rel']
+        elif entry.get('status') in ('ambiguous', 'missing'):
+            low.append({'key': key, 'label': label,
+                        'requested': entry.get('requested') or '',
+                        'score': entry.get('score'),
+                        'reason': entry.get('why') or '',
+                        'suggestions': entry.get('suggestions') or []})
+    if out:
+        # 沿用原有持久化机制（settings.json + profile.json 合并），不另开一套
+        merged = _config_from({'config': out})
+        save_settings(merged)
+        an = _analysis(merged, force=True)
+        return {'ok': True, 'data_dir': data_dir, 'map': out, 'unresolved': low,
+                'saved': True, 'state': _summary(an)}
+    return {'ok': True, 'data_dir': data_dir, 'map': {}, 'unresolved': low,
+            'saved': False}
+
 
 
 # ---------------------------------------------------------------- 预览图
@@ -351,6 +448,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/pickdir':
                 initial = (q.get('initial') or [''])[0]
                 return self._json({'ok': True, 'path': pick_folder(initial)})
+            if path == '/api/pickfile':
+                initial = (q.get('initial') or [''])[0]
+                exts = [e for e in (q.get('exts') or [''])[0].split(';') if e]
+                return self._json({'ok': True,
+                                   'path': pick_file(initial, exts or None)})
+            if path == '/api/files':
+                return self._json(_files(q))
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)
@@ -365,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/export':
                 cfg = _config_from(self._body())
                 return self._json(_export(cfg))
+            if u.path == '/api/files/auto':
+                return self._json(_auto_map(urllib.parse.parse_qs(u.query)))
             if u.path == '/api/settings':
                 cfg = _config_from(self._body())
                 data = save_settings(cfg)
@@ -417,17 +523,37 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- 扫描数据目录
 def _scan(data_dir):
+    """``GET /api/scan?dir=``：「扫描」按钮用，报数据齐不齐。
+
+    与 ``Analysis.run()`` 走**同一套**槽位解析（``resolve_slots``），
+    否则会出现「扫描说缺少 N2_1.txt，但计算其实已经自动匹配上了」的自相矛盾。
+    ``dir`` 省略时回落到当前数据目录（与 /api/files 一致）。
+    """
+    if not data_dir:
+        data_dir = _data_dir()
     if not data_dir or not os.path.isdir(data_dir):
         return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'files': []}
     files = echem.scan_directory(data_dir)
-    need = [default_config()['file_' + k] for k in
-            ('n2_blank', 'n2_02', 'n2_05', 'o2_fast', 'o2_slow', 'o2_still',
-             'meoh')]
-    missing = [n for n in need
-               if echem.resolve_file(data_dir, n) is None]
+    cfg = STATE.get('config') or _config_from()
+    detail = resolve_slots(data_dir, cfg, dataloc.list_data_files(
+        data_dir, exts=('.txt',)))
+    need = [v['key'] for v in
+            (detail.get('file_' + k) or {} for k in
+             ('n2_blank', 'n2_02', 'n2_05', 'o2_fast', 'o2_slow', 'o2_still',
+              'meoh'))]
+    missing, fuzzy = [], []
+    for key in need:
+        entry = detail.get(key) or {}
+        status = entry.get('status')
+        if status == 'fuzzy':
+            fuzzy.append({'key': key, 'requested': entry.get('requested'),
+                          'rel': entry.get('rel'), 'score': entry.get('score')})
+        elif status not in ('default', 'manual'):
+            missing.append(entry.get('requested') or key)
     return {'ok': True, 'data_dir': data_dir, 'count': len(files),
             'files': files[:200],
             'missing': missing, 'expected': len(need),
+            'fuzzy': fuzzy,
             'ready': not missing}
 
 

@@ -26,6 +26,7 @@ sys.path.insert(0, ROOT)
 from pcal import adsorption, plotting                      # noqa: E402
 from pcal import report as rpt                             # noqa: E402
 from pcal import exportdata
+from pcal import dataloc, filepick
 from pcal import profile
 from pcal import workspace
 from pcal.atomicio import atomic_write_json
@@ -42,6 +43,69 @@ MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不�
 
 class BodyTooLarge(ValueError):
     """Content-Length 非法或超过 MAX_BODY_BYTES。"""
+
+
+# ---------------------------------------------------------------- 数据目录
+# 数据本体在 data/表面吸附数据.json；「数据目录」指从哪里翻要**导入**的
+# CSV/TXT（课程软件导出的读数）。推导顺序见 dataloc：记住的 ＞ 课程原始
+# 数据目录（相对套件根，跟着包走）＞ 本工具 data/。最后一档一定存在。
+_COURSE_DIRS = ('物理化学实验/物理化学实验/表面吸附',)
+_LOCAL_DATA = os.path.join(ROOT, 'data')
+
+
+def default_data_dir(saved=''):
+    """推一个**一定存在**的数据目录，绝不写死任何一台机器的绝对路径。"""
+    return dataloc.find_data_dir(ROOT, saved,
+                                 extra=_COURSE_DIRS + (_LOCAL_DATA,))
+
+
+def _browse_dir(query=None, cfg=None):
+    """当前浏览目录：请求参数 ＞ config ＞ settings.json ＞ 推导默认。"""
+    asked = str(((query or {}).get('dir') or [''])[0] or '').strip()
+    if asked:
+        return asked
+    saved = str((cfg or {}).get('data_dir') or '').strip()
+    if not saved:
+        saved = str(load_settings().get('data_dir') or '')
+    return default_data_dir(saved)
+
+
+def _files_payload(query):
+    """GET /api/files：列出可导入的数据文件（相对路径，前端自己过滤）。"""
+    with LOCK:
+        cfg = STATE.get('config')
+    d = _browse_dir(query, cfg)
+    if not os.path.isdir(d):
+        return {'ok': False, 'dir': d, 'files': [], 'total': 0,
+                'error': '目录不存在：%s' % d}
+    return filepick.index_payload(d, dataloc.list_data_files(d))
+
+
+def _file_text(query):
+    """GET /api/filetext：把浏览目录里的数据文件读成文本。
+
+    只读端点，且**只允许浏览目录内部 + 白名单后缀 + 体积上限**：
+    路径先过 dataloc.resolve_rel（拒绝 ../ 穿越），不提供「按绕对路径读
+    任意本地文件」的能力（那正是燃烧热工具下线 /api/file 的原因）。
+    前端拿到文本后仍走既有的 /api/import，解析逻辑一行没动。
+    """
+    with LOCK:
+        cfg = STATE.get('config')
+    d = _browse_dir(query, cfg)
+    rel = str((query.get('rel') or [''])[0] or '').strip()
+    path = dataloc.resolve_rel(d, rel) if (d and rel) else ''
+    if not path or not os.path.isfile(path):
+        return {'ok': False, 'error': '找不到文件：%s' % rel}
+    if not path.lower().endswith(('.csv', '.txt', '.tsv')):
+        return {'ok': False, 'error': '不是 CSV/TXT 文件：%s' % rel}
+    size = os.path.getsize(path)
+    if size > MAX_BODY_BYTES:
+        return {'ok': False,
+                'error': '文件太大（%.1f MB）：%s' % (size / 1048576.0, rel)}
+    with open(path, 'r', encoding='utf-8-sig', errors='replace') as fh:
+        text = fh.read()
+    return {'ok': True, 'name': os.path.basename(path), 'rel': rel,
+            'dir': os.path.abspath(d), 'size': size, 'text': text}
 
 
 
@@ -219,6 +283,7 @@ def _summary(an):
         'has_saved': bool(load_settings()),
         'settings_file': SETTINGS_FILE,
         'data_file': DATA_FILE,
+        'data_dir': default_data_dir(str((cfg or {}).get('data_dir') or '')),
         'data': data,
         'bubble': m_payload(an['bubble']),
         'plate': m_payload(an['plate']),
@@ -450,6 +515,19 @@ class Handler(BaseHTTPRequestHandler):
                 with PREVIEW_LOCK:
                     png = _preview(kind, cfg, data, q)
                 return self._send(200, png, 'image/png')
+            if path == '/api/files':
+                return self._json(_files_payload(q))
+            if path == '/api/filetext':
+                return self._json(_file_text(q))
+            if path == '/api/pickdir':
+                initial = (q.get('initial') or [''])[0] or _browse_dir(q)
+                return self._json({'ok': True,
+                                   'path': filepick.pick_folder(initial)})
+            if path == '/api/pickfile':
+                initial = (q.get('initial') or [''])[0] or _browse_dir(q)
+                exts = [e for e in (q.get('exts') or [''])[0].split(';') if e]
+                return self._json({'ok': True, 'path': filepick.pick_file(
+                    initial, exts or ('.csv', '.txt', '.tsv'))})
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:                       # noqa: BLE001
             return self._error(exc)

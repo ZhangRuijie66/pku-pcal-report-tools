@@ -65,6 +65,30 @@ td input:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)
   padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:80vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .foot{color:var(--sub);font-size:12px;text-align:center;padding:0 0 18px}
+/* 共享文件选择组件（_core/web_files.js → /static/files.js）的样式。
+   组件只有结构、不带样式，各模块自己给一套与页面一致的观感。 */
+.filebox{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.filebox-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  font-size:12px;color:var(--sub);margin-bottom:6px}
+.pcal-files-bar{display:flex;gap:6px}
+.pcal-files-search{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);
+  border-radius:7px;font:inherit;background:#fff;color:var(--text)}
+.pcal-files-search:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)}
+.pcal-files-btn{padding:6px 10px;border:1px solid var(--line);background:#fff;
+  border-radius:7px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.pcal-files-btn:hover{border-color:#c9d1da;background:#fafbfc}
+.pcal-files-meta{font-size:12px;color:var(--sub);margin:5px 0 3px}
+.pcal-files-list{max-height:210px;overflow:auto;border:1px solid var(--line);
+  border-radius:7px;background:#fff}
+.pcal-files-row{display:flex;align-items:baseline;gap:8px;width:100%;padding:4px 8px;
+  border:0;border-bottom:1px solid #f1f3f5;background:none;text-align:left;
+  font:inherit;font-size:12.5px;cursor:pointer;color:var(--text)}
+.pcal-files-row:last-child{border-bottom:0}
+.pcal-files-row:hover{background:#f7f9fc}
+.pcal-files-row.on{background:#eef4ff}
+.pcal-files-name{word-break:break-all}
+.pcal-files-dir{color:var(--sub);font-size:11.5px;margin-left:auto;white-space:nowrap}
+.pcal-files-empty{padding:10px;color:var(--sub);font-size:12.5px;text-align:center}
 @media (max-width:1100px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
 </style>
 </head>
@@ -92,6 +116,15 @@ td input:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)
       </div>
       <p class="hint">当前数据文件：<code id="dataPath">—</code></p>
       <p class="hint">输出目录：<code id="outInfo">—</code></p>
+      <div class="filebox">
+        <div class="filebox-head">
+          <span>这个文件夹里的数据文件</span>
+          <span class="sub" id="filesMeta">—</span>
+        </div>
+        <div id="filePicker"></div>
+        <p class="hint">数据文件名固定是 <code>电导率数据.json</code>（手记读数就存在这一份里），
+          列出来是为了在文件很多的学期目录里快速定位它。</p>
+      </div>
     </section>
 
     <section class="card">
@@ -176,6 +209,7 @@ td input:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)
 <div class="overlay" id="overlay"><div class="box"><div class="spin"></div><div id="overlayText">处理中…</div></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="/static/files.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -37,6 +37,8 @@ from pcal import uv                              # noqa: E402
 from pcal import report as rpt                   # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal import dataloc                         # noqa: E402  数据目录可移植定位
+from pcal import filepick                        # noqa: E402  系统文件选择窗口
 from pcal.atomicio import atomic_write_json
 from pcal.analysis import (Analysis, PERSIST_KEYS, default_config,  # noqa: E402
                            default_config_with_saved)
@@ -57,86 +59,24 @@ SINGLE_CACHE = {}
 
 
 # ---------------------------------------------------------------- 选择文件
-def pick_file(initial=None):
+def pick_file(initial=None, exts=None, title=None):
     """弹出系统「选择文件」窗口，返回绝对路径；取消时返回 ''。
 
-    与 pick_folder 一样跑在独立子进程里（tkinter），不阻塞服务；
-    自动化测试用 PCAL_PICK_FILE_AUTO 指定返回值。
+    窗口实现统一走共享层 ``pcal/filepick.py``（子进程 tkinter，不阻塞服务，
+    ``PCAL_PICK_FILE_AUTO`` 可指定返回值）。光谱数据默认只列 txt。
     """
-    auto = os.environ.get('PCAL_PICK_FILE_AUTO')
-    if auto:
-        return os.path.normpath(auto) if os.path.isfile(auto) else ''
-    code = (
-        "import sys, tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "try:\n"
-        "    root.attributes('-topmost', True)\n"
-        "except Exception:\n"
-        "    pass\n"
-        "root.update()\n"
-        "init = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-        "kwargs = dict(parent=root, title='选择光谱数据文件（txt）',\n"
-        "              filetypes=[('光谱数据', '*.txt'), ('所有文件', '*.*')])\n"
-        "if init:\n"
-        "    kwargs['initialdir'] = init\n"
-        "p = filedialog.askopenfilename(**kwargs)\n"
-        "root.destroy()\n"
-        "sys.stdout.write(p or '')\n"
-    )
-    env = dict(os.environ)
-    env['PYTHONIOENCODING'] = 'utf-8'
-    try:
-        out = subprocess.run([sys.executable, '-c', code, initial or ''],
-                             capture_output=True, timeout=900, env=env)
-    except (OSError, subprocess.SubprocessError):
-        return ''
-    txt = out.stdout.decode('utf-8', 'replace').strip()
-    if not txt:
-        return ''
-    return os.path.normpath(txt) if os.path.isfile(txt) else ''
+    return filepick.pick_file(initial, exts or ('.txt',),
+                              title or '选择光谱数据文件（txt）')
 
 
 # ---------------------------------------------------------------- 选择文件夹
-def pick_folder(initial=None):
+def pick_folder(initial=None, title=None):
     """弹出系统「选择文件夹」窗口，返回绝对路径；取消时返回 ''。
 
-    窗口由独立的子进程（tkinter）打开，避免阻塞服务进程；
-    设置环境变量 PCAL_PICK_AUTO 可以直接返回指定目录（自动化测试用）。
+    窗口实现统一走共享层 ``pcal/filepick.py``（子进程 tkinter，不阻塞服务，
+    ``PCAL_PICK_AUTO`` 可指定返回值），与其它 10 个模块口径一致。
     """
-    auto = os.environ.get('PCAL_PICK_AUTO')
-    if auto:
-        return os.path.normpath(auto) if os.path.isdir(auto) else ''
-    code = (
-        "import sys, tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "try:\n"
-        "    root.attributes('-topmost', True)\n"
-        "except Exception:\n"
-        "    pass\n"
-        "root.update()\n"
-        "kwargs = dict(parent=root, title='选择数据文件夹（光谱仪导出的 txt 所在目录）')\n"
-        "init = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-        "if init:\n"
-        "    kwargs['initialdir'] = init\n"
-        "p = filedialog.askdirectory(**kwargs)\n"
-        "root.destroy()\n"
-        "sys.stdout.write(p or '')\n"
-    )
-    env = dict(os.environ)
-    env['PYTHONIOENCODING'] = 'utf-8'
-    try:
-        out = subprocess.run([sys.executable, '-c', code, initial or ''],
-                             capture_output=True, timeout=900, env=env)
-    except (OSError, subprocess.SubprocessError):
-        return ''
-    txt = out.stdout.decode('utf-8', 'replace').strip()
-    if not txt:
-        return ''
-    return os.path.normpath(txt) if os.path.isdir(txt) else ''
+    return filepick.pick_folder(initial, title or '选择数据文件夹（光谱仪导出的 txt 所在目录）')
 
 
 # ---------------------------------------------------------------- 设置文件
@@ -491,13 +431,19 @@ def _files(query):
 
     ?dir=  覆盖数据目录（切换目录时前端先探一遍）
     ?slot=（可选）只算这个槽位的候选
+    ?q=    （可选）按关键字过滤清单（共享层 dataloc.search_files 同口径）
 
     只算「当前测量选择下真正要用的」槽位——同一浓度测了两次时只算选中的那条。
+    返回体同时给两套字段名：
+      · ``files`` / ``count`` / ``data_dir`` / ``auto`` —— 本模块前端一直在用；
+      · ``total`` / ``dir`` —— 共享层 ``/api/files`` 约定（web/files.js 用）。
+    两套都给是为了「不推翻已跑通的槽位匹配」，同时让 PcalFiles 能直接挂上去。
     """
     cfg = STATE.get('config') or _config_from()
     data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
     if not os.path.isdir(data_dir):
-        return {'ok': False, 'error': '目录不存在：%s' % data_dir, 'files': []}
+        return {'ok': False, 'error': '目录不存在：%s' % data_dir,
+                'files': [], 'total': 0, 'dir': data_dir}
     files = uv._index_files(data_dir)
     pm, pc = _picks_from_cfg(cfg)
     slot_key = (query.get('slot') or [''])[0]
@@ -511,8 +457,14 @@ def _files(query):
             auto=bool(best_rel and best_score >= uv.FUZZY_ACCEPT),
             suggestions=[dict(rel=rel, score=s)
                          for s, rel in uv.suggest_files(target, files, top=6)])
-    return dict(ok=True, data_dir=data_dir, count=len(files),
-                files=files, auto=auto, accept=uv.FUZZY_ACCEPT)
+    out = dict(ok=True, data_dir=data_dir, count=len(files),
+               files=files, auto=auto, accept=uv.FUZZY_ACCEPT)
+    # 共享层 /api/files 约定的两个字段（web/files.js 的 PcalFiles 直接读它们）。
+    # 只加不改：本模块前端用的 files/count/data_dir 保持原样，槽位匹配结果不变。
+    out['dir'] = os.path.abspath(data_dir)
+    out['exists'] = True
+    out['total'] = len(files)
+    return out
 
 
 def _auto_map(query):
@@ -769,7 +721,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok': True, 'path': pick_folder(initial)})
             if path == '/api/pickfile':
                 initial = (q.get('initial') or [''])[0]
-                return self._json({'ok': True, 'path': pick_file(initial)})
+                exts = (q.get('exts') or [''])[0]
+                return self._json({'ok': True,
+                                   'path': pick_file(initial, exts or None)})
             if path == '/api/files':
                 return self._json(_files(q))
             if path == '/api/file/info':

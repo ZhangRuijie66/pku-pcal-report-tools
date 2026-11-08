@@ -51,6 +51,10 @@ FILES = (
     ('workspace.py', Path('pcal') / 'workspace.py'),
     ('profile.py', Path('pcal') / 'profile.py'),
     ('atomicio.py', Path('pcal') / 'atomicio.py'),
+    # 可移植定位 + 文件选择与模糊匹配（2026-11-08）：11 个模块共用一份，
+    # 保证「换机器/换文件名」的行为在所有实验里一致。
+    ('dataloc.py', Path('pcal') / 'dataloc.py'),
+    ('filepick.py', Path('pcal') / 'filepick.py'),
 )
 
 # 需要前端草稿的 6 个手工录入模块；draft.js 由 _core/web_draft.js 同步。
@@ -58,13 +62,17 @@ WEB_TOOLS = ('化学动力学工具', '蒸气压工具', '双液系工具',
              '偶极矩工具', '表面吸附工具', '磁化率工具')
 WEB_FILES = (('web_draft.js', Path('web') / 'draft.js'),)
 
+# 全部 11 个模块都要的文件选择/搜索前端组件（/static/files.js）。
+# 启动过渡页 web_boot.html 只给入口页用，不进各模块的 web/。
+WEB_FILES_ALL = (('web_files.js', Path('web') / 'files.js'),)
+
 _ASSIGN_VERSION_RE = re.compile(r'^[ \t]*__version__[ \t]*=')
 _IMPORT_VERSION_RE = re.compile(
     r'^[ \t]*from[ \t]+\.version[ \t]+import[ \t]+APP_VERSION[ \t]+as[ \t]+__version__[ \t]*$')
 
 
 def files_for(tool):
-    return FILES + (WEB_FILES if tool in WEB_TOOLS else ())
+    return FILES + (WEB_FILES if tool in WEB_TOOLS else ()) + WEB_FILES_ALL
 
 
 def normalized_bytes(data: bytes) -> bytes:
@@ -237,6 +245,7 @@ def write_manifest():
         'version': CORE_VERSION,
         'files': {name: canonical_digest(name) for name, _ in FILES},
         'web_files': {name: canonical_digest(name) for name, _ in WEB_FILES},
+        'web_files_all': {name: canonical_digest(name) for name, _ in WEB_FILES_ALL},
         'tools': list(TOOLS),
         'web_tools': list(WEB_TOOLS),
         'init_import': VERSION_IMPORT,

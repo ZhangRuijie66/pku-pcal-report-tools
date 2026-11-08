@@ -24,6 +24,7 @@ OUT_DIR = os.path.join(os.path.dirname(ROOT), '实验报告输出')
 sys.path.insert(0, ROOT)
 
 from pcal import magnetic, plotting
+from pcal import filepick
 from pcal import report as rpt
 from pcal import profile
 from pcal import workspace
@@ -31,11 +32,25 @@ from pcal.atomicio import atomic_write_json
 from pcal.analysis import run_analysis, format_results
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
+# 数据文件位置：默认 <工具>/data/磁化率数据.json，但**跟随界面上设置的 data_dir**
+# （见 _data_path）。磁化率只有「载入 / 导出」，没有交互取点，数据是一份 JSON。
+DATA_FILE = os.path.join(DATA_DIR, '磁化率数据.json')
 STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()          # matplotlib 不是线程安全的，预览图串行生成
 EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
 MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不去 rfile.read
+
+#: 磁化率的候选目录（相对套件根）：只用于**查找**要载入的数据文件，
+#: 不改变数据文件存哪儿——那始终是 ``<工具>/data/磁化率数据.json``。
+#: 拿课程原始数据目录当数据目录会把「数据存哪儿」悄悄挪走，既有数据就读不到了。
+DATA_DIR_CANDIDATES = (
+    os.path.join('物理化学实验', '物理化学实验', '磁化率'),
+    '磁化率',
+)
+
+#: 本模块的数据文件名
+DATA_FILENAME = '磁化率数据.json'
 
 
 class BodyTooLarge(ValueError):
@@ -43,7 +58,17 @@ class BodyTooLarge(ValueError):
 
 
 PERSIST_KEYS = ['student_name', 'student_id', 'group', 'group_no',
-                'date', 'room_temp', 'pressure']
+                'date', 'room_temp', 'pressure', 'data_dir']
+
+
+def _tool_default_data_dir():
+    """默认数据目录：固定 ``<工具>/data``（不存在也没关系，写盘时自动建）。
+
+    刻意**不**用 ``dataloc.find_data_dir`` 的「课程原始数据目录」那几档：
+    那是查找导入来源用的，不是数据家的位置。换机器/换版本时这个路径始终
+    跟着工具目录走，绝不写死盘符。
+    """
+    return DATA_DIR
 
 
 def default_config():
@@ -55,8 +80,22 @@ def default_config():
         'date': '',
         'room_temp': None,
         'pressure': None,
-        'data_dir': '',
+        # 数据文件所在目录（换机器后自动推导；见 _tool_default_data_dir）
+        'data_dir': _tool_default_data_dir(),
     }
+
+
+def _data_path(cfg=None):
+    """当前配置对应的数据文件路径。
+
+    ``<data_dir>/磁化率数据.json``——数据文件跟着界面上设的目录走，
+    避免「换了目录、存盘却还写回工具目录」这种静默错位。
+    """
+    cfg = cfg if cfg is not None else (STATE.get('config') or {})
+    data_dir = str((cfg or {}).get('data_dir') or '').strip()
+    if data_dir:
+        return os.path.join(data_dir, DATA_FILENAME)
+    return DATA_FILE
 
 
 def default_config_with_saved(saved):
@@ -95,9 +134,10 @@ def save_data(path, data):
 def _current_data():
     if STATE.get('data') is not None:
         return STATE['data']
-    if os.path.exists(DATA_FILE):
+    path = _data_path()
+    if os.path.exists(path):
         try:
-            return load_data(DATA_FILE)
+            return load_data(path)
         except (OSError, ValueError):
             pass
     return magnetic.sample_data()
@@ -132,7 +172,8 @@ def _summary(an):
         'defaults': default_config(),
         'has_saved': bool(load_settings()),
         'settings_file': SETTINGS_FILE,
-        'data_file': DATA_FILE,
+        'data_dir': cfg.get('data_dir') or '',
+        'data_file': _data_path(cfg),
         'data': data,
         'temperature_C': an['temperature_C'],
         'temperature_K': an['temperature_K'],
@@ -140,6 +181,41 @@ def _summary(an):
         'samples': an['samples'],
         'formatted': format_results(an),
     }
+
+
+# ---------------------------------------------------------------- 数据文件
+def _data_dir(query=None):
+    """当前数据目录：``?dir=`` 覆盖 > 已算过的 cfg > 工具自己的 data/。
+
+    返回的目录**可能还不存在**（新解压的可移植包里没有 data/）——
+    ``/api/files`` 会如实报 exists=False，界面显示「还没有数据文件」，
+    而不是抛异常或指向一个不相干的目录。
+    """
+    query = query or {}
+    cfg = STATE.get('config') or default_config_with_saved(load_settings())
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not data_dir:
+        data_dir = _tool_default_data_dir()
+    return data_dir
+
+
+def _files(query):
+    """``GET /api/files``：数据目录里的数据文件清单（相对路径）。
+
+    磁化率只有「载入 / 导出」两种操作，数据是一份 ``磁化率数据.json``；
+    但用户常把整个学期的实验资料放在同一目录里，所以仍然列全（可搜索），
+    并标出本模块真正在读的那一份。
+    """
+    data_dir = _data_dir(query)
+    payload = filepick.index_payload(data_dir)
+    target = _data_path(STATE.get('config') or
+                        default_config_with_saved(load_settings()))
+    payload['data_filename'] = DATA_FILENAME
+    payload['target'] = target
+    payload['target_rel'] = DATA_FILENAME
+    payload['target_exists'] = os.path.isfile(target)
+    return payload
+
 
 
 def _export(cfg, data, progress=None):
@@ -187,6 +263,22 @@ def _export_locked(cfg, data, progress=None):
         progress(note)
 
     return out_path, an
+
+
+# ---------------------------------------------------------------- 文件选择
+def pick_folder(initial=None):
+    """弹「选择文件夹」，返回绝对路径（取消返回 ''）。
+
+    实现走共享层 ``pcal/filepick.py``：tkinter 跑在独立子进程里，不阻塞服务
+    线程；自动化测试用 ``PCAL_PICK_AUTO`` 接管，不会弹真窗口。
+    """
+    return filepick.pick_folder(initial, title='选择数据文件夹（磁化率数据.json 所在目录）')
+
+
+def pick_file(initial=None, exts=None):
+    """弹「选择文件」，返回绝对路径（取消返回 ''）。"""
+    return filepick.pick_file(initial, exts or ('.json',),
+                              title='选择磁化率数据文件（json）')
 
 
 # ---------------------------------------------------------------- 文件名
@@ -323,6 +415,16 @@ class Handler(BaseHTTPRequestHandler):
                 with PREVIEW_LOCK:
                     png = _preview_png(kind, an.get('chart') or [])
                 self._png(png)
+            elif path == '/api/pickdir':
+                initial = (query.get('initial') or [''])[0]
+                self._json({'ok': True, 'path': pick_folder(initial)})
+            elif path == '/api/pickfile':
+                initial = (query.get('initial') or [''])[0]
+                exts = [e for e in (query.get('exts') or [''])[0].split(';') if e]
+                self._json({'ok': True,
+                            'path': pick_file(initial, exts or None)})
+            elif path == '/api/files':
+                self._json(_files(query))
             elif path.startswith('/static/'):
                 self._html(path[len('/static/'):])
             elif path.startswith('/web/'):
@@ -378,6 +480,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(summary)
         elif path == '/api/data':
             cfg = default_config_with_saved(load_settings())
+            for key, value in payload.get('config', {}).items():
+                if key in cfg and value not in (None, ''):
+                    cfg[key] = value
             data = payload.get('data', magnetic.sample_data())
             # 先算成功再落盘：旧代码先 save_data() 后 _analysis()，
             # 非法数据虽然返 400，文件却已经被写坏了。
@@ -387,7 +492,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:                 # noqa: BLE001
                 self._json({'ok': False, 'error': '数据无法计算：%s' % exc}, 400)
                 return
-            summary['saved_path'] = save_data(DATA_FILE, data)
+            summary['saved_path'] = save_data(_data_path(cfg), data)
             self._json(summary)
         elif path == '/api/export':
             cfg = default_config_with_saved(load_settings())

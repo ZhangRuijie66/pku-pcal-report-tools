@@ -22,24 +22,29 @@ from . import conduct
 # 工具目录本身（目录一定存在，绝不会因为路径不存在抛 FileNotFoundError）。
 # 优先级：settings.json / profile.json 里记住的 data_dir（由调用方先填进
 #        cfg，见 server）＞ 本函数的推导结果。
+#
+# 定位逻辑统一走共享层 ``pcal/dataloc.py``（11 个模块共用一份），本文件只负责
+# 说清「这个实验的数据还可能放在哪」——那几个相对套件根的候选目录。
 _TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SUITE_DIR = os.path.dirname(_TOOL_DIR)
+
+#: 电导率的候选数据目录（相对套件根）。顺序即优先级，越具体越靠前。
+DATA_DIR_CANDIDATES = (
+    # 课程原始数据（电导率数据.json 在 物理化学实验/物理化学实验/电导率/）
+    os.path.join('物理化学实验', '物理化学实验', '电导率'),
+    '电导率',                                                   # 精简布局
+)
 
 
 def _default_data_dir():
-    cands = [os.path.join(_SUITE_DIR, '数据'),                   # 可移植包用法
-             # 课程原始数据（电导率数据.json 在 物理化学实验/物理化学实验/电导率/）
-             os.path.join(_SUITE_DIR, '物理化学实验', '物理化学实验',
-                          '电导率'),
-             os.path.join(_SUITE_DIR, '电导率'),                 # 精简布局
-             os.path.join(_TOOL_DIR, '样例数据')]
-    for cand in cands:
-        if os.path.isdir(cand):
-            return cand
-    return _TOOL_DIR
+    from . import dataloc
+    return dataloc.find_data_dir(_TOOL_DIR, extra=DATA_DIR_CANDIDATES,
+                                 tool_subdirs=('样例数据',))
 
 
 DEFAULT_DATA_DIR = _default_data_dir()
+
+#: 本实验的数据文件名（手记读数，字符串存以保留末位 0）
+DATA_FILENAME = conduct.DATA_FILENAME
 
 STRONG_KEYS = ('NaNO3', 'NaAc', 'HNO3')
 

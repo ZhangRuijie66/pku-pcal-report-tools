@@ -19,20 +19,27 @@ ROOT = os.path.dirname(HERE)
 WEB_DIR = os.path.join(ROOT, 'web')
 TEMPLATE = os.path.join(ROOT, 'templates', '偶极矩报告模板2026.docx')
 DATA_DIR = os.path.join(ROOT, 'data')
-DATA_FILE = os.path.join(DATA_DIR, '偶极矩数据.json')
 OUT_DIR = os.path.join(os.path.dirname(ROOT), '实验报告输出')
 
 sys.path.insert(0, ROOT)
 
 from pcal import dipole, plotting                      # noqa: E402
+from pcal import dataloc                              # noqa: E402
+from pcal import filepick                             # noqa: E402
 from pcal import report as rpt                         # noqa: E402
 from pcal import profile
 from pcal import workspace
 from pcal.atomicio import atomic_write_json
-from pcal.analysis import (default_config, default_config_with_saved,  # noqa: E402
-                           load_data, save_data, PERSIST_KEYS)
+from pcal.analysis import (DATA_FILENAME, DEFAULT_DATA_FILE,  # noqa: E402
+                           IMPORT_DIR_CANDIDATES, PERSIST_KEYS, data_file_for,
+                           default_config, default_config_with_saved,
+                           load_data, save_data)
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
+# 数据文件位置：默认 <工具>/data/偶极矩数据.json，但**跟随界面上设置的 data_dir**
+# （见 analysis.data_file_for）。原来写死的 DATA_FILE 会让「换了目录却仍存回工具目录」
+# 静默发生，换机器后可移植包里也摸不到用户自己的数据。
+DATA_FILE = DEFAULT_DATA_FILE
 STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
@@ -43,6 +50,23 @@ MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不�
 class BodyTooLarge(ValueError):
     """Content-Length 非法或超过 MAX_BODY_BYTES。"""
 
+
+
+# ---------------------------------------------------------------- 选择文件夹
+def pick_folder(initial=None):
+    """弹「选择文件夹」，返回绝对路径（取消返回 ''）。
+
+    实现走共享层 ``pcal/filepick.py``：tkinter 跑在独立子进程里，不阻塞服务
+    线程；自动化测试用 ``PCAL_PICK_AUTO`` 接管，不会弹真窗口。
+    """
+    return filepick.pick_folder(initial, title='选择数据文件夹（数据处理表所在目录）')
+
+
+def pick_file(initial=None, exts=None):
+    """弹「选择文件」，返回绝对路径（取消返回 ''）。"""
+    return filepick.pick_file(initial, exts or ('.xlsx', '.xlsm', '.xls', '.csv',
+                                                '.txt', '.tsv'),
+                              title='选择数据处理表（xlsx / csv）')
 
 
 # ---------------------------------------------------------------- 设置
@@ -101,12 +125,19 @@ def _normalize_data(data):
     return dipole.normalize_data(data)
 
 
+def _data_path(cfg=None):
+    """当前配置对应的数据文件路径（含 data_dir 覆盖）。"""
+    return data_file_for(cfg if cfg is not None else (STATE.get('config') or {}),
+                         DEFAULT_DATA_FILE)
+
+
 def _current_data():
     if STATE.get('data') is not None:
         return STATE['data']
-    if os.path.exists(DATA_FILE):
+    path = _data_path()
+    if os.path.exists(path):
         try:
-            return _normalize_data(load_data(DATA_FILE))
+            return _normalize_data(load_data(path))
         except (OSError, ValueError):
             pass
     return dipole.sample_data()
@@ -140,7 +171,8 @@ def _summary(an):
         'defaults': default_config(),
         'has_saved': bool(load_settings()),
         'settings_file': SETTINGS_FILE,
-        'data_file': DATA_FILE,
+        'data_dir': cfg.get('data_dir') or '',
+        'data_file': _data_path(cfg),
         'data': data,
         'result': an,
         'warnings': an['warnings'],
@@ -235,22 +267,145 @@ def _export_locked(cfg, data):
     return dict(ok=True, path=out, note=note, logs=logs, figures=plots)
 
 
+# ---------------------------------------------------------------- 数据文件
+def _data_dir(query=None):
+    """当前数据目录：``?dir=`` 覆盖 > 已算过的 cfg > 工具自己的 data/。
+
+    返回的目录**可能还不存在**（新解压的可移植包里没有 data/）——
+    ``/api/files`` 会如实报 exists=False，界面显示「还没有数据文件」。
+    """
+    query = query or {}
+    cfg = STATE.get('config') or _config_from()
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not data_dir:
+        data_dir = DEFAULT_DATA_DIR
+    return data_dir
+
+
+def _import_dirs():
+    """课程原始数据目录（导入来源）：按优先级列出**实际存在**的那几个。
+
+    与「数据目录」是两回事：数据目录是数据文件存哪儿（``<工具>/data``），
+    这里只是「学校的处理表通常放在哪些位置」，用来给界面一个便捷入口。
+    """
+    suite = os.path.dirname(os.path.abspath(ROOT))
+    out = []
+    for rel in IMPORT_DIR_CANDIDATES:
+        path = rel if os.path.isabs(rel) else os.path.join(suite, rel)
+        if os.path.isdir(path):
+            out.append(os.path.abspath(path))
+    return out
+
+
+def _files(query):
+    """``GET /api/files``：数据目录里的数据文件清单（相对路径）+ 目录信息。
+
+    偶极矩导入的是课程的「数据处理2.xlsx」（偶极矩实验表格布局）；
+    一个学期下来目录里会攒几百个文件，所以前端要能按关键字过滤。
+
+    另外把**课程原始数据目录**（如果存在）一并告诉前端：那是导入来源，
+    用户不必先手动把目录粘贴进来。
+    """
+    data_dir = _data_dir(query)
+    payload = filepick.index_payload(data_dir)
+    payload['data_filename'] = DATA_FILENAME
+    payload['target'] = _data_path()
+    payload['target_rel'] = os.path.basename(payload['target'])
+    payload['target_exists'] = os.path.isfile(payload['target'])
+    payload['import_dirs'] = _import_dirs()
+    return payload
+
+
+def _allowed_roots():
+    """``/api/import/read`` 允许读的根目录：当前数据目录 + 课程原始数据目录。
+
+    这是一份**白名单**：先按这些根把用户给的路径解析成绝对路径，落不进
+    任何一个根就拒绝。绝不用「字符串以 .. 开头」这种判据——
+    ``a/../..`` 就绕过去了。
+    """
+    roots = []
+    for path in [_data_dir()] + _import_dirs():
+        if path and os.path.isdir(path):
+            roots.append(os.path.normpath(os.path.abspath(path)))
+    return roots
+
+
+def _resolve_import_path(raw):
+    """把前端传来的路径解析成一个**在白名单根目录内**的绝对路径（否则空串）。
+
+    支持两种输入：相对路径（相对当前数据目录，来自 ``/api/files``）与
+    绝对路径（来自系统文件选择窗口）。
+    """
+    raw = str(raw or '').strip().strip('"')
+    if not raw:
+        return ''
+    roots = _allowed_roots()
+    if not roots:
+        return ''
+    if os.path.isabs(raw):
+        target = os.path.normpath(os.path.abspath(raw))
+        for root in roots:
+            if (target + os.sep).startswith(root + os.sep):
+                return target
+        return ''
+    # 相对路径依次在每个根下试（先数据目录，再课程原始目录）
+    for root in roots:
+        cand = dataloc.resolve_rel(root, raw)
+        if cand and os.path.isfile(cand):
+            return cand
+    return ''
+
+
+def _read_import(path):
+    """读一个本地数据文件供 /api/import 使用（不经过浏览器上传）。
+
+    走与 ``_import('file', …)`` **完全相同**的解析函数，不另写一套：
+    从文件夹里选文件和从浏览器上传一份 xlsx，得到的结果必须一致。
+
+    安全：只允许读白名单目录（当前数据目录 + 课程原始数据目录）里的文件，
+    见 :func:`_resolve_import_path`。
+    """
+    full = _resolve_import_path(path)
+    if not full or not os.path.isfile(full):
+        return {'ok': False,
+                'error': '文件不在允许的目录内：%s' % (path or '（空）')}
+    with open(full, 'rb') as fh:
+        raw = fh.read()
+    fname = os.path.basename(full)
+    rows = _parse_bytes(raw, fname)
+    if not rows.get('solutions'):
+        return {'ok': False,
+                'error': '没有从 %s 里读到溶液数据行' % fname}
+    return {'ok': True, 'kind': 'file', 'rows': rows, 'name': fname,
+            'path': full}
+
+
 # ---------------------------------------------------------------- 导入
+def _parse_bytes(raw, fname):
+    """把一份 xlsx/csv 的字节解析成 ``{solutions, cyclo, butanol}``。
+
+    上传（浏览器 ``<input type=file>``）与「从文件夹选」（:func:`_read_import`）
+    共用这一份，两条路得到的行必须逐字段一致。
+    """
+    rows = None
+    if fname.lower().endswith(('.xlsx', '.xlsm', '.xls')):
+        rows = _parse_workbook(io.BytesIO(raw))
+    if rows is None:
+        try:
+            text = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            text = raw.decode('gbk', 'replace')
+        rows = _parse_text(text)
+    return rows
+
+
 def _import(kind, payload):
     """kind=file：读 xlsx/csv 的数据处理表（数据处理.xlsx 布局）；
     kind=weigh：粘贴 m1, m2 两列；kind=cap：粘贴 C'样 一列。"""
     if kind == 'file':
         raw = base64.b64decode(payload.get('b64') or '')
         fname = str(payload.get('name') or '')
-        rows = None
-        if fname.lower().endswith(('.xlsx', '.xlsm', '.xls')):
-            rows = _parse_workbook(io.BytesIO(raw))
-        if rows is None:
-            try:
-                text = raw.decode('utf-8-sig')
-            except UnicodeDecodeError:
-                text = raw.decode('gbk', 'replace')
-            rows = _parse_text(text)
+        rows = _parse_bytes(raw, fname)
         if not rows.get('solutions'):
             return dict(ok=False, error='没有从文件里读到溶液数据行')
         return dict(ok=True, kind='file', rows=rows)
@@ -368,6 +523,19 @@ class Handler(BaseHTTPRequestHandler):
                                    'has_saved': bool(load_settings())})
             if path == '/api/sample':
                 return self._json({'ok': True, 'data': dipole.sample_data()})
+            if path == '/api/pickdir':
+                initial = (q.get('initial') or [''])[0]
+                return self._json({'ok': True, 'path': pick_folder(initial)})
+            if path == '/api/pickfile':
+                initial = (q.get('initial') or [''])[0]
+                exts = [e for e in (q.get('exts') or [''])[0].split(';') if e]
+                return self._json({'ok': True,
+                                   'path': pick_file(initial, exts or None)})
+            if path == '/api/files':
+                return self._json(_files(q))
+            if path == '/api/import/read':
+                # 从数据文件夹里读一份 xlsx/csv（不必再经浏览器上传）
+                return self._json(_read_import((q.get('path') or [''])[0]))
             if path == '/api/preview':
                 cfg = STATE.get('config') or _config_from()
                 data = STATE.get('data') or _current_data()
@@ -401,12 +569,16 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/data':
                 body = self._body()
                 data = _normalize_data(body.get('data'))
+                cfg = _config_from(body)
+                path = _data_path(cfg)
                 # 写盘与 STATE 更新放同一把锁：原来 STATE['data'] 在锁外写，
                 # 会与 _analysis() 里的 STATE.update 交叉，读到混合态。
                 with LOCK:
-                    save_data(DATA_FILE, data)
+                    save_data(path, data)
                     STATE['data'] = data
-                return self._json({'ok': True, 'data_file': DATA_FILE})
+                    STATE['config'] = cfg
+                return self._json({'ok': True, 'data_file': path,
+                                   'data_dir': cfg.get('data_dir') or ''})
             if u.path == '/api/import':
                 kind = (q.get('kind') or ['file'])[0]
                 body = self._body()
@@ -506,7 +678,8 @@ def main(argv=None):
     srv = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     url = 'http://127.0.0.1:%d' % port
     print('稀溶液法偶极矩实验报告生成器')
-    print('  数据文件：%s' % DATA_FILE)
+    print('  数据文件：%s' % _data_path(cfg))
+    print('  数据目录：%s' % (cfg.get('data_dir') or ''))
     print('  输出目录：%s' % OUT_DIR)
     print('  地址：%s   （Ctrl+C 退出）' % url)
     if open_browser:

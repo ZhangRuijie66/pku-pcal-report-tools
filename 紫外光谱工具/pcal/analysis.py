@@ -11,6 +11,7 @@ import os
 
 import numpy as np
 
+from . import dataloc
 from . import uv
 
 # 默认数据目录：**运行时推导**，不写死任何一台机器上的绝对路径。
@@ -18,19 +19,14 @@ from . import uv
 # 数据目录（相对套件根，跟着包走），再找工具目录里的 样例数据/；都没有就退回
 # 工具目录本身（目录一定存在，绝不会因为路径不存在抛 FileNotFoundError）。
 # 优先级：settings.json 里记住的 data_dir（由调用方先填进 cfg，见 server）＞
-#        本函数的推导结果。
+#        本函数的推导结果。定位逻辑统一走共享层 dataloc.find_data_dir。
 _TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SUITE_DIR = os.path.dirname(_TOOL_DIR)
 
 
 def _default_data_dir():
-    cands = [os.path.join(_SUITE_DIR, '数据'),                    # 可移植包用法
-             os.path.join(_SUITE_DIR, '3 紫外光谱搭建', '数据'),   # 课程原始数据
-             os.path.join(_TOOL_DIR, '样例数据')]
-    for cand in cands:
-        if os.path.isdir(cand):
-            return cand
-    return _TOOL_DIR
+    return dataloc.find_data_dir(_TOOL_DIR, '',
+                                 extra=(os.path.join('3 紫外光谱搭建', '数据'),),
+                                 tool_subdirs=('样例数据',))
 
 
 DEFAULT_DATA_DIR = _default_data_dir()

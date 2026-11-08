@@ -90,7 +90,38 @@ async function scanDir(dir, autoFill) {
     state.rounds = defaultRoundsFromFiles(res.files);
   }
   renderRounds();
+  await loadFileBrowser(dir);
   return res.files;
+}
+
+/* ---------------------------------------------------------------- 文件浏览
+ * 共享层 web/files.js 提供的 PcalFiles：把 /api/files 的清单渲染成可搜索列表。
+ * 这里只做「看和找」：点一行只提示它在哪，不改变上面已经排好的轮次顺序
+ * （累加法对顺序敏感，静默改顺序会让 Qs 算错）。
+ */
+let fileBrowser = null;
+
+function ensureFileBrowser() {
+  if (fileBrowser) return fileBrowser;
+  const host = $('fileBrowser');
+  if (!host || !window.PcalFiles) return null;
+  fileBrowser = PcalFiles.mount(host, {
+    placeholder: '搜索文件名，如 dissolutiondata / 0912',
+    exts: ['.csv'],
+    onPick: (rel) => {
+      state.browsedFile = rel;
+      toast('已定位：' + rel + '（在「数据轮次」里按实验顺序选它）', 5000);
+    },
+  });
+  return fileBrowser;
+}
+
+async function loadFileBrowser(dir) {
+  const picker = ensureFileBrowser();
+  if (!picker) return;
+  try {
+    await picker.load(dir || $('dataDir').value.trim());
+  } catch (e) { /* 浏览面板失败不影响主流程 */ }
 }
 
 /* ---------------------------------------------------------------- 默认值 */

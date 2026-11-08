@@ -11,6 +11,22 @@ from __future__ import annotations
 import os
 import sys
 
+
+# GBK 控制台兜底：自检会打印 ⚠/·/Δ/α 这类字符，cp936 编不出来会抛
+# UnicodeEncodeError 把整个 --test 打断（只影响打印，不该中止计算）。
+def _safe_stdout():
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, 'encoding', '') or '').lower()
+        if stream is None or 'utf' in enc:
+            continue
+        try:
+            stream.reconfigure(errors='replace')
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_safe_stdout()
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
@@ -35,6 +51,13 @@ DATA_DIR = _default_data_dir()
 
 
 def self_test():
+    # 封面字段从个人档案读：可移植包被别人解压后，自检报告不该印出作者的名字。
+    # 没填就到入口页「个人档案」里补，这里留空也能跑通（只在报告里空着）。
+    from pcal import profile as _profile
+    _who, _missing = _profile.personal(required=('student_name', 'student_id'))
+    if _missing:
+        print('提示：个人档案里还没填 %s，自检报告的封面会是空的。'
+              % '、'.join(_missing))
     from pcal.analysis import Analysis, default_config
     from pcal import report as rpt
     from pcal import uv as uv_mod
@@ -43,8 +66,7 @@ def self_test():
     data_dir = os.environ.get('PCAL_DATA_DIR') or DATA_DIR
     print('数据目录：', data_dir)
     cfg = default_config()
-    cfg.update(student_name='张瑞杰', student_id='2400011877',
-               group='3', group_no='8',
+    cfg.update(student_name=_who["student_name"], student_id=_who["student_id"], group=_who["group"], group_no=_who["group_no"],
                date='2026/10/14 & 10/21',
                room_temp_1=22.0, room_temp_2=19.1,
                pressure_1=101.5, pressure_2=101.8,

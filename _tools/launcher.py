@@ -142,6 +142,100 @@ def _has(exe, module):
     return probe.returncode == 0
 
 
+#: 依赖探测结果缓存文件：每次启动都开 4~5 个子进程逐个 import，
+#: 实测要 1.1~1.3 s，占整个启动链路的四成。缓存到「Python 可执行文件 +
+#: 依赖清单」的指纹上，依赖没变就直接读缓存（几十毫秒）。
+DEPS_CACHE = os.path.join(TOOLS_DIR, 'deps_cache.json')
+#: 缓存多久失效一次（天）。装/卸载依赖不会改变 exe 路径，所以要定期重探。
+DEPS_CACHE_DAYS = 7
+
+
+def _deps_fingerprint(exe, modules):
+    """Python 解释器 + 依赖清单的指纹（换 Python 或改清单就重探）。"""
+    mtime = ''
+    try:
+        mtime = str(int(os.path.getmtime(exe)))
+    except OSError:
+        pass
+    return {'exe': os.path.abspath(exe), 'mtime': mtime,
+            'modules': sorted(modules)}
+
+
+def _deps_cache_read(finger):
+    try:
+        with open(DEPS_CACHE, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get('fingerprint') != finger:
+        return None
+    try:
+        age = time.time() - float(data.get('checked', 0))
+    except (TypeError, ValueError):
+        return None
+    if age > DEPS_CACHE_DAYS * 86400:
+        return None
+    missing = data.get('missing')
+    return missing if isinstance(missing, list) else None
+
+
+def _deps_cache_write(finger, missing):
+    try:
+        with open(DEPS_CACHE, 'w', encoding='utf-8') as fh:
+            json.dump({'fingerprint': finger, 'missing': list(missing),
+                       'checked': time.time()}, fh, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def missing_deps(exe, modules):
+    """哪些依赖缺失（带缓存）。返回模块名列表，空列表表示都齐了。"""
+    modules = list(modules or ())
+    finger = _deps_fingerprint(exe, modules)
+    cached = _deps_cache_read(finger)
+    if cached is not None:
+        # 缓存说「缺 X」，但可能刚装好：缺的项再真探一次，别让用户白等安装窗口
+        return [m for m in cached if not _has(exe, m)]
+    missing = [m for m in modules if not _has(exe, m)]
+    _deps_cache_write(finger, missing)
+    return missing
+
+
+def portal_port_hint():
+    """启动画面该盯的端口区间 ``(起始端口, 宽度)``。
+
+    入口页从 8700 起往后找空位，落在哪个不确定，所以给的是整个扫描区间；
+    启动画面逐个试，任意一个能连上就算就绪。
+    """
+    try:
+        portal = _portal_module()
+        low, high = portal.PORTAL_PORTS
+        return low, max(1, high - low)
+    except Exception:                     # noqa: BLE001
+        return 8700, 30
+
+
+def _spawn_splash(port=0, span=1, timeout=25):
+    """拉起启动画面（独立进程，0.3 秒内可见，不等它）。
+
+    入口页从双击到浏览器可用要 2~3 秒，这段时间原来完全没有任何窗口。
+    splash 自己轮询端口区间，端口一通就关；失败也不影响主流程。
+    """
+    try:
+        exe = sys.executable or 'python'
+        argv = [exe, os.path.join(TOOLS_DIR, 'splash.py'),
+                '--port', str(int(port or 0)), '--span', str(int(span or 1)),
+                '--timeout', str(int(timeout))]
+        subprocess.Popen(argv, cwd=TOOLS_DIR, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=NO_WINDOW)
+        return True
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def _alert(text):
     """没有控制台时，用消息框把错误告诉用户。"""
     try:
@@ -204,17 +298,32 @@ def start(tool_dir):
 
     exe = sys.executable or 'python'
     name = os.path.basename(tool_dir.rstrip('\\/'))
-    missing = [m for m in DEPS.get(name, DEFAULT_DEPS) if not _has(exe, m)]
+    missing = missing_deps(exe, DEPS.get(name, DEFAULT_DEPS))
     if missing:
         # 装依赖要看得见进度：开一个命令行窗口跑 --install，本进程退出
         _spawn_console(['--install', tool_dir])
         return 0
 
+    # 启动画面：入口页要 2~3 秒才可用，先给一块可见的反馈，端口一通它自己关。
+    # 只在「启动入口页」时显示——单独启动某个模块本来就有浏览器标签页可看。
+    if os.path.abspath(tool_dir) == os.path.abspath(PORTAL_DIR):
+        try:
+            low, span = portal_port_hint()
+            _spawn_splash(low, span, timeout=25)
+        except Exception:                 # noqa: BLE001
+            pass                          # 启动画面失败绝不影响启动
+
     proc = _spawn_hidden([exe, run_py], cwd=tool_dir)
-    time.sleep(1.5)
-    rc = proc.poll()
-    if rc not in (None, 0):
-        return _fail(tool_dir, '启动后立即退出（返回码 %s）' % rc)
+    # 原来是固定 sleep(1.5) 再看返回码；改成短间隔轮询：进程秒退能立刻报错，
+    # 正常启动也不用白等满 1.5 s。
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        rc = proc.poll()
+        if rc is not None:
+            if rc == 0:
+                return 0
+            return _fail(tool_dir, '启动后立即退出（返回码 %s）' % rc)
+        time.sleep(0.1)
     return 0
 
 

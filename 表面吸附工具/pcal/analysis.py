@@ -26,6 +26,9 @@ def default_config():
         'height_sum': 0.0,          # 两臂液柱高度之和 S / cm，0 = 自动估计
         'repeat_n_bubble': 3,       # 最大气泡压力法每个点的平行次数
         'repeat_n_plate': 3,        # 吊片法每个点的平行次数
+        # 浏览/导入文件的文件夹（数据本体在 data/表面吸附数据.json）。
+        # None = 交给 server.default_data_dir() 运行时推导，不写死盘符。
+        'data_dir': None,
         'report_title': '溶液表面吸附的测定',
     }
 
@@ -34,6 +37,7 @@ PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
     'room_temp', 'pressure', 'conc_axis', 'zero_correction',
     'height_mode', 'height_sum', 'repeat_n_bubble', 'repeat_n_plate',
+    'data_dir',
 )
 
 

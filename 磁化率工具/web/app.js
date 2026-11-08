@@ -53,9 +53,12 @@ const CONFIG_TEXT = ['student_name', 'student_id', 'group', 'group_no', 'date'];
 const CONFIG_NUM = ['room_temp', 'pressure'];
 
 function readConfig() {
-  const cfg = { data_dir: (state.config && state.config.data_dir) || '' };
+  const cfg = {};
   CONFIG_TEXT.forEach(k => { cfg[k] = $(k).value.trim(); });
   CONFIG_NUM.forEach(k => { cfg[k] = num(k); });
+  // 数据目录：后端据此决定数据文件存哪儿 / 从哪儿载入
+  const dir = $('dataDir');
+  cfg.data_dir = dir ? dir.value.trim() : ((state.config && state.config.data_dir) || '');
   return cfg;
 }
 function fillConfig(c) {
@@ -64,6 +67,8 @@ function fillConfig(c) {
   CONFIG_NUM.forEach(k => {
     $(k).value = c[k] === null || c[k] === undefined ? '' : c[k];
   });
+  const dir = $('dataDir');
+  if (dir) dir.value = c.data_dir || '';
 }
 
 function renderSummary(s) {
@@ -131,6 +136,88 @@ function renderState(s, fill = true) {
   renderTable(s);
   $('formatted').textContent = s.formatted || '—';
   drawChart();
+  loadFiles(s.data_dir || state.config.data_dir || '');
+}
+
+/* ---------------------------------------------------------------- 数据文件夹
+ * 磁化率没有交互取点，数据就是一份 磁化率数据.json：载入 / 导出两种操作。
+ * 以前只能从浏览器上传 json；文件在学期目录里时，从文件夹里直接选更顺手。
+ */
+let PICKER = null;
+let FILES_DIR = null;
+
+async function loadFiles(dir) {
+  const box = $('filePicker');
+  if (!box) return;
+  if (!dir) {
+    box.innerHTML = '<div class="pcal-files-empty">还没有设置数据文件夹。</div>';
+    $('filesMeta').textContent = '—';
+    return;
+  }
+  if (!window.PcalFiles) {
+    box.innerHTML = '<div class="pcal-files-empty">文件选择组件没加载（/static/files.js）。</div>';
+    return;
+  }
+  try {
+    if (!PICKER) {
+      PICKER = PcalFiles.mount(box, {
+        placeholder: '搜索文件名，如 磁化率',
+        exts: ['.json'],
+        onPick: (rel) => loadFromDir(rel),
+        onPickFile: (abs) => {
+          toast('本工具只读取数据文件夹里的 磁化率数据.json，选中的是文件夹外的文件：' + abs, 7000);
+        },
+      });
+    }
+    if (FILES_DIR === dir && PICKER.files.length) return;
+    const j = await PICKER.load(dir);
+    FILES_DIR = dir;
+    $('filesMeta').textContent = (j && j.ok)
+      ? '共 ' + j.total + ' 个文件' + (j.target_exists ? '，数据文件已在' : '，数据文件还没有生成')
+      : ((j && j.error) || '读取失败');
+    if (j && j.target_rel) PICKER.setValue(j.target_rel);
+  } catch (e) {
+    box.innerHTML = '<div class="pcal-files-empty">读取文件列表失败：' + esc(e.message) + '</div>';
+  }
+}
+
+/** 从数据文件夹里载入 磁化率数据.json（不走 browser 上传）。 */
+async function loadFromDir(rel) {
+  if (rel.split('/').pop() !== '磁化率数据.json') {
+    toast('这份不是本工具的数据文件（当前固定读 磁化率数据.json）：' + rel, 6000);
+    return;
+  }
+  busy(true, '正在载入…');
+  try {
+    const s = await api('/api/state');
+    renderState(s, false);
+    if (window.PcalDraft) PcalDraft.save();
+    setStatus('已从 ' + rel + ' 载入');
+    toast('已载入 ' + rel + '（这是磁盘上当前的数据文件）');
+  } catch (e) {
+    toast('载入失败：' + e.message, 6000);
+  } finally { busy(false); }
+}
+
+async function pickDataDir() {
+  const cur = ($('dataDir') && $('dataDir').value.trim()) || '';
+  busy(true, '请在弹出的窗口里选择数据文件夹…');
+  try {
+    const path = window.PcalFiles ? await PcalFiles.pickFolder(cur)
+                                  : (await api('/api/pickdir?initial=' +
+                                      encodeURIComponent(cur))).path;
+    busy(false);
+    if (!path) { toast('已取消'); return; }
+    $('dataDir').value = path;
+    FILES_DIR = null;
+    PICKER = null;
+    toast('已选择：' + path, 4000);
+    await saveDefault();          // 目录要记住，否则刷新后又回到默认目录
+    await recalc();
+  } catch (e) {
+    busy(false);
+    toast('打开选择窗口失败：' + e.message, 6000);
+  }
 }
 
 async function postData(data) {
@@ -264,6 +351,7 @@ function bindUI() {
   $('btnSample').addEventListener('click', loadSample);
   $('btnSaveData').addEventListener('click', saveData);
   $('fileInput').addEventListener('change', (e) => importData(e.target.files[0]));
+  $('btnBrowse').addEventListener('click', pickDataDir);
   $('btnSaveDefault').addEventListener('click', saveDefault);
   $('btnRecalc').addEventListener('click', recalc);
   $('btnExport').addEventListener('click', exportReport);

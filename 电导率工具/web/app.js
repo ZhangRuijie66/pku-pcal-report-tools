@@ -177,7 +177,60 @@ function renderState(s) {
   $('savedInfo').textContent = s.has_saved ? '已保存封面默认设置（settings.json）'
                                            : '尚未保存封面默认设置';
   drawChart();
+  loadFileList(s.data_dir);
 }
+
+/* ---------------------------------------------------------------- 数据文件列表
+ * 数据文件名是固定的（电导率数据.json），但一个学期的实验目录里往往还堆着
+ * 别的实验的文件；用共享组件 PcalFiles 挂一个可搜索的清单，方便确认
+ * 「我现在到底在读哪一份」。
+ */
+let PICKER = null;
+let PICKER_DIR = null;
+
+async function loadFileList(dir) {
+  const box = $('filePicker');
+  if (!box) return;
+  if (!dir) { box.innerHTML = '<div class="pcal-files-empty">还没有设置数据目录。</div>'; return; }
+  if (!window.PcalFiles) {
+    box.innerHTML = '<div class="pcal-files-empty">文件选择组件没加载（/static/files.js）。</div>';
+    return;
+  }
+  // 每次重算都重拉一遍清单太浪费（学期目录可能有几百个文件）：目录没变就跳过
+  if (PICKER && PICKER_DIR === dir) return;
+  try {
+    if (!PICKER) {
+      PICKER = PcalFiles.mount(box, {
+        placeholder: '搜索文件名，如 电导率 / json',
+        exts: ['.json'],
+        onPick: (rel) => {
+          const name = rel.split('/').pop();
+          if (name === '电导率数据.json') {
+            toast('就是当前在用的数据文件：' + rel, 4000);
+          } else {
+            toast('这份不是本实验的数据文件（当前固定读 电导率数据.json）：' + rel, 6000);
+          }
+        },
+        // 选了数据目录外面的文件：本实验不按单文件工作，只提示，不改目录
+        onPickFile: (abs) => {
+          toast('本实验固定读取数据目录里的 电导率数据.json，选中的是目录外的文件：' + abs, 7000);
+        },
+      });
+    }
+    const j = await PICKER.load(dir);
+    PICKER_DIR = dir;
+    const meta = $('filesMeta');
+    if (meta) {
+      meta.textContent = j && j.ok
+        ? '共 ' + j.total + ' 个文件' + (j.target_exists ? '，数据文件已在' : '，数据文件还没有生成')
+        : ((j && j.error) || '读取失败');
+    }
+    if (j && j.target_rel) PICKER.setValue(j.target_rel);
+  } catch (e) {
+    box.innerHTML = '<div class="pcal-files-empty">读取文件列表失败：' + esc(e.message) + '</div>';
+  }
+}
+
 
 function drawChart() {
   const kind = $('chartKind').value;
@@ -284,11 +337,16 @@ async function pickDir() {
   const cur = $('dataDir').value.trim();
   busy(true, '请在弹出的窗口里选择数据文件夹…');
   try {
-    const r = await api('/api/pickdir?initial=' + encodeURIComponent(cur));
+    // 用共享组件（PcalFiles.pickFolder → /api/pickdir），没加载时退回原来那条路径
+    const path = window.PcalFiles ? await PcalFiles.pickFolder(cur)
+                                  : (await api('/api/pickdir?initial=' +
+                                      encodeURIComponent(cur))).path;
     busy(false);
-    if (r.path) {
-      $('dataDir').value = r.path;
-      toast('已选择：' + r.path, 4000);
+    if (path) {
+      $('dataDir').value = path;
+      toast('已选择：' + path, 4000);
+      PICKER = null;            // 换目录了，重建清单
+      PICKER_DIR = null;
       await recalc(true);
     } else {
       toast('已取消');
@@ -308,7 +366,12 @@ function bindUI() {
   $('btnBrowse').onclick = pickDir;
   $('chartKind').onchange = drawChart;
   document.querySelectorAll('.field input').forEach((el) => {
-    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') recalc(true); });
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      // 手改数据目录后要重建文件清单（renderState 只在目录变了时才重拉）
+      if (el.id === 'dataDir') { PICKER = null; PICKER_DIR = null; }
+      recalc(true);
+    });
   });
 }
 
