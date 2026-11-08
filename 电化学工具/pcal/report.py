@@ -35,6 +35,7 @@ import numpy as np
 
 from . import plotting
 from .docxkit import ReportBuilder
+from .sigfig import sci, sci_pm
 
 ITALIC = {'italic': True}
 
@@ -47,17 +48,10 @@ INTRO_BLANK_LINES = 26          # 引言页预留的空白行（≈13 cm）
 
 
 # ---------------------------------------------------------------- 数值格式
-def sci(x, nd=3):
-    """2.763×10⁻⁷ 形式（普通文本用，×10 的指数走真上标）。nd = 尾数小数位。"""
-    if x is None or not np.isfinite(x):
-        return '—'
-    if x == 0:
-        return '0'
-    e = int(np.floor(np.log10(abs(x))))
-    m = x / 10.0 ** e
-    return '%.*f×10^{%d}' % (nd, m, e)
-
-
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
 def fv(x, nd=3):
     """普通小数；缺数据给「—」。"""
     if x is None or not np.isfinite(x):

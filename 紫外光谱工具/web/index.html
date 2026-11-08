@@ -163,16 +163,27 @@ td{white-space:nowrap}
             <option value="blank">空白文件</option>
           </select>
         </div>
+        <div class="field"><label>查找槽位</label>
+          <input type="search" id="fileSearch" placeholder="输入关键字实时筛选，如 A3、氘灯、空白">
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:10px">
         <div class="field"><label>&nbsp;</label>
           <label class="hint" style="display:flex;align-items:center;gap:6px;margin:0">
             <input type="checkbox" id="fileCompact" style="width:auto"> 收起清单
           </label>
         </div>
+        <div class="field"><label>&nbsp;</label></div>
       </div>
       <p class="hint" id="fileMapNote">—</p>
       <div id="fileMap" class="slotlist"></div>
     </section>
 
+    <!-- ⚠ 这个 <section class="card"> 不能省：2026-11-06 加「数据文件映射」卡片时
+         误把它的 </section> 提前闭合，封面字段就落到卡片外面、丢了白底边框
+         （用户看到「这里的框没了」）。 -->
+    <section class="card">
+      <h2>封面</h2>
       <div class="field"><label>姓名</label><input type="text" id="student_name"></div>
       <div class="field"><label>学号</label><input type="text" id="student_id"></div>
       <div class="field"><label>合作者（本实验两人合作）</label>

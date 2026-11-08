@@ -37,7 +37,7 @@ from . import plotting
 from . import uv
 from .analysis import default_config
 from .docxkit import ReportBuilder, add_rich_text
-from .sigfig import k, pm
+from .sigfig import k, pm, sci, sci_pm
 
 ITALIC = {'italic': True}
 
@@ -70,14 +70,10 @@ SIG_DIGITS = 2
 
 
 
-def sci_pm(x, u, exp=None):
-    """(4.3 ± 0.1)×10⁴ 形式；exp 不给就按数值大小自动选。"""
-    if exp is None:
-        exp = int(np.floor(np.log10(abs(x)))) if x else 5
-    s = 10.0 ** exp
-    return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
-
-
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
 def num_sig(x, n=3):
     """3 位有效数字的普通写法（ε 用）。"""
     if x in (None, 0) or not np.isfinite(x):

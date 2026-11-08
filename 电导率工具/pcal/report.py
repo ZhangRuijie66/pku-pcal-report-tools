@@ -33,7 +33,7 @@ import numpy as np
 from . import conduct
 from . import plotting
 from .docxkit import ReportBuilder
-from .sigfig import k, pm, pct, sig_fig, SIG_DIGITS
+from .sigfig import k, pm, pct, sig_fig, SIG_DIGITS, sci, sci_pm
 
 def pm(x, u, n=SIG_DIGITS):
     """本模块口径：u 缺失时用 4 位有效数字（sig_fig）。"""
@@ -71,28 +71,10 @@ SIG_DIGITS = 2
 
 
 
-def sci(x, nd=3, exp=None):
-    """1.64×10⁻⁵ 形式（普通文本用，指数走真上标）。"""
-    if x is None or not np.isfinite(x):
-        return '—'
-    if x == 0:
-        return '0'
-    if exp is None:
-        exp = int(np.floor(np.log10(abs(x))))
-    m = x / 10.0 ** exp
-    return '%.*f×10^{%d}' % (nd, m, exp)
-
-
-def sci_pm(x, u, exp=None):
-    """(1.436 ± 0.026)×10⁻⁵ 形式。"""
-    if exp is None:
-        exp = int(np.floor(np.log10(abs(x))))
-    s = 10.0 ** exp
-    return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
-
-
-
-
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
 def _latex_sci(x, nd=3, exp=None):
     if x is None or not np.isfinite(x):
         return r'\mathrm{NaN}'
@@ -485,20 +467,41 @@ def _sec_weak(rb, an, fig_kfit):
     rb.table(['瓶号', 'c / (mol·m⁻³)', 'κ_{measured} / (S·m⁻¹)',
               'κ_{corrected} / (S·m⁻¹)', 'Λ_{m} / (S·m²·mol⁻¹)',
               'α', 'K^{⊖}'],
-             table_rows, widths_cm=[1.0, 2.0, 2.6, 2.6, 2.9, 1.6, 3.0])
+             table_rows,
+             # κ_{measured} / κ_{corrected} 两列原来给 2.6 cm 放不下（实测可用
+             # 2.42 cm，Word 折成两行）。各加 0.4 cm；Λ_m 列留足，其余列各让出
+             # 0.1~0.4 cm，总和 16.0 cm = 正文宽（审计 B P1-2）。
+             widths_cm=[1.0, 2.1, 3.0, 3.0, 2.9, 1.3, 2.7])
 
-    rb.para(['5 组数据平衡常数 ', ('t', 'K^{⊖}', ITALIC), ' 的平均值为：'])
+    # 这里的瓶数原来是写死的「5」：瓶数变化（或 drift 结论不同）时
+    # 会印出与数据不符的式子。改为取实际瓶数。
+    n_bot = len(kmean['bottles'])
+    drift_bot = bool(kmean.get('drift'))
+    rb.para(['%d 组数据平衡常数 ' % n_bot, ('t', 'K^{⊖}', ITALIC),
+             ' 的平均值为：'])
     ks_txt = '+'.join(_latex_num(b['k'] * 1e5, 3) for b in kmean['bottles'])
-    rb.equation(r'K^{\ominus}=\frac{%s}{5}\times10^{-5}=%s\times10^{-5}'
-                % (ks_txt, _latex_num(kmean['mean'] * 1e5, 3)))
+    rb.equation(r'K^{\\ominus}=\\frac{%s}{%d}\\times10^{-5}=%s\\times10^{-5}'
+                % (ks_txt, n_bot, _latex_num(kmean['mean'] * 1e5, 3)))
+    if drift_bot:
+        rb.para(['由于各浓度瓶给出的 ', ('t', 'K^{⊖}', ITALIC),
+                 ' 并不完全相同（见下文的不确定度分析），此平均值只代表'
+                 '这几个浓度点上的平均水平。'])
     rb.para(['下面估算其不确定度。联立摩尔电导率、电离度和标准电离平衡常数的'
              '计算式，可得 ', ('t', 'K^{⊖}', ITALIC), ' 的总计算式：'])
     rb.equation(r'K^{\ominus}=\frac{1}{c^{\ominus}}\times'
                 r'\frac{\kappa_{corrected}^{2}}'
                 r'{c(\Lambda_{m}^{\infty})^{2}-\kappa_{corrected}\Lambda_{m}^{\infty}}')
-    # σ_κ 按「读数末位取 2」估计：2×10^(-小数位数)。同一实验里各读数记录的
-    # 有效位数可能不同（0.2770 是 4 位小数 → 2e-4；0.01575 是 5 位 → 2e-5），
-    # 所以正文按实际读数统计，不写死「只有 1 号溶液是 0.0002」。
+    # σ_κ 的末位由**仪器分辨力**决定，不由字符串里写了几个小数位决定。
+    #
+    # ⚠ 这里原来印的是「σ_κ 随记录的小数位数而变（2×10^{−d}，d 为读数的小数位数）」。
+    # 那句话描述的是一个**已经修掉的缺陷**：按小数位定末位时，同一个仪器读数
+    #      '0.277' → 3 位小数 → σ_κ = 2×10⁻³
+    #      '0.2770' → 4 位小数 → σ_κ = 2×10⁻⁴        相差 10 倍
+    # 学生习惯把末尾的 0 省掉，于是「抄了几个 0」直接决定报告精度。
+    # 现在末位按读数量级分档（见 conduct.py 的 KAPPA_RANGE_EDGES）：
+    #   κ > 0.02 S·m⁻¹（仪器大量程，显示到 1 μS·cm⁻¹） → 末位 1e-4 → σ_κ = 2×10⁻⁴
+    #   κ ≤ 0.02 S·m⁻¹（小量程，显示到 0.1 μS·cm⁻¹）    → 末位 1e-5 → σ_κ = 2×10⁻⁵
+    # 所以正文按读数所在的量程统计，不再提「小数位数」。
     def _sigma_txt(v):
         """2e-4 这种值写成普通文本：2×10⁻⁴（用真上标标记，交给 add_rich_text）。"""
         exp = int(round(__import__('math').log10(v)))
@@ -519,11 +522,15 @@ def _sec_weak(rb, an, fig_kfit):
             parts = '、'.join('%d 个读数取 %s' % (counts[v], _sigma_txt(v))
                              for v in uniq)
             sig_segs = [('t', 'σ_{κ}', ITALIC),
-                        ' 随记录的小数位数而变（2×10^{−d}，d 为读数的小数位数）：'
+                        ' 按读数量程分档（大量程 κ > 0.02 S·m⁻¹ 末位取 1×10^{−4}、'
+                        '小量程 κ ≤ 0.02 S·m⁻¹ 末位取 1×10^{−5}）：'
                         '%s S·m⁻¹。' % parts]
     else:
         sig_segs = [('t', 'σ_{κ}', ITALIC), '。']
     rb.para(['电导率读数的不确定度按「末位数字取 2」估计：'] + sig_segs + [
+             '末位由电导率仪在该量程的分辨力决定，与记录时写了几个小数位无关——'
+             '若按记录的小数位数定末位，同一个读数写成 0.277 与 0.2770 会差出 '
+             '10 倍，报告精度就成了「抄写习惯」的函数。'
              '水的电导率不确定度比溶液低 1~2 个数量级，可忽略，'
              '故校正电导率的不确定度近似等于测量电导率的不确定度。'
              '浓度在分母上，其不确定度影响很小，视为常数；',
@@ -548,11 +555,59 @@ def _sec_weak(rb, an, fig_kfit):
                 r'-\kappa_{corrected}\Lambda_{m}^{\infty}\right)^{2}}')
     rb.para(['代入各溶液的 ', ('t', 'c', ITALIC), ' 和 ',
              ('t', 'κ_{corrected}', ITALIC),
-             '，得到各瓶的不确定度（表8）。总不确定度按独立测量合成：'])
+             '，得到各瓶的不确定度（表8）。'])
+    # ⚠ 这里原来印的是 σ_K° = √(Σσ_i²)/5，即把 5 个**不同浓度瓶**当成
+    # 同一个量的 5 次重复测量。但它们是 5 个独立估计，瓶间还随浓度单调漂移，
+    # 所以那个式子只反映「瓶内读数传播」，把瓶间系统漂移当成了 0
+    # （实测 2.5676e-07，而瓶间 SEM 是 7.7960e-07，相差 3.04 倍）。
+    # 现在按两段式报：瓶内项与瓶间项取大（见 conduct.k_from_mean）。
+    sig_within = float(kmean.get('sigma_within', float('nan')))
+    sig_between = float(kmean.get('sigma_between', float('nan')))
+    drift = bool(kmean.get('drift'))
+    rel_spread = float(kmean.get('rel_spread', float('nan')))
+    sig_used = float(kmean['sigma'])
+    n_bottle = len(kmean['bottles'])
+
+    rb.para(['把这些瓶看作同一物理量的重复测定并不合适：它们是 %d 个不同浓度下的'
+             '独立估计，瓶与瓶之间还存在随浓度变化的系统漂移。故总不确定度取'
+             '以下两者中的较大者。' % n_bottle])
+    rb.para(['（1）瓶内项——各瓶由 ', ('t', 'σ_{κ}', ITALIC), ' 与 ',
+             ('t', 'σ_{Λ_{m}^{∞}}', ITALIC),
+             ' 逐瓶传播得到的不确定度，按独立量合成后取平均：'])
     sig_parts = '+'.join(_latex_num(b['sigma_k'] ** 2 / 1e-14, 2)
                          for b in kmean['bottles'])
-    rb.equation(r'\sigma_{K^{\ominus}}=\frac{\sqrt{%s}}{5}\times10^{-7}=%s\times10^{-7}'
-                % (sig_parts, _latex_num(kmean['sigma'] * 1e7, 2)))
+    rb.equation(r'\sigma_{K^{\ominus}}^{\mathrm{within}}='
+                r'\frac{\sqrt{%s}}{%d}\times10^{-7}=%s\times10^{-7}'
+                % (sig_parts, n_bottle,
+                   _latex_num(sig_within * 1e7, 2)))
+    rb.para(['（2）瓶间项——各瓶 ', ('t', 'K^{⊖}', ITALIC),
+             ' 的标准偏差除以瓶数的平方根，即平均值自身的标准误，'
+             '衡量的是「不同浓度瓶给出的 K⊖ 彼此有多一致」（式中带下标 m 的量表示各瓶 K⊖ 的平均值）：'])
+    rb.equation(r'\sigma_{K^{\ominus}}^{\mathrm{between}}='
+                r'\frac{1}{\sqrt{%d}}\sqrt{\frac{\sum_{i=1}^{%d}'
+                r'\left(K_{i}^{\ominus}-\mathrm{m}^{\ominus}\right)^{2}'
+                r'}{%d}}=%s\times10^{-7}'
+                % (n_bottle, n_bottle, n_bottle - 1,
+                   _latex_num(sig_between * 1e7, 2)))
+    rb.equation(r'\sigma_{K^{\ominus}}=\mathrm{max}\left(\sigma_{K^{\ominus}}'
+                r'^{\mathrm{within}},\ \sigma_{K^{\ominus}}^{\mathrm{between}}'
+                r'\right)=%s\times10^{-7}'
+                % _latex_num(sig_used * 1e7, 2))
+    if drift:
+        # ⚠ 百分比不能写成 '...%.1f%%，...' 再对最后一段做 % 运算：
+        # '%' 只作用于紧挨着它的那个字符串字面量，而 '%.1f%%' 在队列里
+        # 的位置与 % 运算的对象不一定是同一个片段，会抛
+        # TypeError: not all arguments converted。先算好整句再插进列表。
+        spread_txt = ('本组数据中各瓶 K^{⊖} 的相对离散为 %.1f%%，'
+                      '瓶间项显著大于瓶内项，说明 K^{⊖} 随浓度存在系统漂移'
+                      '（活度系数未校正所致），因此取瓶间项作为不确定度；'
+                      '此时平均值只代表这些浓度点上的平均水平，'
+                      '不代表无限稀释的真值。' % rel_spread)
+        rb.para([spread_txt])
+    else:
+        rb.para(['本组数据中瓶间项不大于瓶内项，两者一致，说明各浓度瓶给出的 ',
+                 ('t', 'K^{⊖}', ITALIC),
+                 ' 相互吻合，取瓶内项作为不确定度。'])
     rb.caption('表8  不同浓度 HAc 的平衡常数不确定度')
     rb.table(['瓶号', 'σ_{K⊖}'],
              [[str(i + 1), sci(b['sigma_k'], 2, -7)]

@@ -642,6 +642,103 @@ class StateAndStatusTests(UpdateTestBase):
         self.assertEqual(status['error'], '')
 
 
+class RateLimitTests(UpdateTestBase):
+    """403 / 429 限流：必须单独提示「被限流」，不能笼统说「网络错误」。
+
+    背景（2026-11-08 审计 D P1-4）：`_core/updater.py:276-282` 已经实现了这条
+    分支，但 `tests/test_update.py` 里搜 `403|429|限流` 命中 **0**——下次有人
+    改动 `_fetch` 的异常分类，限流能力会静默消失，用户只会看到一句
+    「检查更新失败」，不知道是 GitHub 匿名 API 60 次/小时用完了（该等一小时），
+    还是一个可以重试的网络抖动。
+
+    这里不 mock `urllib.error.HTTPError`，而是起一个**真的本地 http.server**
+    返 403 / 429——这样连「HTTPError 有没有被正确构造/捕获」这条链也一起测到。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            code = 403
+
+            def do_GET(self):                      # noqa: N802  (http.server 接口)
+                body = b'{"message": "API rate limit exceeded"}'
+                self.send_response(Handler.code)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):          # 静音：测试输出别被访问日志淹没
+                pass
+
+        cls._handler = Handler
+        cls._server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        cls._port = cls._server.server_address[1]
+        cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)
+        cls._thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._server.shutdown()
+        cls._server.server_close()
+        cls._thread.join(timeout=5)
+        cls._handler = None
+
+    def _with_status(self, code):
+        """把本地假 GitHub 切到指定状态码，并让 updater 指向它。"""
+        self._handler.code = code
+        base = 'http://127.0.0.1:%d' % self._port
+        patcher = mock.patch.dict(os.environ, {
+            'PCAL_UPDATE_API_BASE': base,
+            'PCAL_UPDATE_CODELOAD': base,
+            'PCAL_UPDATE_RAW': base,
+        }, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_403_is_reported_as_rate_limit(self):
+        """HTTP 403（GitHub 匿名 API 超 60 次/小时）要说「被限流」。"""
+        self._with_status(403)
+        with self.assertRaises(updater.UpdateError) as ctx:
+            updater.latest_remote_tag(timeout=5)
+        message = str(ctx.exception)
+        self.assertIn('限流', message,
+                      '403 必须明确说是「被限流」，实际消息：%r' % message)
+        self.assertIn('403', message, '消息里要带状态码便于排障：%r' % message)
+        # 不能退化成笼统的「失败」/「网络」说法
+        self.assertNotIn('不是合法 JSON', message)
+
+    def test_429_is_reported_as_rate_limit(self):
+        """HTTP 429（Too Many Requests）同样要说「被限流」。"""
+        self._with_status(429)
+        with self.assertRaises(updater.UpdateError) as ctx:
+            updater.latest_remote_tag(timeout=5)
+        message = str(ctx.exception)
+        self.assertIn('限流', message,
+                      '429 必须明确说是「被限流」，实际消息：%r' % message)
+        self.assertIn('429', message, '消息里要带状态码便于排障：%r' % message)
+
+    def test_other_http_errors_are_not_called_rate_limit(self):
+        """500 这类服务端错误不该被说成「限流」（宁少勿虚：别误导用户）。"""
+        self._with_status(500)
+        with self.assertRaises(updater.UpdateError) as ctx:
+            updater.latest_remote_tag(timeout=5)
+        message = str(ctx.exception)
+        self.assertNotIn('限流', message,
+                         '500 是服务端错误，不该说成限流：%r' % message)
+        self.assertIn('500', message, '消息里要带状态码：%r' % message)
+
+    def test_rate_limit_message_survives_check_for_update(self):
+        """走 check_for_update() 也要把「限流」这句话原样传给用户。"""
+        self._with_status(429)
+        with self.assertRaises(updater.UpdateError) as ctx:
+            updater.check_for_update(force=True, timeout=5)
+        self.assertIn('限流', str(ctx.exception))
+
+
 class NoRealRepoMutationGuard(unittest.TestCase):
     """兜底：确认测试全程没把 PCAL_UPDATE_ROOT 指到真实仓库、也没改真文件。"""
 

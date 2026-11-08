@@ -60,8 +60,18 @@ SIG_DIGITS = 2
 
 
 
-def sci(x, nd=2):
-    """把数值写成 a×10^n，n 用 OMML 上标。返回 (系数, 指数)。"""
+DASH = '—'
+
+
+def sci_pair(x, nd=2):
+    """把数值写成 (系数, 指数)，供 tex_sci 拼 LaTeX 用。
+
+    ⚠ 本文件的 sci 历史上返回 tuple、签名与 sigfig.sci（返回字符串）不同，
+    所以没有并进 sigfig，而是改名 sci_pair 让两个同名函数别撞车。
+    None / 非有限也走 '—'，与 sigfig 的约定一致（审计 B P1-3）。
+    """
+    if x is None or not np.isfinite(x):
+        return DASH, 0
     if x == 0:
         return '0', 0
     e = int(np.floor(np.log10(abs(x))))
@@ -69,7 +79,7 @@ def sci(x, nd=2):
 
 
 def tex_sci(x, nd=2):
-    a, e = sci(x, nd)
+    a, e = sci_pair(x, nd)
     return r'%s\times10^{%d}' % (a, e)
 
 

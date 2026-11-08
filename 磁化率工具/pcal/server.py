@@ -34,6 +34,13 @@ SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()          # matplotlib 不是线程安全的，预览图串行生成
+EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
+MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不去 rfile.read
+
+
+class BodyTooLarge(ValueError):
+    """Content-Length 非法或超过 MAX_BODY_BYTES。"""
+
 
 PERSIST_KEYS = ['student_name', 'student_id', 'group', 'group_no',
                 'date', 'room_temp', 'pressure']
@@ -109,8 +116,15 @@ def _analysis(cfg, data=None, force=False):
 
 
 def _summary(an):
-    cfg = STATE.get('config') or default_config()
-    data = STATE.get('data') or _current_data()
+    # 快照必须在锁里取：否则并发 /api/data 与 /api/calc 时可能读到
+    # 「新 config + 旧 data」的混合态，并把它渲染出去、再拿去导出。
+    with LOCK:
+        cfg = STATE.get('config')
+        data = STATE.get('data')
+    if cfg is None:
+        cfg = default_config()
+    if data is None:
+        data = _current_data()
 
     return {
         'ok': True,
@@ -129,6 +143,12 @@ def _summary(an):
 
 
 def _export(cfg, data, progress=None):
+    """导出报告。整段串行：并发 / 连点两下时不能算出同一个文件名。"""
+    with EXPORT_LOCK:
+        return _export_locked(cfg, data, progress=progress)
+
+
+def _export_locked(cfg, data, progress=None):
     an = _analysis(cfg, data, force=True)
 
     # 文件名：空姓名/学号要有兜底，非法字符要清洗——否则会建出
@@ -150,8 +170,13 @@ def _export(cfg, data, progress=None):
     else:
         template_path = TEMPLATE
 
-    rpt.build_report(an, cfg, out_path, plots_dir, template_path,
-                     progress=progress, cover_tail_blanks=0)
+    # matplotlib 的 mathtext 解析器是进程级全局状态：预览与导出同时建图会互相踩
+    # （实测 4 导出 + 12 预览 → 全报 ParseException）。这里也拿 PREVIEW_LOCK，
+    # 让「建图 + savefig」全局串行。锁序 EXPORT_LOCK -> PREVIEW_LOCK，
+    # 与只拿 PREVIEW_LOCK 的预览路径不冲突，不成环。
+    with PREVIEW_LOCK:
+        rpt.build_report(an, cfg, out_path, plots_dir, template_path,
+                         progress=progress, cover_tail_blanks=0)
     try:
         workspace.save(os.path.dirname(out_path), {'config': cfg, 'data': data},
                        cfg, '磁化率', template_path)
@@ -218,6 +243,8 @@ def _preview_png(kind, chart):
 
 
 class Handler(BaseHTTPRequestHandler):
+    # 单次 socket 读写超时：半截请求最多占住线程这么久就断开。
+    timeout = 30
     def log_message(self, fmt, *args):
         pass
 
@@ -228,6 +255,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _error(self, exc):
+        """把异常回给前端（11 个模块里原来只有这里缺）。
+        traceback 只在本机调试 PCAL_DEBUG=1 时附带，不把内部路径吐给调用方。"""
+        payload = {'ok': False, 'error': str(exc)}
+        if os.environ.get('PCAL_DEBUG'):
+            payload['trace'] = traceback.format_exc()
+        self._json(payload, 400)
 
     def _html(self, path):
         # 只允许读 web/ 目录里的文件：不做 normpath 校验的话
@@ -271,37 +306,57 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
-        if path == '/' or path == '/index.html':
-            self._html('index.html')
-        elif path == '/api/state':
-            cfg = default_config_with_saved(load_settings())
-            an = _analysis(cfg)
-            self._json(_summary(an))
-        elif path == '/api/preview':
-            cfg = default_config_with_saved(load_settings())
-            an = _analysis(cfg)
-            kind = (query.get('kind') or ['chi_m'])[0]
-            with PREVIEW_LOCK:
-                png = _preview_png(kind, an.get('chart') or [])
-            self._png(png)
-        elif path.startswith('/static/'):
-            self._html(path[len('/static/'):])
-        elif path.startswith('/web/'):
-            self._html(path[1:])
-        else:
-            self.send_error(404)
+        # 11 个模块里只有这里原来整体没有 try/except：数据文件结构一坏，
+        # /api/state 与 /api/preview 直接断连（Remote end closed connection），
+        # 用户看到「正在初始化…」永远不停，点「载入示例数据」也救不回来。
+        try:
+            if path == '/' or path == '/index.html':
+                self._html('index.html')
+            elif path == '/api/state':
+                cfg = default_config_with_saved(load_settings())
+                an = _analysis(cfg)
+                self._json(_summary(an))
+            elif path == '/api/preview':
+                cfg = default_config_with_saved(load_settings())
+                an = _analysis(cfg)
+                kind = (query.get('kind') or ['chi_m'])[0]
+                with PREVIEW_LOCK:
+                    png = _preview_png(kind, an.get('chart') or [])
+                self._png(png)
+            elif path.startswith('/static/'):
+                self._html(path[len('/static/'):])
+            elif path.startswith('/web/'):
+                self._html(path[1:])
+            else:
+                self.send_error(404)
+        except Exception as exc:                        # noqa: BLE001
+            return self._error(exc)
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(length).decode('utf-8') if length else '{}'
-
         try:
-            payload = json.loads(body) if body else {}
-        except ValueError:
-            payload = {}
+            length = int(self.headers.get('Content-Length', 0))
+            # 同其它 10 个模块：负值会让 rfile.read(-1) 一直读到连接关闭。
+            if length < 0 or length > MAX_BODY_BYTES:
+                raise BodyTooLarge('请求体 %s 字节，超过上限 %d 字节'
+                                   % (length, MAX_BODY_BYTES))
+            body = self.rfile.read(length).decode('utf-8') if length else '{}'
+            try:
+                payload = json.loads(body) if body else {}
+            except ValueError:
+                payload = {}
+            if not isinstance(payload, dict):
+                # body 是 JSON 数组/字符串时 payload.items() 会抛 AttributeError，
+                # 原来直接把连接掐了（实测 POST /api/config body=[] 直接断连）。
+                payload = {}
+            self._handle_post(path, payload)
+        except BodyTooLarge as exc:
+            return self._json({'ok': False, 'error': str(exc)}, 413)
+        except Exception as exc:                        # noqa: BLE001
+            return self._error(exc)
 
+    def _handle_post(self, path, payload):
         if path == '/api/config':
             cfg = default_config_with_saved(load_settings())
             for key, value in payload.items():

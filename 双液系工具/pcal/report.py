@@ -423,7 +423,10 @@ def _sec_boiling(rb, analysis, rows, azeo, png_phase, fig_no, tbl_no):
     rb.table(['V(乙醇) / mL', 'V(环己烷) / mL', 'n_{g,1}', 'n_{g,2}',
               'n_{l,1}', 'n_{l,2}', 'T_{b} / ℃', 'p_{0} / kPa'],
              rows3,
-             widths_cm=[2.1, 2.3, 1.9, 1.9, 1.9, 1.9, 1.9, 2.0],
+             # 列 1/2 的表头是「V(乙醇) / mL」这类，原来给 2.1/2.3 cm 放不下
+             # （实测可用 1.92/2.12 cm，Word 折成两行）。各加 0.4/0.3 cm，
+             # 其余列各让出 0.05~0.1 cm，总和 16.0 cm = 正文宽（审计 B P1-2）。
+             widths_cm=[2.5, 2.6, 1.8, 1.8, 1.8, 1.8, 1.8, 1.9],
              keep_together=False)
 
     rb.heading('3.2.2 沸点-成分相图的绘制', 3)

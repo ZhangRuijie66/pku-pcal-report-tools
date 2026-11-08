@@ -55,24 +55,42 @@ def _mean(vals):
 
 
 def _ols(x, y):
-    """y = m·x + b 的最小二乘，参数标准误按 (n−2) 估计。"""
+    """y = m·x + b 的最小二乘，参数标准误按 (n−2) 估计。
+
+    ⚠ 退化输入必须返回 NaN 而不是抛异常（原来 `m = sxy / sxx` 在 sxx = 0
+    时抛 ZeroDivisionError）：
+      · n < 3         —— 两点能连一条线但无法估残差，点更少则无意义；
+      · sxx == 0      —— 所有 x 相同（例如 5 组溶液的电容读数被填成同一个值），
+                         直线方向完全由数据决定不了。
+    这两种情况都会让 Høst 外推的 ε₁、ρ₁ 失去意义，上层应当给出**可读的
+    告警**而不是让用户看到 500 / 弹栈。
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     n = x.size
+    nan = float('nan')
+    if n < 3:
+        return {'slope': nan, 'intercept': nan, 'sigma_slope': nan,
+                'sigma_intercept': nan, 'r2': nan, 'n': int(n), 'sxx': 0.0,
+                'degenerate': True}
     xm, ym = x.mean(), y.mean()
     sxx = float(((x - xm) ** 2).sum())
+    if not (sxx > 0):
+        return {'slope': nan, 'intercept': nan, 'sigma_slope': nan,
+                'sigma_intercept': nan, 'r2': nan, 'n': int(n), 'sxx': 0.0,
+                'degenerate': True}
     sxy = float(((x - xm) * (y - ym)).sum())
     m = sxy / sxx
     b = ym - m * xm
     resid = y - (m * x + b)
     ss_res = float((resid ** 2).sum())
     ss_tot = float(((y - ym) ** 2).sum())
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float('nan')
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else nan
     s2 = ss_res / (n - 2)
     return {'slope': m, 'intercept': b,
             'sigma_slope': math.sqrt(s2 / sxx),
             'sigma_intercept': math.sqrt(s2 * (1.0 / n + xm * xm / sxx)),
-            'r2': r2, 'n': int(n), 'sxx': sxx}
+            'r2': r2, 'n': int(n), 'sxx': sxx, 'degenerate': False}
 
 
 # ---------------------------------------------------------------- 示例数据
@@ -312,14 +330,34 @@ def analyze(data, cfg=None):
         + (((n_d ** 2 - 1.0) / (n_d ** 2 + 2.0)) * s_rho2 / rhoB_de45 ** 2) ** 2)
 
     # ---- 偶极矩
+    #
+    # μ = MU·√[(P̄₂^∞ − R)·T]，其中 P̄₂^∞ 是总摩尔极化度、R 是摩尔折射度
+    # （电子极化度）。**物理上必须 P > R**（转向极化度 = P − R ≥ 0）；若
+    # 输入数据让 P ≤ R，说明电容/折射率读数有误，此时 μ 无解，应当给出
+    # 一条可读的告警，而不是让 math.sqrt 抛 ValueError 把整页 500。
+    # 另外 μ 的全部不确定度表达式的分母都是 2√(P−R)，dP → 0 时一起废掉。
     P_m3 = P_inf * 1.0e-6           # cm³ → m³
     s_P_m3 = s_P * 1.0e-6
     R_m3 = R_molar * 1.0e-6
     s_R_m3 = s_R * 1.0e-6
     dP = P_m3 - R_m3
-    mu = MU_CONST * math.sqrt(dP * T_K)
-    s_mu = MU_CONST * math.sqrt(T_K) * math.sqrt(s_P_m3 ** 2 + s_R_m3 ** 2) \
-        / (2.0 * math.sqrt(dP))
+    dP_ok = math.isfinite(dP) and dP > 0.0
+    if dP_ok:
+        mu = MU_CONST * math.sqrt(dP * T_K)
+        s_mu = MU_CONST * math.sqrt(T_K) \
+            * math.sqrt(s_P_m3 ** 2 + s_R_m3 ** 2) / (2.0 * math.sqrt(dP))
+    else:
+        mu = s_mu = float('nan')
+        if math.isfinite(P_inf) and math.isfinite(R_molar):
+            warnings.append(
+                'P̄₂^{∞} = %.2f cm³·mol⁻¹ 不大于摩尔折射度 R = %.2f cm³·mol⁻¹，'
+                '转向极化度为负，无法由 Debye 方程求偶极矩；'
+                '请检查电容读数（C′空/C′环/各浓度溶液的电容）与折射率、密度'
+                % (P_inf, R_molar))
+        else:
+            warnings.append(
+                'P̄₂^{∞} 或 R 算不出来（解质常数/密度拟合退化），'
+                '无法求偶极矩；请检查溶液数据是否至少 3 组且浓度有差异')
 
     # ---- 4.1.1 末尾：假设每个电容读数有 σ_C′ 的误差
     inv = 1.0 / (eps_cyc - 1.0)
@@ -328,28 +366,47 @@ def analyze(data, cfg=None):
     c1 = sols[0]['c_mean'] if sols else c_cyc
     s_eps_h = math.sqrt((s_c_hyp / C0) ** 2 + (s_Cdist_h / C0) ** 2
                         + ((c1 - C_dist) * s_C0_h / C0 ** 2) ** 2)
-    s_a_h = s_eps_h / math.sqrt(eps_fit['sxx'])
+    s_a_h = s_eps_h / math.sqrt(eps_fit['sxx']) if eps_fit['sxx'] > 0 \
+        else float('nan')
     s_P_h = _sigma_P(eps1, rho1, M1, M2, s_eps1, s_rho1, s_a_h, s_b,
                      a, b)[0]
-    s_mu_h = MU_CONST * math.sqrt(T_K) \
-        * math.sqrt((s_P_h * 1e-6) ** 2 + s_R_m3 ** 2) / (2.0 * math.sqrt(dP))
 
     # ---- 4.1.2 假设温度有 σ_T 的波动
     s_T_K = s_T_hyp
-    s_mu_T = MU_CONST * 0.5 * math.sqrt(
-        T_K / dP * (s_P_m3 ** 2 + s_R_m3 ** 2) + dP / T_K * s_T_K ** 2)
 
     # ---- 4.1.3 摩尔原子极化度的影响
     s_P_atom = p_atom_frac * P_inf
     s_P_corr = math.sqrt(s_P ** 2 + s_P_atom ** 2)
-    s_mu_atom = MU_CONST * math.sqrt(T_K) \
-        * math.sqrt((s_P_corr * 1e-6) ** 2 + s_R_m3 ** 2) / (2.0 * math.sqrt(dP))
 
+    # 三条「假设某项有误差时 μ 会变多少」的复算，分母同样是 2√(P−R)：
+    # dP ≤ 0 时全部无意义，一并给 NaN，别让报告印出 inf/nan 拼成的怪式子。
+    def _s_mu_of(s_p_m3):
+        if not dP_ok:
+            return float('nan')
+        return MU_CONST * math.sqrt(T_K) \
+            * math.sqrt(s_p_m3 ** 2 + s_R_m3 ** 2) / (2.0 * math.sqrt(dP))
+
+    s_mu_h = _s_mu_of(s_P_h * 1e-6)
+    if dP_ok:
+        s_mu_T = MU_CONST * 0.5 * math.sqrt(
+            T_K / dP * (s_P_m3 ** 2 + s_R_m3 ** 2) + dP / T_K * s_T_K ** 2)
+    else:
+        s_mu_T = float('nan')
+    s_mu_atom = _s_mu_of(s_P_corr * 1e-6)
+
+    # ---- 数据质量告警（必须放在所有计算之后，否则退化输入会在跑到这里
+    # 之前就崩掉，告警永远执行不到——这正是原来「溶液只剩 1 组时只看到
+    # 弹栈、看不到任何提示」的原因）
     if len(sols) < 3:
-        warnings.append('溶液数据不足 3 组，无法拟合')
-    if eps_fit['r2'] < 0.99:
+        warnings.append('溶液数据不足 3 组（当前 %d 组），ε–x 与 ρ–x 拟合无意义'
+                        % len(sols))
+    if eps_fit.get('degenerate'):
+        warnings.append('所有溶液点的组成 x 相同或有效点不足，ε–x 拟合退化')
+    elif np.isfinite(eps_fit['r2']) and eps_fit['r2'] < 0.99:
         warnings.append('ε–x 拟合 R² = %.4f 偏低，请检查数据' % eps_fit['r2'])
-    if rho_fit['r2'] < 0.99:
+    if rho_fit.get('degenerate'):
+        warnings.append('所有溶液点的组成 x 相同或有效点不足，ρ–x 拟合退化')
+    elif np.isfinite(rho_fit['r2']) and rho_fit['r2'] < 0.99:
         warnings.append('ρ–x 拟合 R² = %.4f 偏低，请检查数据' % rho_fit['r2'])
 
     return {

@@ -36,6 +36,13 @@ SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
+EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
+MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不去 rfile.read
+
+
+class BodyTooLarge(ValueError):
+    """Content-Length 非法或超过 MAX_BODY_BYTES。"""
+
 
 
 # ---------------------------------------------------------------- 设置
@@ -118,8 +125,15 @@ def _analysis(cfg, data=None, force=False):
 
 
 def _summary(an):
-    cfg = STATE.get('config') or default_config()
-    data = STATE.get('data') or _current_data()
+    # 快照必须在锁里取：否则并发 /api/data 与 /api/calc 时可能读到
+    # 「新 config + 旧 data」的混合态，并把它渲染出去、再拿去导出。
+    with LOCK:
+        cfg = STATE.get('config')
+        data = STATE.get('data')
+    if cfg is None:
+        cfg = default_config()
+    if data is None:
+        data = _current_data()
     return {
         'ok': True,
         'config': cfg,
@@ -189,6 +203,12 @@ def _unique_path(path, max_tries=50):
 
 
 def _export(cfg, data):
+    """导出报告。整段串行：并发 / 连点两下时不能算出同一个文件名。"""
+    with EXPORT_LOCK:
+        return _export_locked(cfg, data)
+
+
+def _export_locked(cfg, data):
     an = _analysis(cfg, data)
     # 导出报告**不写数据文件**：保存由 /api/data 负责。原来这里会
     # save_data(DATA_FILE, STATE['data'])，于是「载入示例 → 计算 → 一键生成报告」
@@ -200,8 +220,13 @@ def _export(cfg, data):
     out, note = _unique_path(os.path.join(out_dir, name))
     plots = os.path.join(out_dir, 'figures')
     logs = []
-    rpt.build_report(an, cfg, out, plots, TEMPLATE,
-                     progress=lambda m: logs.append(m))
+    # matplotlib 的 mathtext 解析器是进程级全局状态：预览与导出同时建图会互相踩
+    # （实测 4 导出 + 12 预览 → 全报 ParseException）。这里也拿 PREVIEW_LOCK，
+    # 让「建图 + savefig」全局串行。锁序 EXPORT_LOCK -> PREVIEW_LOCK，
+    # 与只拿 PREVIEW_LOCK 的预览路径不冲突，不成环。
+    with PREVIEW_LOCK:
+        rpt.build_report(an, cfg, out, plots, TEMPLATE,
+                         progress=lambda m: logs.append(m))
     try:
         workspace.save(out_dir, {'config': cfg, 'data': data}, cfg,
                        '偶极矩', TEMPLATE)
@@ -277,6 +302,8 @@ def _parse_text(text):
 
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
+    # 单次 socket 读写超时：半截请求最多占住线程这么久就断开。
+    timeout = 30
     server_version = 'PChemDipole/1.0'
 
     def log_message(self, fmt, *args):
@@ -310,6 +337,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
+        # Content-Length 为负时 rfile.read(-1) 会一直读到连接关闭；超过上限同理——
+        # 一个声明 1 GB 的慢速请求能长期占住一个线程（实测 30 个悬挂 = 30 个线程）。
+        if n < 0 or n > MAX_BODY_BYTES:
+            raise BodyTooLarge('请求体 %s 字节，超过上限 %d 字节'
+                               % (n, MAX_BODY_BYTES))
         if not n:
             return {}
         return json.loads(self.rfile.read(n).decode('utf-8'))
@@ -369,14 +401,19 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/data':
                 body = self._body()
                 data = _normalize_data(body.get('data'))
-                save_data(DATA_FILE, data)
-                STATE['data'] = data
+                # 写盘与 STATE 更新放同一把锁：原来 STATE['data'] 在锁外写，
+                # 会与 _analysis() 里的 STATE.update 交叉，读到混合态。
+                with LOCK:
+                    save_data(DATA_FILE, data)
+                    STATE['data'] = data
                 return self._json({'ok': True, 'data_file': DATA_FILE})
             if u.path == '/api/import':
                 kind = (q.get('kind') or ['file'])[0]
                 body = self._body()
                 return self._json(_import(kind, body))
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
+        except BodyTooLarge as exc:
+            return self._json({'ok': False, 'error': str(exc)}, 413)
         except Exception as exc:                       # noqa: BLE001
             return self._error(exc)
 

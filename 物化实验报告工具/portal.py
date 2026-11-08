@@ -37,7 +37,21 @@ LOG_PATH = os.path.join(LAB_DIR, '_tools', '启动日志.log')
 PROFILE_PATH = os.environ.get('PCAL_PROFILE') or os.path.join(LAB_DIR, 'profile.json')
 REPORT_DIR = os.path.join(LAB_DIR, '实验报告输出')
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-PORTAL_PORTS = (8700, 8730)              # 入口页优先用 8700，被占了往后找
+# 入口页端口区间（左闭右开）：8700..8729。
+# **单一真源**：find_portal_port() 按它扫描，入口自己挑端口也按它的宽度往后挪，
+# 两者宽度必须相等——否则入口落在扫描盲区里，"再点一次快捷方式"会因为找不到
+# 已在跑的那个而再起一套（2026-11-08 审计实测：占住 8700..8729 后入口落到 8730，
+# 再点一次真的起了第二个入口，同时在服务 :8730 与 :8731）。
+#
+# 区间上界 8730 是**故意的**：模块端口从 8731 起（8731/8741/…/8831），入口区间
+# 必须与它们完全不相交，否则入口会抢走某模块的首选端口、把那个模块挤到偏移端口上。
+# PORTAL_PORTS[1] 不是"往后找 60 个"的起点，改它之前先看 PORTAL_SPAN 与模块端口表。
+PORTAL_PORTS = (8700, 8730)
+PORTAL_SPAN = PORTAL_PORTS[1] - PORTAL_PORTS[0]   # 入口往后找的宽度（= 30）
+
+# 模块端口的后移宽度：从模块首选端口往后找这么多个。
+# 模块端口间隔只有 10，往后找 60 个足够跨过相邻模块的占位；**不要改小**。
+FREE_PORT_SPAN = 60
 LAUNCHER_PATH = os.path.join(LAB_DIR, '_tools', 'launcher.py')
 
 # ---------------------------------------------------------------- 版本与更新
@@ -212,8 +226,17 @@ def _port_busy(port):
     return False
 
 
-def _free_port(preferred):
-    for port in range(preferred, preferred + 60):
+def _free_port(preferred, span=None):
+    """从 preferred 起往后找一个没人监听的端口；找不到返回 0。
+
+    span 默认 FREE_PORT_SPAN（模块端口用的宽度，60）。
+    入口页调它时必须显式传 PORTAL_SPAN —— 入口的扫描区间
+    （find_portal_port() 扫的 range(*PORTAL_PORTS)）必须和这里找的宽度**完全相等**，
+    否则入口会落在自己找不到的端口上，单实例守卫失效。
+    """
+    if span is None:
+        span = FREE_PORT_SPAN
+    for port in range(preferred, preferred + span):
         if not _port_busy(port):
             return port
     return 0
@@ -250,8 +273,8 @@ def _env_port():
 def find_portal_port():
     """已经有一个入口页在跑就复用它（重复点快捷方式只会开一个新标签页）。
 
-    端口区间沿用原来的 range(PORTAL_PORTS[0], PORTAL_PORTS[1])（8700..8729：
-    入口优先 8700，被占了就往后挪，所以必须整段都找）；
+    扫描范围 = range(*PORTAL_PORTS)（8700..8729），与入口自己挑端口用的
+    PORTAL_SPAN **宽度严格相等**（tests/test_portal_ports.py 守着这条）。
     若环境变量 PCAL_PORTAL_PORT 指定了端口（测试或多实例），先查那一个，
     让 launcher.py --restart 也能找对地方。
     """
@@ -969,7 +992,8 @@ def main():
             return 1
         port = requested
     else:
-        port = _free_port(PORTAL_PORTS[0])
+        # 宽度必须等于 find_portal_port() 的扫描宽度，否则挑到盲区里 → 单实例失效
+        port = _free_port(PORTAL_PORTS[0], PORTAL_SPAN)
     if not port:
         print('找不到空闲端口，退出。')
         return 1

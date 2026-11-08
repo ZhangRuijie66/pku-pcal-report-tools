@@ -199,13 +199,24 @@ def _scripts_to_markers(text):
 #   · 拉丁字母、小写希腊字母 = 变量 → 斜体
 #   · 大写希腊字母（Δ、Σ…）、数字、运算符、空格 = 正体
 # 所以 'Δ T' 要写成两个 run：正体的 Δ + 斜体的 T。
+#
+# ⚠ 但「大写希腊字母一律正体」这条只对**算子**成立：Δ（增量）、Σ（求和）、
+# Π（连乘）、∫ 之类。有些大写希腊字母本身是**量符号**，按 §3.2 必须斜体，
+# 典型的就是摩尔电导率 Λ（电导率报告表 1/表 7 的表头 Λ_{m}）。早先这里把
+# 大写字母一律判正体，于是 Λ 正体、而它的下标 m 反而斜体，两处都反了
+# （审计 B P1-4）。这份白名单就是「大写里当量符号、要斜体」的那几个。
 _GREEK_LOWER = set('αβγδεζηθικλμνξοπρστυφχψω')
 _GREEK_UPPER = set('ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ')
+_GREEK_UPPER_QUANTITY = set('ΛΓΩΦ')      # 量符号：Λ_m 摩尔电导率、Γ_∞ 表面过剩、
+                                         # Ω 旋光度、Φ 逸度系数 → 斜体
+# 「不是量符号」的大写希腊字母 = 算子 + 其余：一律正体
+_GREEK_UPPER_UPRIGHT = _GREEK_UPPER - _GREEK_UPPER_QUANTITY
 
 
 def _is_var_char(ch):
-    """斜体变量字符：拉丁字母 + 小写希腊字母。"""
-    return ('a' <= ch <= 'z') or ('A' <= ch <= 'Z') or (ch in _GREEK_LOWER)
+    """斜体变量字符：拉丁字母 + 小写希腊字母 + 作量符号的大写希腊字母（Λ…）。"""
+    return (('a' <= ch <= 'z') or ('A' <= ch <= 'Z')
+            or (ch in _GREEK_LOWER) or (ch in _GREEK_UPPER_QUANTITY))
 
 
 # 函数名与单位要正体：`_is_var_char` 会把 ln、lg 当成变量排成斜体。
@@ -299,6 +310,10 @@ def _split_caption_runs(text, next_body=None):
             nxt_letter = i + 1 < n and text[i + 1].isascii() and text[i + 1].isalpha()
             it = not (ch == 'μ' and nxt_letter and not prev_letter)  # μmol/μm 正体
             out.append([ch, it])
+            i += 1
+            continue
+        if ch in _GREEK_UPPER_QUANTITY:      # Λ_{m}、Γ_{∞}：量符号，斜体
+            out.append([ch, True])
             i += 1
             continue
         out.append([ch, False])

@@ -657,8 +657,27 @@ def load_spectrum(path):
                 background=a[:, 2], difference=a[:, 3])
 
 
+# 明显不是光谱数据的扩展名：扫目录时按后缀直接跳过，省掉一次读盘。
+# 注意**不要**把 .dat/.csv/.asc/无后缀 列进来——那些要按内容判断（换了命名
+# 习惯的导出文件正是靠内容识别才能进下拉框）。
+_NON_DATA_EXT = (
+    '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt',
+    '.zip', '.rar', '.7z', '.png', '.jpg', '.jpeg', '.gif', '.bmp',
+    '.py', '.js', '.html', '.json', '.md', '.exe', '.dll', '.log',
+)
+
+
 def spectrum_files(data_dir, recursive=True):
-    """扫描数据目录里的 txt（按路径排序）。"""
+    """扫描数据目录里的 txt（按路径排序）。
+
+    只按 `.txt` 后缀收会漏东西：光谱仪导出的文件换了命名习惯、或者被
+    手动重命名成 `.TXT`/`.dat`/无后缀之后，就不出现在下拉框里了，用户
+    只能看到「没找到」。所以这里改成**按内容判断**：只要是四列数值
+    （index / original / background / difference）能解析，就当作候选。
+
+    探测有成本，所以只在「后缀不是 .txt」时才去读文件头几行；`.txt`
+    一律直接收（那是绝大多数情况，也是原来的行为）。
+    """
     out = []
 
     def _walk(d):
@@ -671,11 +690,55 @@ def spectrum_files(data_dir, recursive=True):
             if os.path.isdir(p):
                 if recursive:
                     _walk(p)
-            elif n.lower().endswith('.txt'):
+                continue
+            low = n.lower()
+            if low.endswith('.txt'):
                 out.append(p)
+            else:
+                # 非 .txt：明显是文档/表格的先按扩展名挡掉（省一次读盘），
+                # 其余（.dat/.csv/.asc/无后缀/任意后缀）都**验内容**——
+                # 只要真是四列数值就收，这样重命名过的导出文件也不会漏。
+                if low.endswith(_NON_DATA_EXT):
+                    continue
+                if is_spectrum_file(p):
+                    out.append(p)
 
     _walk(data_dir)
     return out
+
+
+def is_spectrum_file(path, ext_ok=True):
+    """这个文件看起来是不是光谱仪导出的四列数据？
+
+    `ext_ok` 只为让调用方能跳过明显非数据的扩展名（.pdf/.xlsx 之类），
+    真正的判据始终是内容：至少 3 行、每行能切出 ≥4 个浮点数。
+    """
+    if not ext_ok:
+        return False
+    if os.path.splitext(path)[1].lower() in _NON_DATA_EXT:
+        return False
+    try:
+        if os.path.getsize(path) > 64 * 1024 * 1024:      # 太大，不像是光谱
+            return False
+        rows = 0
+        with open(path, 'r', encoding='utf-8-sig', errors='replace') as fh:
+            for line in fh:
+                s = line.strip()
+                if not s:
+                    continue
+                parts = s.replace(',', ' ').split()
+                if len(parts) < 4:
+                    return False
+                try:
+                    [float(x) for x in parts[:4]]
+                except ValueError:
+                    return False
+                rows += 1
+                if rows >= 3:                              # 三行就够判断了
+                    return True
+        return False
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------- 标定

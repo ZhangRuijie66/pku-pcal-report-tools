@@ -136,20 +136,49 @@ def pct(x, n=SIG_DIGITS, sign=''):
 
 
 def sci(x, nd=3, exp=None):
-    """科学计数法的普通文本写法：(1.23)×10^{4}。"""
+    """科学计数法的普通文本写法：1.798×10^{-8}。
+
+    exp 不给就按 |x| 的量级自动取。None / 非有限 → '—'。
+
+    ⚠ 三个细节都是踩出来的：
+
+    * **单值不加括号**（``1.798×10^{-8}``，不是 ``(1.798)×10^{-8}``）——括号是
+      「值 ± 不确定度」共用一个指数时才要的，见 `sci_pm`。原来这里给单值也加了
+      括号，谁直接拿去用都会印出多余的括号，于是 4 个模块各自重写了一份。
+    * **不能用 '%.3e'**：那会印出 C 记数法 ``1.798e-08``，Word 里既不是乘号
+      也不是上标（审计 2026-11-07 §1.3 #15，磁化率模块曾 5 处）。
+    * **修约进位后要降一档**：``9.9996e-8`` 按 3 位修约成 ``10.000``，若照抄就会
+      印成 ``10.000×10^{-8}``，必须降成 ``1.000×10^{-7}``。
+    """
     if not _finite(x):
         return DASH
+    x = float(x)
+    if x == 0:
+        return '0'
+    if exp is None:
+        exp = int(math.floor(math.log10(abs(x))))
+    m = x / 10.0 ** exp
+    if nd >= 1 and abs(round(m, nd)) >= 10.0:
+        exp += 1
+        m = x / 10.0 ** exp
+    return '%.*f×10^{%d}' % (nd, m, exp)
+
+
+def sci_pm(x, u, exp=None, nd=SIG_DIGITS):
+    """(1.798 ± 0.012)×10^{-8} 形式（值与不确定度共用一个指数，所以要括号）。
+
+    exp 不给就按 |x| 的量级自动取。
+
+    ⚠ x 或 u 缺失/非有限一律返回 '—'，**绝不返回 ``(—)×10^{-5}`` 这种畸形串**
+    （偶极矩模块曾对 NaN 印出它，审计 2026-11-07 §B P1-3）。原来的实现只判了
+    x 没判 u，于是 4 个模块各自重写了一份，行为分化出 6 种。
+    """
+    if not _finite(x):
+        return DASH
+    x = float(x)
     if exp is None:
         exp = int(math.floor(math.log10(abs(x)))) if x else 0
-    m = float(x) / (10.0 ** exp)
-    return '(%.*f)×10^{%d}' % (nd, m, exp)
-
-
-def sci_pm(x, u, exp=-6):
-    """(4.3 ± 0.1)×10^{-6} 形式。"""
-    if not _finite(x):
-        return DASH
     s = 10.0 ** exp
     if u in (None, 0) or not _finite(u):
         return '(%s)×10^{%d}' % (k(x / s, 2), exp)
-    return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
+    return '(%s)×10^{%d}' % (pm(x / s, u / s, nd), exp)

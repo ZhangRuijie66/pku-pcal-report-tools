@@ -53,6 +53,15 @@ STATE = {
     'points': {},       # index -> [s1,e1,s2,e2]
 }
 LOCK = threading.Lock()   # STATE 的读写都在它里面
+EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
+MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不去 rfile.read
+PREVIEW_LOCK = threading.Lock()  # 建图串行：mathtext 是进程级全局状态，
+                                 # 导出与预览同时建图会互相踩
+
+
+class BodyTooLarge(ValueError):
+    """Content-Length 非法或超过 MAX_BODY_BYTES。"""
+
 
 
 def load_settings():
@@ -265,6 +274,8 @@ def pick_folder(initial=None):
 
 
 class Handler(BaseHTTPRequestHandler):
+    # 单次 socket 读写超时：半截请求最多占住线程这么久就断开。
+    timeout = 30
     server_version = 'PChemReport/1.0'
 
     def log_message(self, fmt, *args):
@@ -298,6 +309,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
+        # Content-Length 为负时 rfile.read(-1) 会一直读到连接关闭；超过上限同理——
+        # 一个声明 1 GB 的慢速请求能长期占住一个线程（实测 30 个悬挂 = 30 个线程）。
+        if n < 0 or n > MAX_BODY_BYTES:
+            raise BodyTooLarge('请求体 %s 字节，超过上限 %d 字节'
+                               % (n, MAX_BODY_BYTES))
         if not n:
             return {}
         return json.loads(self.rfile.read(n).decode('utf-8'))
@@ -347,6 +363,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/settings':
                 return self._save_settings(self._body())
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
+        except BodyTooLarge as exc:
+            return self._json({'ok': False, 'error': str(exc)}, 413)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)
 
@@ -434,6 +452,11 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _export(self, payload):
+        """导出报告。整段串行：并发 / 连点两下时不能算出同一个文件名。"""
+        with EXPORT_LOCK:
+            return self._export_locked(payload)
+
+    def _export_locked(self, payload):
         base, datasets, an = build_state(payload)
         # 三项必须一起更新：并发请求（页面同时触发 calc 与 export）时
         # 否则可能读到「新 config + 旧 analysis」的混合态。
@@ -460,7 +483,12 @@ class Handler(BaseHTTPRequestHandler):
             messages.append(msg)
 
         try:
-            rpt.build_report(an, base, out, plots, TEMPLATE, progress=progress)
+            # matplotlib 的 mathtext 解析器是进程级全局状态：预览与导出同时建图会互相踩
+            # （实测 4 导出 + 12 预览 → 全报 ParseException）。这里也拿 PREVIEW_LOCK，
+            # 让「建图 + savefig」全局串行。锁序 EXPORT_LOCK -> PREVIEW_LOCK，
+            # 与只拿 PREVIEW_LOCK 的预览路径不冲突，不成环。
+            with PREVIEW_LOCK:
+                rpt.build_report(an, base, out, plots, TEMPLATE, progress=progress)
         except PermissionError:
             return self._json({'ok': False,
                                'error': '无法写入 %s（文件被占用），请关闭正在打开该文档的 '
@@ -520,14 +548,21 @@ def _unique_path(path, max_tries=50):
         except OSError:
             return True
 
-    if not locked(path):
+    if not os.path.exists(path) and not locked(path):
         return path, ''
     root, ext = os.path.splitext(path)
     for i in range(2, max_tries + 1):
         cand = '%s (%d)%s' % (root, i, ext)
-        if not locked(cand):
-            return cand, ('原文件「%s」正被其它程序占用（可能开在 Word 里），'
-                          '本次改为写入「%s」。' % (base, os.path.basename(cand)))
+        # 已存在也要换名：否则「连点两下生成报告」会静默覆盖上一份
+        # （原来只查 Word 占用，文件存在但没打开时直接返回原路径）。
+        if not os.path.exists(cand) and not locked(cand):
+            if locked(path):
+                why = ('原文件「%s」正被其它程序占用（可能开在 Word 里），'
+                       '本次改为写入「%s」。' % (base, os.path.basename(cand)))
+            else:
+                why = ('目标文件「%s」已存在，本次改为写入「%s」。'
+                       % (base, os.path.basename(cand)))
+            return cand, why
     stamp = time.strftime('%H%M%S')
     cand = '%s-%s%s' % (root, stamp, ext)
     return cand, ('原文件「%s」正被其它程序占用，本次改为写入「%s」。'

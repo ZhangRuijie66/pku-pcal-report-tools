@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 
@@ -228,18 +229,87 @@ def _merge(base, patch):
 
 
 # ---------------------------------------------------------------- 基础计算
+#
+# 电导率仪的**末位**不该由「字符串里有几个字符」决定。
+#
+# 原来的规则是 σ_κ = 2×10^(−小数位数)，于是同一个仪器读数：
+#      '0.277'  → 3 位小数 → σ_κ = 2e-3
+#      '0.2770' → 4 位小数 → σ_κ = 2e-4      相差 10 倍
+#      '25' / '25.0' / '25.00' 相差 100 倍
+# 学生抄读数时习惯把末尾的 0 省掉，于是「抄了几个 0」直接决定报告的精度，
+# 而报告 4.x 还会把这件事原样印成「σ_κ 随记录的小数位数而变」（审计 A 的 P1-6）。
+#
+# 现在的规则：**按仪器量程分档定末位**，字符串只用于「用户是否写了更高精度」。
+#
+# 分档依据是示例数据自身的规律：把 S·m⁻¹ 换算回仪器显示的 μS·cm⁻¹，
+#     0.2770 → 2770    0.1139 → 1139    0.0574 → 574     0.0300 → 300
+#     0.01575 → 157.5  0.01178 → 117.8  0.00766 → 76.6   0.00525 → 52.5
+# 可以看出大量程显示到 1 μS·cm⁻¹（=1e-4 S·m⁻¹）、小量程显示到 0.1 μS·cm⁻¹
+# （=1e-5 S·m⁻¹），分界约在 0.02 S·m⁻¹（=200 μS·cm⁻¹）。这也解释了
+# 0.0574 / 0.0300 / 0.00525 为什么比同瓶其它读数少一位：那是学生把
+# 「0.05740 / 0.03000 / 0.005250」末尾的 0 省掉了，不是仪器只有那么精。
+#
+# 于是：
+#      κ >  0.02  → 末位 1e-4 → σ_κ = 2e-4
+#      κ ≤  0.02  → 末位 1e-5 → σ_κ = 2e-5
+# 这样 '0.277' 与 '0.2770' 得同一个 σ_κ、'0.0159' 与 '0.01592' 也相同，
+# 少抄一个 0 不再改变任何不确定度。而且对**原始数据的正确读数**，
+# 分档结果与旧规则（按小数位）逐位相同 —— 所以 K° 与 σ_K° 的既有数值
+# 只有在瓶间离散那一项上才会变（见 k_from_mean）。
+KAPPA_RANGE_EDGES = ((0.02, 4), (0.0, 5))   # (κ 下界, 末位小数位数)，按顺序匹配
+KAPPA_SIG_DIGITS = 4                          # 兼容旧接口（未分档时的默认位数）
+
+
 def _decimals(s):
-    """字符串读数的小数位数（'0.01575' → 5）。"""
+    """字符串读数的小数位数（'0.01575' → 5）。仅用于**显示**与位数统计。"""
     s = str(s).strip()
     if '.' in s:
         return len(s.split('.')[-1].rstrip())
     return 0
 
 
-def sigma_kappa(reading):
-    """仪器读数末位不确定度：最后一位取 2（参考报告口径）。"""
-    d = _decimals(reading)
-    return 2.0 * 10.0 ** (-d)
+def _sig_digits_written(s):
+    """字符串里**实际写出的**有效数字位数（'0.277' → 3，'0.2770' → 4）。"""
+    s = str(s).strip().lstrip('+-')
+    if not s or s.lower() in ('nan', 'none'):
+        return 0
+    if 'e' in s.lower():
+        s = s.lower().split('e')[0]
+    digits = s.replace('.', '').lstrip('0')
+    return len(digits)
+
+
+def _tier_decimals(kappa):
+    """按读数量级给出仪器末位的小数位数（分档见 KAPPA_RANGE_EDGES）。"""
+    ax = abs(float(kappa))
+    if not math.isfinite(ax):
+        return KAPPA_RANGE_EDGES[-1][1]
+    for lower, dec in KAPPA_RANGE_EDGES:
+        if ax > lower:
+            return dec
+    return KAPPA_RANGE_EDGES[-1][1]
+
+
+def sigma_kappa(reading, min_sigma=None):
+    """仪器读数末位不确定度：末位取 2（沿用参考报告「最后一位的 2」口径）。
+
+    末位**只由读数量级对应的仪器分辨力**决定（见文件头 KAPPA_RANGE_EDGES），
+    与字符串里写了几个字符完全无关——'0.277'、'0.2770'、'0.27700' 得到同一个
+    σ_κ。这是本条修复的核心：σ_κ 必须由**仪器**决定，不能由「学生抄了几个 0」
+    决定。
+
+    （早先版本还留了「用户写出更多小数位就升级精度」的分支，实测没有意义：
+    手记电导率仪不可能真有 1e-6 S·m⁻¹ 的分辨力，`0.015920` 只是多抄了个 0，
+    不该让 σ_κ 从 2e-5 缩到 2e-6，那会让不确定度变成「取决于抄写习惯」。）
+
+    `min_sigma`：可选的绝对下限（S·m⁻¹），需要并进「±0.5% FS」这类相对项时用。
+    """
+    x = to_float(reading)
+    dec = _tier_decimals(x) if math.isfinite(x) else KAPPA_RANGE_EDGES[-1][1]
+    val = 2.0 * 10.0 ** (-dec)
+    if min_sigma is not None and math.isfinite(min_sigma):
+        val = max(val, float(min_sigma))
+    return float(val)
 
 
 def to_float(v):
@@ -358,7 +428,26 @@ def sigma_k_bottle(c, kappa_corr, lam_inf, sigma_kappa, sigma_lam_inf):
 
 
 def k_from_mean(rows, lam_inf, sigma_lam_inf):
-    """求平均法：各瓶 K°、σ、平均与合成 σ。"""
+    """求平均法：各瓶 K°、σ、平均与合成 σ。
+
+    ⚠ σ 的口径（审计 A 的 P1-5）：5 个瓶是**不同浓度**下的 5 个独立估计，
+    不是同一个量的 5 次重复测量。所以
+
+      · `sigma_within = √(Σσ_i²)/n` 是「n 个等精度独立观测取平均」的标准误，
+        它只反映**单瓶内部**的读数传播，把瓶间系统漂移当成了 0；
+      · `sigma_between = std(K_i, ddof=1)/√n` 才是「这些瓶彼此有多一致」，
+        也就是平均值的标准误。
+
+    实测示例数据：各瓶 K° 从 1.639e-5 单调降到 1.189e-5（相差 38%，
+    活度系数未校正造成的系统漂移），
+        sigma_within  = 2.5676e-07
+        sigma_between = 7.7960e-07     ← 相差 3.04 倍
+    旧代码只报 within，等于宣称「5 个瓶一致到 1.8%」，与数据直接矛盾，
+    后果是报告把 K° 与手册值的偏差判成「显著」、却把两法差异判成「一致」。
+
+    这里改为报 `max(within, between)`：瓶间一致时退回 within（不虚高），
+    瓶间有漂移时用 between（不虚低）。两者都留在返回值里，上层可以点名原因。
+    """
     out = []
     for r in rows:
         b = k_bottle(r['c'], r['kappa_corr'], lam_inf)
@@ -368,9 +457,29 @@ def k_from_mean(rows, lam_inf, sigma_lam_inf):
         out.append(b)
     ks = np.array([b['k'] for b in out])
     sigmas = np.array([b['sigma_k'] for b in out])
+    n = len(ks)
     mean = float(ks.mean())
-    sigma = float(np.sqrt(np.sum(sigmas ** 2)) / len(sigmas))
-    return dict(bottles=out, mean=mean, sigma=sigma)
+    sigma_within = float(np.sqrt(np.nansum(sigmas ** 2)) / n) if n else float('nan')
+    if n >= 2 and np.all(np.isfinite(ks)):
+        sigma_between = float(np.std(ks, ddof=1) / math.sqrt(n))
+        spread = float(np.std(ks, ddof=1))
+    else:
+        sigma_between = float('nan')
+        spread = float('nan')
+    if math.isfinite(sigma_between) and sigma_between > sigma_within:
+        sigma = sigma_between
+        sigma_source = 'between'
+        # 瓶间离散超过单瓶传播 2 倍才算「有系统漂移」，需要在报告里点名
+        drift = bool(sigma_between > 2.0 * sigma_within) if sigma_within else True
+    else:
+        sigma = sigma_within
+        sigma_source = 'within'
+        drift = False
+    return dict(bottles=out, mean=mean, sigma=sigma, n=n,
+                sigma_within=sigma_within, sigma_between=sigma_between,
+                spread=spread, sigma_source=sigma_source, drift=drift,
+                rel_spread=(spread / abs(mean) * 100.0
+                            if mean and math.isfinite(spread) else float('nan')))
 
 
 def k_from_fit(rows, lam_inf, sigma_lam_inf):

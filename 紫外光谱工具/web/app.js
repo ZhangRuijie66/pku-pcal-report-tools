@@ -300,9 +300,20 @@ function slotNeedsAttention(x) {
 function renderFileMap(s) {
   const slots = s.file_slots || [];
   const group = ($('fileGroup') && $('fileGroup').value) || 'all';
+  const kw = (($('fileSearch') && $('fileSearch').value) || '').trim().toLowerCase();
   let rows = slots;
   if (group === 'attn') rows = slots.filter(slotNeedsAttention);
   else if (group && group !== 'all') rows = slots.filter((x) => x.kind === group);
+  // 关键字实时过滤：同时匹配槽位标签、用途说明、以及当前/默认/候选文件名，
+  // 这样输入「A3-5」能直接缩小到那一行，不用在 20 多行里翻。
+  if (kw) {
+    rows = rows.filter((x) => {
+      const hay = [
+        x.label, x.group, x.kind, x.rel, x.default, MAP_EDIT[x.key],
+      ].concat((x.suggestions || []).map((v) => v.rel)).join(' ').toLowerCase();
+      return hay.indexOf(kw) >= 0;
+    });
+  }
   const groups = {};
   rows.forEach((x) => { (groups[x.group] = groups[x.group] || []).push(x); });
   let html = '';
@@ -312,8 +323,9 @@ function renderFileMap(s) {
   });
   if (!rows.length) {
     html = '<p class="hint">' +
-      (group === 'attn' ? '没有需要确认的槽位——全部按默认文件名找到了。'
-        : '这个分类没有槽位。') + '</p>';
+      (kw ? '没有匹配「' + esc(kw) + '」的槽位。'
+        : (group === 'attn' ? '没有需要确认的槽位——全部按默认文件名找到了。'
+          : '这个分类没有槽位。')) + '</p>';
   }
   const box = $('fileMap');
   box.innerHTML = html;
@@ -681,6 +693,10 @@ function bindUI() {
   $('btnClearMap').onclick = clearMap;
   $('fileGroup').onchange = () => { if (STATE) renderFileMap(STATE); };
   $('fileCompact').onchange = () => { if (STATE) renderFileMap(STATE); };
+  // 查找框：边输边筛（input 事件覆盖键入、粘贴、清空 ×、Esc）
+  if ($('fileSearch')) {
+    $('fileSearch').oninput = () => { if (STATE) renderFileMap(STATE); };
+  }
   // 单文件查看
   $('btnPickFile').onclick = pickFile;
   $('btnSingleView').onclick = () => viewSingle();

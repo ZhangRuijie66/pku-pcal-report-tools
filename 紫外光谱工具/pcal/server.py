@@ -46,6 +46,13 @@ STATE = {'analysis': None, 'config': None, 'key': None, 'gcalc': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
 SINGLE_LOCK = threading.Lock()    # 单文件查看的谱缓存（按路径 + 大小 + mtime）
+EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
+MAX_BODY_BYTES = 8 * 1024 * 1024  # 请求体上限，超过直接 413，绝不去 rfile.read
+
+
+class BodyTooLarge(ValueError):
+    """Content-Length 非法或超过 MAX_BODY_BYTES。"""
+
 SINGLE_CACHE = {}
 
 
@@ -603,7 +610,8 @@ def _gcalc_read(d=''):
         res = gcalc_bridge.read_results(cfg)
     except Exception as exc:  # noqa: BLE001
         return dict(ok=False, error=str(exc), dir=d, molecules=[])
-    STATE['gcalc'] = res
+    with LOCK:
+        STATE['gcalc'] = res
     return res
 
 
@@ -634,6 +642,12 @@ def _http_alive(url):
 
 
 def _export(cfg):
+    """导出报告。整段串行：并发 / 连点两下时不能算出同一个文件名。"""
+    with EXPORT_LOCK:
+        return _export_locked(cfg)
+
+
+def _export_locked(cfg):
     an = _analysis(cfg)
     name = _safe_filename(_report_filename(cfg))
     stem = os.path.splitext(name)[0]
@@ -642,8 +656,13 @@ def _export(cfg):
     out, note = _unique_path(os.path.join(out_dir, name))
     plots = os.path.join(out_dir, 'figures')
     logs = []
-    rpt.build_report(an, cfg, out, plots, TEMPLATE,
-                     progress=lambda m: logs.append(m))
+    # matplotlib 的 mathtext 解析器是进程级全局状态：预览与导出同时建图会互相踩
+    # （实测 4 导出 + 12 预览 → 全报 ParseException）。这里也拿 PREVIEW_LOCK，
+    # 让「建图 + savefig」全局串行。锁序 EXPORT_LOCK -> PREVIEW_LOCK，
+    # 与只拿 PREVIEW_LOCK 的预览路径不冲突，不成环。
+    with PREVIEW_LOCK:
+        rpt.build_report(an, cfg, out, plots, TEMPLATE,
+                         progress=lambda m: logs.append(m))
     # 报告里实际用了哪个文件必须留下来：模糊匹配会挑替身，
     # workspace.json 里的绝对路径 + 哈希是唯一的事后追溯依据。
     used = dict((getattr(an, 'paths', {}) or {}))
@@ -668,6 +687,8 @@ def _export(cfg):
 
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
+    # 单次 socket 读写超时：半截请求最多占住线程这么久就断开。
+    timeout = 30
     server_version = 'PChemUV/1.0'
 
     def log_message(self, fmt, *args):
@@ -700,6 +721,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
+        # Content-Length 为负时 rfile.read(-1) 会一直读到连接关闭；超过上限同理——
+        # 一个声明 1 GB 的慢速请求能长期占住一个线程（实测 30 个悬挂 = 30 个线程）。
+        if n < 0 or n > MAX_BODY_BYTES:
+            raise BodyTooLarge('请求体 %s 字节，超过上限 %d 字节'
+                               % (n, MAX_BODY_BYTES))
         if not n:
             return {}
         return json.loads(self.rfile.read(n).decode('utf-8'))
@@ -765,7 +791,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_summary(an))
             if u.path == '/api/export':
                 cfg = _config_from(self._body())
-                cfg['gcalc'] = STATE.get('gcalc') or {}
+                with LOCK:                       # STATE['gcalc'] 的写入也在锁内
+                    gcalc = STATE.get('gcalc')
+                cfg['gcalc'] = gcalc or {}
                 return self._json(_export(cfg))
             if u.path == '/api/gcalc/open':
                 return self._json(_gcalc_open(self._body()))
@@ -779,6 +807,8 @@ class Handler(BaseHTTPRequestHandler):
                                    'config': default_config_with_saved(data),
                                    'has_saved': True})
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
+        except BodyTooLarge as exc:
+            return self._json({'ok': False, 'error': str(exc)}, 413)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)
 

@@ -14,7 +14,7 @@ SHARED = r'''Option Explicit
 ' 物化实验报告工具 —— 统一的无黑框启动逻辑。
 ' 用法：wscript //nologo hidden-launch.vbs [<工具目录> | --stop]
 ' 这里只负责找到 python.exe；装依赖、起服务、停服务都在同目录的 launcher.py 里。
-Dim sh, fso, launcher, py, args
+Dim sh, fso, launcher, py, args, rc
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set args = WScript.Arguments
@@ -32,17 +32,37 @@ If py = "" Then
 End If
 
 If args.Count < 1 Then
-    sh.Run """" & py & """ """ & launcher & """", 0, False
+    rc = Launch("""" & py & """ """ & launcher & """")
 ElseIf args(0) = "--stop" Then
     ' 双击 停止服务.vbs 是人在操作：停完弹框确认「已停止」。
     ' --interactive 只在这一条路径上加；命令行调 --stop 不弹框（否则会卡死在消息框上）。
-    sh.Run """" & py & """ """ & launcher & """ --stop --interactive", 0, False
+    rc = Launch("""" & py & """ """ & launcher & """ --stop --interactive")
 Else
-    sh.Run """" & py & """ """ & launcher & """ """ & args(0) & """", 0, False
+    rc = Launch("""" & py & """ """ & launcher & """ """ & args(0) & """")
 End If
 
+' 后台起动（窗口样式 0 = 隐藏，False = 不等待）。
+' Run 在 python/launcher.py 路径异常时会抛异常而不是返回非 0；这里是**最后一次**
+' 可能失败的地方，同样加 On Error，失败时用中文提示框说清楚，不要甩 WSH 英文框。
+Function Launch(cmdline)
+    Dim code
+    Launch = 0
+    On Error Resume Next
+    code = sh.Run(cmdline, 0, False)
+    If Err.Number <> 0 Then
+        Err.Clear
+        On Error Goto 0
+        sh.Popup "启动失败：找不到 Python 或 launcher.py。" & vbCrLf & vbCrLf & _
+                 "请确认本工具目录完整（_tools\launcher.py 存在），" & vbCrLf & _
+                 "或双击根目录的 安装依赖.cmd 重新安装。", _
+                 0, "物化实验报告工具", 48
+        Launch = 1
+    End If
+    On Error Goto 0
+End Function
+
 Function FindPython()
-    Dim roots, vers, r, v, cand
+    Dim roots, vers, r, v, cand, rc
     FindPython = ""
     roots = Array("C:\", _
         sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Programs\Python\")
@@ -60,7 +80,19 @@ Function FindPython()
         FindPython = "C:\Windows\py.exe"
         Exit Function
     End If
-    If sh.Run("""python.exe"" -c ""import sys""", 0, True) = 0 Then FindPython = "python.exe"
+    ' 最后一招：靠 PATH 找 python.exe。
+    ' ⚠ WScript.Shell.Run 在**可执行文件不存在时会抛异常**（80070002），
+    '   不是返回非 0。没有 On Error 的话脚本会在这里当场终止，
+    '   上面那句「在这台电脑上没有找到 Python 3」的中文提示**永远走不到**，
+    '   用户看到的是系统级 Windows Script Host 英文错误框（含行号）。
+    '   （2026-11-08 审计实测：弹的是 "Windows Script Host ... 代码: 80070002"。）
+    On Error Resume Next
+    rc = sh.Run("""python.exe"" -c ""import sys""", 0, True)
+    If Err.Number = 0 Then
+        If rc = 0 Then FindPython = "python.exe"
+    End If
+    Err.Clear
+    On Error Goto 0
 End Function
 '''
 

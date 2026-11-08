@@ -26,7 +26,7 @@ from docx.shared import Cm
 from . import plotting
 from .adsorption import gamma_water_default
 from .docxkit import ReportBuilder
-from .sigfig import k, pm, pct
+from .sigfig import k, pm, pct, sci, sci_pm
 
 ITALIC = {'italic': True}
 TITLE = '溶液表面吸附的测定'
@@ -92,15 +92,10 @@ def _zero_same(z):
 
 
 
-def sci_pm(x, u, exp=-6):
-    if not np.isfinite(x):
-        return '—'
-    s = 10.0 ** exp
-    if u in (None, 0) or not np.isfinite(u):
-        return '(%s)×10^{%d}' % (k(x / s, 2), exp)
-    return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
-
-
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
 def _rel(row):
     rel = row.get('rel')
     if rel is None or not np.isfinite(rel):

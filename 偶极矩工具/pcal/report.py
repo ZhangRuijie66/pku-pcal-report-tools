@@ -32,7 +32,7 @@ from docx.shared import Cm
 from . import dipole
 from . import plotting
 from .docxkit import ReportBuilder
-from .sigfig import k, val, unc, pm, pct
+from .sigfig import k, val, unc, pm, pct, sci, sci_pm
 
 ITALIC = {'italic': True}
 TITLE = '稀溶液法测定极性分子的偶极矩'
@@ -65,13 +65,10 @@ MATH = lambda s: ('m', s)          # 表格里的公式单元格
 
 
 
-def sci_pm(x, u, exp=-5):
-    """(7.95 ± 0.22)×10^{-5} 形式的普通文本片段。"""
-    s = 10.0 ** exp
-    return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
-
-
-# ---------------------------------------------------------------- 主流程
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
 def build_report(analysis, cfg, out_path, plots_dir, template_path,
                  progress=None, cover_tail_blanks=0):
     def log(msg):

@@ -268,6 +268,13 @@ def _line_fit(x, y):
     resid = y - yhat
     dof = x.size - 2
     s_err = math.sqrt(float(np.sum(resid ** 2)) / dof) if dof > 0 else float('nan')
+    # 归一化残差（相对标准误）：把 s_err 除以因变量自身的量级，使它可以在
+    # **不同线性化**之间横向比较。三种级数的因变量分别是 α、ln(α−α∞)、
+    # 1/(α−α∞)，量级差几个数量级，直接比 s_err 或 R² 都不公平：
+    #   0 级残差 std = 2.65e-01（y 均值 1.09），1 级 = 1.21e-02（y 均值 0.73）
+    #   绝对残差差 22 倍，但相对残差只差 15 倍——R² 更把它们压成 0.927 vs 0.9996。
+    ybar = abs(float(np.mean(y))) if y.size else float('nan')
+    s_rel = (s_err / ybar) if (ybar and math.isfinite(ybar)) else float('nan')
     ci = None
     if dof > 0 and x.size >= 3:
         xbar = float(np.mean(x))
@@ -283,7 +290,8 @@ def _line_fit(x, y):
                 sigma_slope=float(res.stderr or 0.0),
                 sigma_intercept=float(res.intercept_stderr or 0.0),
                 r2=float(res.rvalue ** 2), n=int(x.size),
-                s_err=s_err, x=list(map(float, x)), y=list(map(float, y)),
+                s_err=s_err, s_rel=s_rel, y_mean=float(np.mean(y)) if y.size else float('nan'),
+                x=list(map(float, x)), y=list(map(float, y)),
                 ci=ci)
 
 
@@ -451,18 +459,78 @@ def analyze(data, cfg=None):
                             % (r['label'], r['fits']['1']['r2']))
 
     # ---- 4) 级数判定
+    #
+    # ⚠ 不能拿 R² 横向比：三种线性化的因变量是 α、ln(α−α∞)、1/(α−α∞)，
+    # 量级差几个数量级，R² 被「因变量自身的方差」掩盖，判据不可比。
+    # 示例数据上 0 级 R²=0.9266 与 1 级 0.9996 只差 0.073，但残差标准差相差
+    # 22 倍；一旦 α∞ 输错或时间窗被截短，R² 排序就会翻转，报告会静默印出
+    # 「蔗糖为 0 级反应」这种化学上荒谬的结论。
+    #
+    # 现在改成比较**归一化残差** s_rel = s_err/|ȳ|（相当于变异系数）：
+    # 它把「拟合得多好」换算成无量纲的相对偏离，三种级数之间可以直接比。
+    # 另外：三个 s_rel 全都不是有限值时**不猜**，返回 order=None 并告警，
+    # 报告印「本次数据不足以判定反应级数」而不是默默给一个 '0' 级
+    # （旧代码 `max(..., key=...-1)` 在三个 nan 上会返回字典第一个键 '0'）。
+    order = None
     order_label = cfg.get('order_group') or (groups[1]['label'] if len(groups) > 1
                                              else (groups[0]['label'] if groups else ''))
     order_group = next((g for g in groups if g['label'] == order_label), None)
     if order_group is None and groups:
         order_group = groups[0]
-    order = None
     if order_group:
-        r2 = {k: (v['r2'] if v else float('nan'))
-              for k, v in order_group['fits'].items()}
-        best = max(r2, key=lambda k: r2[k] if np.isfinite(r2[k]) else -1)
-        order = dict(group=order_group['label'], r2=r2, best=int(best),
-                     is_first=(best == '1' and r2['1'] >= 0.99))
+        fits = order_group['fits']
+        r2 = {k: (v['r2'] if v else float('nan')) for k, v in fits.items()}
+        s_rel = {k: (v.get('s_rel') if v else float('nan'))
+                 for k, v in fits.items()}
+        cand = {k: val for k, val in s_rel.items() if np.isfinite(val)}
+        # 「区分不出差别」的两种情形都要当成无法判定，而不是随便挑一个：
+        #   · 全部非有限（拟合失败）；
+        #   · 全部为 0（因变量是一模一样的常数，例如所有 α 都录成同一个值，
+        #     三种线性化的残差都恰好为 0——此时 argmin 会随手返回 '0' 级）。
+        usable = {k: val for k, val in cand.items() if val > 0}
+        if not usable:
+            # order 保持 None，让上层走「没有可用于级数判定的数据组」这条
+            # 既有分支，绝不默许一个 '0' 级。
+            order = None
+            if not cand:
+                warnings.append(
+                    '%s 组：三种线性化的残差都无法计算（有效数据点不足或 '
+                    'α−α∞ 全部非正），本次数据不足以判定反应级数'
+                    % order_group['label'])
+            else:
+                warnings.append(
+                    '%s 组：三种线性化的残差全为 0（因变量几乎不含变化），'
+                    '无法据以判定反应级数；请检查 α–t 数据是否录入正确'
+                    % order_group['label'])
+        else:
+            best = min(usable, key=lambda kk: usable[kk])
+            best_rel = usable[best]
+            # 次优与最优的相对残差相差不到 20% → 判据分辨不出来，点名告警
+            rest = sorted(v for kk, v in cand.items() if kk != best)
+            ambiguous = (bool(rest) and best_rel > 0
+                         and (rest[0] - best_rel) / best_rel < 0.20)
+            is_first = (best == '1' and np.isfinite(r2.get('1', np.nan))
+                        and r2['1'] >= 0.99)
+            order = dict(group=order_group['label'], r2=r2, s_rel=s_rel,
+                         best=int(best), is_first=is_first, decided=True,
+                         reason='')
+            if ambiguous:
+                warnings.append(
+                    '%s 组：%s级与%s级的归一化残差只相差 %.0f%%，级数判定不明确；'
+                    '请检查 α∞ 取值与时间窗是否覆盖足够多的转化率'
+                    % (order_group['label'],
+                       {'0': '零', '1': '一', '2': '二'}[best],
+                       {'0': '零', '1': '一', '2': '二'}[
+                           min((kk for kk in cand if kk != best),
+                               key=lambda kk: cand[kk])],
+                    (rest[0] - best_rel) / best_rel * 100.0))
+            if (not is_first and np.isfinite(r2.get(best, np.nan))
+                    and r2[best] < 0.99):
+                warnings.append(
+                    '%s 组：判定为 %s 级，但该级线性化 R² = %.4f 未达 0.99，'
+                    '结论需结合实验条件核对'
+                    % (order_group['label'],
+                       {'0': '零', '1': '一', '2': '二'}[best], r2[best]))
 
     # ---- 5) k1–c(H+) 与 lg–lg
     cH = [g['acid_true'] for g in groups]

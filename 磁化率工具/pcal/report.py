@@ -25,7 +25,7 @@ from docx.shared import Cm
 
 from . import plotting
 from .docxkit import ReportBuilder
-from .sigfig import k, pm
+from .sigfig import k, pm, sci, sci_pm
 
 ITALIC = {'italic': True}
 TITLE = '磁化率的测定'
@@ -59,37 +59,14 @@ INTRO_IMG = os.path.join(ASSETS, '引言图.jpg')
 DASH = '—'
 
 
-def sci(x, nd=3):
-    """科学计数法：'1.798×10^{-8}'（指数由 docxkit 转成真上标）。
-
-    ⚠ 不能用 '%.3e'：那会印出 C 记数法 '1.798e-08'，Word 里既不是乘号也不是
-    上标（审计 2026-11-07 §1.3 #15，本文件共 5 处）。None / NaN 输出 '—'。
-    """
-    if x is None or not np.isfinite(x):
-        return DASH
-    if x == 0:
-        return '0'
-    exp = int(math.floor(math.log10(abs(x))))
-    m = float(x) / 10.0 ** exp
-    # 修约进位后可能变成 10.000（如 9.9996e-8）：降一档，否则印成 '10.000×10^{-8}'
-    if abs(round(m, nd)) >= 10.0:
-        exp += 1
-        m = float(x) / 10.0 ** exp
-    return '%.*f×10^{%d}' % (nd, m, exp)
-
-
-def sci_pm(x, u, exp=-6):
-    if x is None or not np.isfinite(x):
-        return DASH
-    s = 10.0 ** exp
-    if u is None or u == 0 or not np.isfinite(u):
-        return '(%s)×10^{%d}' % (k(x / s, 2), exp)
-    return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
-
-
-# μ_B 的 B 是「玻尔磁子」的说明性标记，按 §3.2 要正体；写成 ('t','μ_{B}',ITALIC)
-# 会把单字母下标 B 当变量排成斜体。所以拆成「斜体的 μ」+「正体的 _B 下标」。
-# 前面带一个空格：数值与单位之间要空开（'1.837 μB' 而不是 '1.837μB'）。
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
+# sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
+# 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
+# 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
+# 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
 MU_B_SEGS = (' ', ('t', 'μ', ITALIC), ('t', '_{B}', {}))
 
 
@@ -148,12 +125,15 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     log('封面已生成')
 
     # ---- 摘要
-    rb.heading('摘要', 1)
+    # ⚠ 「摘要」是**正文段落的加粗标签**，不是标题：早先写成 rb.heading('摘要', 1)
+    # 会让 PDF 书签首项变成「摘要」、与「1 引言」同级（审计 B P1-5）。
+    # 其余 10 个模块都是 {'text': '摘要 ', 'bold': True, 'cjk': '黑体'} 这种写法。
     samples = analysis['samples']
     sample_names = list(samples.keys())
 
     # 摘要内容（片段列表：χ_m / μ_B 必须走真下标，不能拼成普通字符串）
     abs_segs = [
+        {'text': '摘要 ', 'bold': True, 'cjk': '黑体'},
         '本实验采用古埃磁天平法测定了莫尔盐、硫酸铜、亚铁氰化钾等物质的磁化率。'
         '以莫尔盐为标准样品标定仪器常数，在室温条件下测量了各样品在不同励磁电流下的'
         '质量变化，计算出各样品的比磁化率、摩尔磁化率、分子磁矩及未成对电子数。'
@@ -268,7 +248,9 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         ])
 
     rb.caption('表1  不同条件下的样品称量值')
-    rb.table(headers, rows)
+    # 原来没传 widths_cm，四列被 Word 均分成 4.0 cm，表头与数据都不换行但
+    # 视觉上过宽、与表 2 不齐。按内容给定列宽，总和 16.0 cm = 正文宽。
+    rb.table(headers, rows, widths_cm=[3.4, 4.2, 4.2, 4.2])
     rb.para([
         '注：', ('t', 'm_{0}', ITALIC), ' 为 0 A（无磁场）时的称量值，',
         ('t', 'm', ITALIC), ' 为 3.00 A 时的称量值，',

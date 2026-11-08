@@ -3,8 +3,8 @@
   "files": {
     "version.py": "109a73ede5722490457fffb40f887bacf321a50068df2adcefffc6d1d586da8a",
     "omml.py": "4e46bec4faf2a129881f59bb81c46af1697c3b27004c0dcd2c59e1e3b0b0c3bb",
-    "docxkit.py": "5e9bc6ffa1e8b501207802d4c652f9c7daf065eab2091a0502b355fec7a7516d",
-    "sigfig.py": "638fb7a989db775b0355d21f4300347082b2176fe2ba9cd2deaa69cbbefe4ed0",
+    "docxkit.py": "13f9a7e172bd65210480c3f883173f77f2496a968486c3402df20abed80b61d6",
+    "sigfig.py": "90582e2858ff7066bf92bd6d211f7a91673baf86e05b8a1619a29f62401a9bc8",
     "workspace.py": "0fe745f926b2d6b2f36d53b2ecd8bd5d1b09e07e15836bcd07ed91c002a66c07",
     "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3",
     "atomicio.py": "b479864e7fd3fdea8cba0186f6b2bfe0b6dfb11ae0e12a61b0c16bcc446b68d8"
