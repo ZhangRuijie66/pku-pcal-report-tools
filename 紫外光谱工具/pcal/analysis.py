@@ -68,6 +68,11 @@ def default_config():
         'box_a': 6,          # B 组外推时采用的 a
         'box_n_B1': 22,      # B1 的 π 电子数
         'box_n_B2': 6,       # B2 的 π 电子数
+        # 标定：默认三条在 uv.CALIBRATIONS（出厂值，不改）；这里只放
+        # 用户新增/覆盖的条目，每条 {key,label,short,file,prior}。
+        'calibrations': [],
+        # 每条曲线用哪条标定 {sample_key: cal_key}；空 = 用 uv.CURVE_CAL_DEFAULT。
+        'curve_cal': {},
         'gcalc': {},         # 高斯计算（TD-DFT）读取结果，运行时填充
         'gcalc_dir': '',     # 高斯计算工具目录（留空 = ..\高斯计算工具）
         'gcalc_logs_dir': '',  # TD-DFT 日志目录（留空 = 数据目录\..\calculation\gjf\logs）
@@ -81,6 +86,7 @@ PERSIST_KEYS = (
     'data_dir', 'file_map', 'smooth_window', 'stray', 'stray_mode', 'stray_a3',
     'path_cm', 'anchor_pad', 'voigt_peaks',
     'molecule_default', 'conc_pick', 'beer_concs', 'box_a', 'box_n_B1', 'box_n_B2',
+    'calibrations', 'curve_cal',
     'gcalc_dir', 'gcalc_logs_dir',
 )
 
@@ -93,7 +99,11 @@ def merge_saved(cfg, saved):
             if k == 'molecule_default' and isinstance(v, dict):
                 cfg[k].update(v)
             elif k == 'file_map' and isinstance(v, dict):
-                cfg[k].update(uv.clean_file_map(v))
+                cfg[k].update(uv.clean_file_map(v, cfg.get('calibrations')))
+            elif k == 'curve_cal' and isinstance(v, dict):
+                cfg[k].update(v)
+            elif k == 'calibrations' and isinstance(v, list):
+                cfg[k] = uv.clean_calibrations(v)
             else:
                 cfg[k] = v
     return cfg
@@ -156,12 +166,19 @@ class Analysis:
         self.picks_mol = picks_mol
         self.picks_conc = picks_conc
 
+        # 本次生效的标定清单：出厂三条 + 用户在界面上添加的。
+        # 报告 3.1 的条目数、子节编号、图号都跟着它走。
+        cal_list = uv.effective_calibrations(cfg.get('calibrations'))
+        self.cal_list = cal_list
+        # 每条曲线用哪条标定（可在界面上逐条改；越界/被删的一律退回默认）
+        self.curve_cal = uv.curve_cal_map(cfg.get('curve_cal'), cal_list)
+
         # 0) 槽位 → 路径。文件不在时先做模糊匹配（改名/换机器的场景），
         #    仍然找不到就直接抛 DataFilesMissing，绝不静默退回默认文件名
         #    （那样报告里的数字会与界面上的选择不一致）。
         paths, self.missing, self.slots = uv.resolve_slots(
             cfg.get('file_map'), data_dir,
-            picks_mol=picks_mol, picks_conc=picks_conc)
+            picks_mol=picks_mol, picks_conc=picks_conc, cals=cal_list)
         if self.missing:
             raise uv.DataFilesMissing(self.missing)
         self.paths = paths
@@ -172,8 +189,8 @@ class Analysis:
                     '%s 的文件不在，已按文件名自动匹配到 %s（%.0f%% 相似）'
                     % (entry['label'], entry['rel'], 100 * entry['score']))
 
-        # 1) 三次标定
-        for c in uv.CALIBRATIONS:
+        # 1) 逐个标定（条数由 cal_list 决定，默认仍是三条）
+        for c in cal_list:
             path = paths[uv.SLOT_CAL + c['key']]
             spec = self._spec(path)
             cal = uv.calibrate(spec, prior=c['prior'])
@@ -203,7 +220,12 @@ class Analysis:
                 continue
             sp = self._spec(sp_path)
             bp = self._spec(bp_path)
-            cal = cal_by_key[s['cal']]
+            # 这条曲线用哪条标定：界面可选，默认见 uv.CURVE_CAL_DEFAULT。
+            cal_key = self.curve_cal.get(s['key']) or s.get('cal')
+            cal = cal_by_key.get(cal_key)
+            if cal is None:            # 标定被删了：退回该曲线登记的默认
+                cal_key = s['cal']
+                cal = cal_by_key[cal_key]
             stray = self._stray_for(s)
             # 吸收光谱不做平滑：直接用原始点，基线也在原始点上取中位数。
             cur = uv.absorbance_curve(sp, bp, cal,
@@ -251,7 +273,7 @@ class Analysis:
                 A_corr=A_corr, A_corr_plain=A_corr_plain,
                 voigt=vf, voigt_obs=vf_obs,
                 peak=peak, peak_obs=peak_obs, eps=eps,
-                cal_label=cal['short'],
+                cal_label=cal['short'], cal_key=cal_key,
                 sample_path=sp_path, blank_path=bp_path,
                 sample_file=os.path.basename(sp_path),
                 blank_file=os.path.basename(bp_path))

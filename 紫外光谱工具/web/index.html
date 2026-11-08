@@ -320,6 +320,41 @@ td{white-space:nowrap}
     <section class="card">
       <h2>标定结果</h2>
       <table id="calTable"></table>
+
+      <h3 style="margin:18px 0 6px;font-size:14px">每条曲线用哪条标定</h3>
+      <p class="hint">默认按实验安排分配（第一周长波 / 第二周长波 / 第二周短波）。
+        逐条改这里可以试「同一条谱用不同标定换算」的影响；改完点右上角「重新计算」。</p>
+      <div class="btnrow" style="margin:6px 0 10px">
+        <button class="btn" id="btnCalReset">全部恢复默认</button>
+        <span class="hint" id="calCurveNote"></span>
+      </div>
+      <div id="curveCalPicks"></div>
+
+      <h3 style="margin:18px 0 6px;font-size:14px">标定条目（可增删）</h3>
+      <p class="hint">出厂三条标定是固定的；这里可以再补做标定：选一张光源谱（氘灯/汞灯），
+        工具会自动找特征峰拟合。新增的条目会出现在上面的下拉与报告 3.1 节里。</p>
+      <div id="customCalList"></div>
+      <div class="btnrow" style="margin:8px 0 0">
+        <button class="btn" id="btnCalAdd">＋ 添加一条标定</button>
+        <span class="hint" id="calAddNote"></span>
+      </div>
+      <div id="calAddForm" style="display:none;margin-top:10px;padding:10px;
+           border:1px solid var(--line);border-radius:8px">
+        <div class="field"><label>名称（显示在报告 3.1 的子标题里）</label>
+          <input id="calNewLabel" placeholder="如：长波范围（第三周 11-04）"></div>
+        <div class="field"><label>简称（出现在表格与下拉里）</label>
+          <input id="calNewShort" placeholder="如：第三周长波"></div>
+        <div class="field"><label>光源谱文件</label>
+          <div id="calNewFilePicker"></div></div>
+        <div class="field"><label>先验斜率 a / 截距 b（可留空，留空则全局寻峰）</label>
+          <input id="calNewPriorA" type="number" step="any" placeholder="如 0.1257">
+          <input id="calNewPriorB" type="number" step="any" placeholder="如 422.3"></div>
+        <div class="btnrow">
+          <button class="btn primary" id="btnCalSave">保存这条标定</button>
+          <button class="btn" id="btnCalCancel">取消</button>
+          <span class="hint" id="calSaveNote"></span>
+        </div>
+      </div>
     </section>
 
     <section class="card">

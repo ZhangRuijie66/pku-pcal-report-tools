@@ -99,7 +99,10 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
     rb = ReportBuilder(template_path, cover_tail_blanks=cover_tail_blanks)
     cals = analysis.cals
-    c1, c2, c3 = cals['d1_long'], cals['d2_long'], cals['d2_short']
+    # 标定条数由 analysis.cal_list 决定（出厂三条；用户可在界面上增删）。
+    # 这里不再解包成 c1/c2/c3——写死三个名字正是「不能增减标定」的根源。
+    cal_list = list(getattr(analysis, 'cal_list', None) or
+                    [dict(key=k) for k in cals])
     mol = {r['code']: r for r in analysis.molecule_table}
     beer = analysis.beer
     fit = beer.get('fit') if beer else None
@@ -276,7 +279,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     # ================================================================ 3 数据与结果
     rb.heading('3 数据与结果')
     log('写标定与光源…')
-    _sec_calibration(rb, c1, c2, c3, cal_pngs)
+    _sec_calibration(rb, analysis, cal_pngs)
     _sec_source(rb, analysis, source_png)
     log('写浓度与其余分子…')
     _sec_concentration(rb, analysis, fit, conc_items, conc_png, beer_png)
@@ -317,6 +320,32 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
 
 # ---------------------------------------------------------------- 小工具
+def _cn_num(n):
+    """1..10 的中文数字（报告正文用「三次标定」这类说法）。"""
+    words = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五",
+             6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return str(n)
+    return words.get(n, str(n))
+
+
+def _n_peak_word(n):
+    """拟合用了几条特征谱线 → 「三个」「四个」；未知时退回「若干」。
+
+    这个数来自 calibrate() 实际用上的点数，不是硬编码：没有先验时寻峰个数
+    可能不足，写死「三个」就会与右图里的点不符。
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "若干"
+    if n <= 0:
+        return "若干"
+    return "%s个" % _cn_num(n)
+
+
 def _trim(x):
     try:
         return ('%.1f' % float(x)).rstrip('0').rstrip('.')
@@ -362,42 +391,118 @@ def _table_reagents(rb):
 
 
 # ---------------------------------------------------------------- 3.1 标定
-def _sec_calibration(rb, c1, c2, c3, pngs):
-    rb.heading('3.1 光谱仪的标定', 2)
-    rb.para('氘灯在 190~400 nm 有连续光谱，同时辐射出 238.30、485.82、581.39、'
-            '656.06 nm 的特征谱线。把扫描得到的光源谱图中各特征峰对应的 pixel 值与'
-            '标准波长作线性拟合，即可得到 pixel 与波长的换算关系。由于每次移动 CCD '
-            '或被测量的波长范围改变后光路几何关系都会略有变化，本实验共做了三次标定：'
-            '第一周的长波范围、第二周重新进行的长波范围，以及为测量短波长分子而移动'
-            'CCD 后的短波范围。')
+#: 出厂三条标定在报告 3.1 里用的**短标题**与「使用该标定的曲线」措辞。
+#: 这两样在旧版是手写死的；抽出来是为了「默认输出一字不变」，
+#: 同时让用户新增的标定能自动生成同格式的文字。
+DEFAULT_CAL_TITLES = {
+    'd1_long': '长波范围（第一周）',
+    'd2_long': '长波范围（第二周）',
+    'd2_short': '短波范围（第二周）',
+}
+#: 默认三条下每条标定的「本实验中……使用该标定结果」原句（与旧版逐字相同）。
+DEFAULT_CAL_NOTES = {
+    'd1_long': '本实验中 A4 的测量使用该标定结果。',
+    'd2_long': '本实验中 A3 的浓度系列、A3 的双光源对比以及 A2 使用该标定结果。',
+    'd2_short': '本实验中 A1、B1、B2 使用该标定结果。',
+}
+#: 默认三条的「为什么重新标定」补充说明（旧版只在第 2、3 条下手写）。
+DEFAULT_CAL_LEAD = {
+    'd1_long': '第一周标定所用的 CCD 位置在实验结束后被移动过，第二周重新测量时'
+                '光路状态已与第一周不同，因此重新扫描了一次光源谱图并重新标定。',
+    'd2_short': '为测量吸收峰位于 250~460 nm 的短波长分子，需要把 CCD 向紫外方向'
+                '移动，其余部分与长波范围完全相同，移动后重新标定。',
+}
 
-    for idx, (title, cal, png, note) in enumerate((
-            ('3.1.1 长波范围（第一周）', c1, pngs['d1_long'],
-             '本实验中 A4 的测量使用该标定结果。'),
-            ('3.1.2 长波范围（第二周）', c2, pngs['d2_long'],
-             '本实验中 A3 的浓度系列、A3 的双光源对比以及 A2 使用该标定结果。'),
-            ('3.1.3 短波范围（第二周）', c3, pngs['d2_short'],
-             '本实验中 A1、B1、B2 使用该标定结果。')), 1):
-        rb.heading(title, 3)
-        if idx == 1:
-            rb.para('第一周标定所用的 CCD 位置在实验结束后被移动过，第二周重新测量时'
-                    '光路状态已与第一周不同，因此重新扫描了一次光源谱图并重新标定。')
-        if idx == 3:
-            rb.para('为测量吸收峰位于 250~460 nm 的短波长分子，需要把 CCD 向紫外方向'
-                    '移动，其余部分与长波范围完全相同，移动后重新标定。')
-        rb.para('标定结果如图%d所示，其中左图为光源谱图及三个特征峰的位置，'
-                '右图为 pixel–波长的线性拟合结果。' % (idx + 1))
-        rb.figure(png, caption='图%d  %s的特征峰及线性拟合结果' % (idx + 1, title[6:]),
-                  width_cm=15.0)
+
+def _cal_note(analysis, cal_key):
+    """这条标定被哪些曲线使用 → 一句「本实验中……使用该标定结果」。
+
+    默认三条直接用旧版的原句（保证报告逐字不变）；用户自定义的标定按
+    实际用到的曲线自动归纳，不编造。
+    """
+    if cal_key in DEFAULT_CAL_NOTES:
+        return DEFAULT_CAL_NOTES[cal_key]
+    used = [s for s in (getattr(analysis, 'samples', {}) or {}).values()
+            if s.get('cal_key') == cal_key]
+    if not used:
+        return ''
+    conc_mols, single, has_source = [], [], False
+    for s in used:
+        kind = s.get('kind') or ''
+        code = s.get('mol') or ''
+        if kind == 'source':
+            has_source = True
+        elif kind.startswith('conc') and code not in conc_mols:
+            conc_mols.append(code)
+        elif code and code not in single:
+            single.append(code)
+    parts = ['%s 的浓度系列' % c for c in conc_mols]
+    if has_source and 'A3' in conc_mols:
+        parts.append('A3 的双光源对比')
+    parts += [c for c in single if c not in conc_mols]
+    if not parts:
+        return ''
+    return '本实验中 %s 使用该标定结果。' % '、'.join(parts)
+
+
+def _sec_calibration(rb, analysis, pngs):
+    cals = analysis.cals
+    cal_list = list(getattr(analysis, 'cal_list', None) or
+                    [dict(key=k) for k in cals])
+    keys = [c.get('key') for c in cal_list]
+    is_default = keys == ['d1_long', 'd2_long', 'd2_short']
+
+    rb.heading('3.1 光谱仪的标定', 2)
+    lead = ('氘灯在 190~400 nm 有连续光谱，同时辐射出 238.30、485.82、581.39、'
+            '656.06 nm 的特征谱线。把扫描得到的光源谱图中各特征峰对应的 pixel 值与'
+            '标准波长作线性拟合，即可得到 pixel 与波长的换算关系。')
+    if is_default:
+        rb.para(lead +
+                '由于每次移动 CCD 或被测量的波长范围改变后光路几何关系都会略有'
+                '变化，本实验共做了三次标定：第一周的长波范围、第二周重新进行的'
+                '长波范围，以及为测量短波长分子而移动'
+                'CCD 后的短波范围。')
+    else:
+        labels = [str(c.get('label') or c.get('short') or c['key'])
+                  for c in cal_list]
+        rb.para(lead +
+                '由于每次移动 CCD 或被测量的波长范围改变后光路几何关系都会略有'
+                '变化，本次共做了%s次标定：%s。'
+                % (_cn_num(len(cal_list)), '、'.join(labels)))
+
+    fig_no = 2                       # 图1 留给引言的预习笔记，标定图从 图2 起
+    for idx, c in enumerate(cal_list, 1):
+        key = c['key']
+        cal = cals.get(key)
+        if not cal:                  # 该标定没算出来：跳过而不是让整份报告崩
+            continue
+        png = pngs.get(key)
+        title = DEFAULT_CAL_TITLES.get(key) if is_default else None
+        title = title or str(c.get('label') or c.get('short') or key)
+        rb.heading('3.1.%d %s' % (idx, title), 3)
+
+        # 「为什么重新标定」的说明：默认三条沿用旧版文字（只在第 2、3 条），
+        # 自定义条目若有 note 就写出来，没有就不编造实验经过。
+        extra = DEFAULT_CAL_LEAD.get(key) if is_default else c.get('note')
+        if extra:
+            rb.para(str(extra))
+
+        if png:
+            rb.para('标定结果如图%d所示，其中左图为光源谱图及%s特征峰的位置，'
+                    '右图为 pixel–波长的线性拟合结果。'
+                    % (fig_no, _n_peak_word(cal.get('n'))))
+            rb.figure(png, caption='图%d  %s的特征峰及线性拟合结果' % (fig_no, title),
+                      width_cm=15.0)
+            fig_no += 1
         rb.para(['直线的拟合结果为：'], keep_next=True)
-        rb.equation(r'\lambda=(%s\pm%s)\times \mathrm{pixel}+(%s\pm%s)'
+        rb.equation(r'\\lambda=(%s\\pm%s)\\times \\mathrm{pixel}+(%s\\pm%s)'
                     % (k(cal['a'], 5), k(cal['sigma_a'], 5),
                        k(cal['b'], 1), k(cal['sigma_b'], 1)))
         rb.para([
             '线性相关系数 ', ('t', 'R^{2}', ITALIC), ' = %s，线性良好。' % k(cal['r2'], 5),
             '由原始数据的 pixel 范围 1~3648 换算得波长范围约 %d~%d nm，'
             % (round(cal['lam_lo']), round(cal['lam_hi'])),
-            note,
+            _cal_note(analysis, key),
         ])
 
     rb.para('得到 pixel–波长的换算关系后，待测分子的吸光度由朗伯–比尔定律换算：',

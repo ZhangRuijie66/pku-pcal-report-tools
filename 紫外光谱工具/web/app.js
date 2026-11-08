@@ -86,6 +86,14 @@ function readConfig() {
   cfg.beer_concs = bc;
   // 数据文件映射（槽位 -> 相对数据目录的 txt）
   cfg.file_map = fileMapValue();
+  // 每条曲线用哪条标定
+  const cc = {};
+  document.querySelectorAll('select[data-curve-cal]').forEach((sel) => {
+    cc[sel.dataset.curveCal] = sel.value;
+  });
+  cfg.curve_cal = cc;
+  // 自定义标定条目（出厂三条不在里面；由「删除」按钮维护）
+  cfg.calibrations = (STATE && STATE.custom_cals) ? STATE.custom_cals.slice() : [];
   return cfg;
 }
 
@@ -100,6 +108,96 @@ function renderCals(s) {
       Math.round(c.lam_lo) + ' ~ ' + Math.round(c.lam_hi) + '</td></tr>';
   });
   $('calTable').innerHTML = html;
+}
+
+/* ---------------------------------------------------------------- 标定 */
+function _calOptionsHtml(sel) {
+  const opts = (STATE && STATE.cal_options) || [];
+  return opts.map((c) => {
+    const on = c.key === sel ? ' selected' : '';
+    const tag = c.custom ? '（自定义）' : '';
+    return '<option value="' + esc(c.key) + '"' + on + '>' +
+      esc(c.short || c.key) + tag + '</option>';
+  }).join('');
+}
+
+/* 每条曲线选标定：按用途分组列出，避免十几条挤成一团 */
+function renderCurveCals(s) {
+  const box = $('curveCalPicks');
+  if (!box) return;
+  const cur = s.curve_cal || {};
+  const rows = s.curve_rows || [];
+  const groups = [['conc', 'A3 浓度系列'], ['molecule', '各分子'],
+                  ['source', '光源对比']];
+  let html = '';
+  let changed = 0;
+  groups.forEach(([kind, title]) => {
+    const items = rows.filter((r) =>
+      kind === 'molecule' ? (r.kind || '').indexOf('molecule') === 0 :
+      kind === 'conc' ? (r.kind || '').indexOf('conc') === 0 :
+      (r.kind || '') === 'source');
+    if (!items.length) return;
+    html += '<div style="margin:6px 0 2px;font-size:12.5px;color:#5b6472">' +
+      title + '</div>';
+    items.forEach((r) => {
+      const sel = cur[r.key] || '';
+      const def = (s.curve_cal_default || {})[r.key] || '';
+      if (sel && def && sel !== def) changed += 1;
+      const label = (r.kind || '').indexOf('conc') === 0
+        ? (r.conc + ' μmol·L⁻¹')
+        : (r.key + (r.mol && r.mol !== r.key ? '（' + r.mol + '）' : ''));
+      html += '<div class="field" style="display:flex;gap:8px;align-items:center">' +
+        '<label style="flex:0 0 132px;margin:0">' + esc(label) + '</label>' +
+        '<select data-curve-cal="' + esc(r.key) + '" style="flex:1">' +
+        _calOptionsHtml(sel) + '</select>' +
+        (sel !== def ? '<span class="hint" style="flex:0 0 auto">非默认</span>' : '') +
+        '</div>';
+    });
+  });
+  box.innerHTML = html || '<p class="hint">还没有可选的曲线。</p>';
+  const note = $('calCurveNote');
+  if (note) {
+    note.textContent = changed
+      ? ('有 ' + changed + ' 条曲线用了非默认标定')
+      : '当前全部使用默认标定';
+  }
+}
+
+/* 自定义标定条目：列出 + 可删除 */
+function renderCustomCals(s) {
+  const box = $('customCalList');
+  if (!box) return;
+  const custom = s.custom_cals || [];
+  if (!custom.length) {
+    box.innerHTML = '<p class="hint">还没有添加自定义标定（出厂三条始终可用）。</p>';
+    return;
+  }
+  box.innerHTML = custom.map((c, i) =>
+    '<div class="field" style="display:flex;gap:8px;align-items:center">' +
+    '<span style="flex:1"><code>' + esc(c.key) + '</code> ' + esc(c.label || '') +
+    '<span class="hint"> · ' + esc(c.file || '') + '</span></span>' +
+    '<button class="btn" data-del-cal="' + i + '">删除</button></div>'
+  ).join('');
+  box.querySelectorAll('[data-del-cal]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const i = Number(b.dataset.delCal);
+      const custom2 = (STATE.custom_cals || []).slice();
+      const gone = custom2.splice(i, 1)[0];
+      STATE.custom_cals = custom2;
+      // 被删的标定若还被某条曲线选中，回落到该曲线的默认值
+      const cc = {};
+      document.querySelectorAll('select[data-curve-cal]').forEach((sel) => {
+        cc[sel.dataset.curveCal] = sel.value;
+      });
+      Object.keys(cc).forEach((k) => {
+        if (cc[k] === (gone && gone.key)) {
+          cc[k] = (STATE.curve_cal_default || {})[k] || STATE.default_cal_key;
+        }
+      });
+      STATE.curve_cal = cc;
+      recalc();
+    });
+  });
 }
 
 function renderMolecules(s) {
@@ -190,6 +288,8 @@ function renderState(s) {
   $('outInfo').textContent = s.out_dir;
   setStatus('数据目录：' + s.data_dir);
   renderCals(s);
+  renderCurveCals(s);
+  renderCustomCals(s);
   renderMolecules(s);
   renderBeer(s);
   renderPicks(s);
@@ -713,12 +813,84 @@ function bindUI() {
   $('btnSaveDefault').onclick = saveDefault;
   $('btnScan').onclick = scanDir;
   $('btnBrowse').onclick = pickDir;
-  $('btnPickLast').onclick = () => {
+  /* ---------------------------------------------------------------- 标定新增 */
+let _calFilePicker = null;
+
+async function openCalForm(show) {
+  const form = $('calAddForm');
+  if (!form) return;
+  form.style.display = show ? '' : 'none';
+  if (!show) return;
+  // 首次展开时才去拉候选光源谱（避免页面加载就多一次请求）
+  if (!_calFilePicker && window.PcalFiles) {
+    _calFilePicker = PcalFiles.mount($('calNewFilePicker'), {
+      placeholder: '搜索光源谱文件名，如 氘灯 / 校准',
+      onPick: (rel) => { $('calSaveNote').textContent = '已选：' + rel; },
+    });
+    try {
+      await _calFilePicker.load((STATE && STATE.config && STATE.config.data_dir) || '');
+    } catch (e) { /* 目录不可用时不阻塞手填 */ }
+  } else if (_calFilePicker) {
+    try { await _calFilePicker.refresh(); } catch (e) { /* ignore */ }
+  }
+  $('calSaveNote').textContent = '';
+}
+
+async function saveCal() {
+  const note = $('calSaveNote');
+  const label = ($('calNewLabel').value || '').trim();
+  const short = ($('calNewShort').value || '').trim() || label;
+  const rel = _calFilePicker ? _calFilePicker.getValue() : '';
+  if (!label) { note.textContent = '请先填名称'; return; }
+  if (!rel) { note.textContent = '请先选光源谱文件'; return; }
+  const pa = $('calNewPriorA').value;
+  const pb = $('calNewPriorB').value;
+  // key 从名称派生：英文/数字直接用，中文则用 cal_<序号>，保证能拼进槽位名
+  let key = label.replace(/[^\w.\-]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!key || /^[\d.\-]+$/.test(key)) {
+    const used = {};
+    ((STATE && STATE.cal_options) || []).forEach((c) => { used[c.key] = 1; });
+    let i = 1;
+    while (used['cal_' + i]) i += 1;
+    key = 'cal_' + i;
+  }
+  const entry = { key: key, label: label, short: short, file: rel };
+  if (pa !== '' && pb !== '') {
+    const fa = Number(pa), fb = Number(pb);
+    if (Number.isFinite(fa) && Number.isFinite(fb) && fa !== 0) {
+      entry.prior = [fa, fb];
+    }
+  }
+  STATE.custom_cals = (STATE.custom_cals || []).concat([entry]);
+  note.textContent = '已添加，正在重新计算…';
+  openCalForm(false);
+  $('calNewLabel').value = '';
+  $('calNewShort').value = '';
+  $('calNewPriorA').value = '';
+  $('calNewPriorB').value = '';
+  if (_calFilePicker) _calFilePicker.setValue('');
+  await recalc();
+}
+
+$('btnPickLast').onclick = () => {
     document.querySelectorAll('select[data-conc], select[data-mol]').forEach((sel) => {
       sel.selectedIndex = sel.options.length - 1;
     });
     toast('已把每个槽位设为最后一次测量，点「重新计算」生效');
   };
+  // ---- 标定：每条曲线选标定 / 增删自定义标定
+  $('btnCalReset').onclick = () => {
+    document.querySelectorAll('select[data-curve-cal]').forEach((sel) => {
+      const def = (STATE && STATE.curve_cal_default || {})[sel.dataset.curveCal];
+      if (def) sel.value = def;
+    });
+    toast('已把每条曲线恢复为默认标定，点「重新计算」生效');
+    if (STATE) renderCurveCals(STATE);
+  };
+  $('btnCalAdd').onclick = () => openCalForm(true);
+  $('btnCalCancel').onclick = () => openCalForm(false);
+  $('btnCalSave').onclick = saveCal;
+
   $('chartKind').onchange = drawChart;
   $('btnGcalcOpen').onclick = openGcalc;
   $('btnGcalcRead').onclick = readGcalc;

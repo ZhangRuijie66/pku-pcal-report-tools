@@ -113,6 +113,14 @@ def _coerce(cfg, payload):
         if key not in base:
             continue
         ref = base[key]
+        if isinstance(ref, list):
+            # calibrations 是列表：只接受能清洗成合法条目的（key 要能拼进
+            # 槽位名 cal:<key> 与图文件名 calib_<key>.png）。
+            if key == 'calibrations':
+                cfg[key] = uv.clean_calibrations(value)
+            elif isinstance(value, list):
+                cfg[key] = value
+            continue
         if isinstance(ref, dict):
             # file_map / molecule_default / conc_pick 这类字典：
             # 以前整块被覆盖，于是前端没传的键会被清空；
@@ -145,10 +153,15 @@ def _config_from(payload=None):
 
 
 def _analysis(cfg, force=False):
+    # 缓存键必须覆盖**影响计算结果的所有配置**。以前漏了标定相关项：
+    # 于是「改某条曲线的标定」后点了重新计算也拿回旧结果，界面上看不出异常。
     key = json.dumps({k: cfg.get(k) for k in ('data_dir', 'file_map', 'smooth_window',
                                               'stray_mode', 'stray',
                                               'stray_a3', 'path_cm',
-                                              'anchor_pad', 'beer_keys')},
+                                              'anchor_pad', 'beer_keys',
+                                              'calibrations', 'curve_cal',
+                                              'molecule_default', 'conc_pick',
+                                              'voigt_peaks')},
                      sort_keys=True, default=str)
     with LOCK:
         if not force and STATE['key'] == key and STATE['analysis'] is not None:
@@ -205,7 +218,50 @@ def _summary(an):
         # 数据文件槽位：每个槽位解析到哪个文件、是否模糊匹配来的、还有哪些候选
         'file_slots': _slot_view(an),
         'file_summary': _file_summary(an),
+        # 标定：可选清单（供「每条曲线用哪条」下拉）、自定义条目、逐曲线选择
+        'cal_options': [dict(key=c['key'], label=c['label'], short=c['short'],
+                             custom=bool(c.get('custom')), file=c.get('file'))
+                        for c in (getattr(an, 'cal_list', None) or [])],
+        'custom_cals': list(cfg.get('calibrations') or []),
+        'curve_cal': dict(getattr(an, 'curve_cal', {}) or {}),
+        'curve_cal_default': dict(uv.CURVE_CAL_DEFAULT),
+        # 每条曲线（样品）供界面列出的标签
+        'curve_rows': [dict(key=s['key'], mol=s['mol'], kind=s.get('kind'),
+                            day=s.get('day'), conc=s.get('conc'),
+                            cal_key=(getattr(an, 'curve_cal', {}) or {}).get(s['key']),
+                            cal_short=((an.samples.get(s['key']) or {})
+                                       .get('cal_label') or ''))
+                       for s in uv.SAMPLES],
+        'default_cal_key': uv.DEFAULT_CAL_KEY,
     }
+
+
+def _cal_options(query):
+    """新增标定时的候选光源谱文件（GET /api/cals/options）。
+
+    返回数据目录里的光谱 txt（相对路径 + 已被哪条标定占用），
+    前端据此做可搜索的下拉。只读，不写盘。
+    """
+    cfg = STATE.get('config') or _config_from()
+    data_dir = (query.get('dir') or [''])[0] or cfg.get('data_dir') or ''
+    if not os.path.isdir(data_dir):
+        return {'ok': False,
+                'error': '数据目录不存在：%s' % (data_dir or '（未设置）'),
+                'files': [], 'dir': data_dir}
+    files = dataloc.list_data_files(data_dir, exts=('.txt',))
+    used = {}
+    for c in uv.effective_calibrations(cfg.get('calibrations')):
+        used[uv._norm_key(c.get('file') or '')] = c['key']
+    rows = [dict(rel=rel, used_by=used.get(uv._norm_key(rel)) or '')
+            for rel in files]
+    return {'ok': True, 'dir': os.path.abspath(data_dir),
+            'files': rows, 'total': len(rows),
+            'default_key': uv.DEFAULT_CAL_KEY,
+            'existing': [dict(key=c['key'], label=c['label'],
+                              short=c['short'], file=c.get('file'),
+                              custom=bool(c.get('custom')))
+                         for c in uv.effective_calibrations(
+                             cfg.get('calibrations'))]}
 
 
 def _slot_view(an):
@@ -708,6 +764,9 @@ class Handler(BaseHTTPRequestHandler):
                 with PREVIEW_LOCK:
                     png = _preview(kind, cfg, q)
                 return self._send(200, png, 'image/png')
+            if path == '/api/cals/options':
+                # 新增标定用：数据目录里可作为「光源谱」的文件 + 现有标定清单
+                return self._json(_cal_options(q))
             if path == '/api/scan':
                 d = (q.get('dir') or [''])[0]
                 return self._json(_scan(d))

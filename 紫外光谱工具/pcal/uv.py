@@ -82,6 +82,21 @@ CALIBRATIONS = [
          prior=(0.12758568846992188, 258.30852586769021)),
 ]
 
+#: 出厂默认的「样品 → 标定」分配。
+#: 每条曲线用哪次标定的**默认值**；界面上可以逐条改（存 settings.json 的
+#: ``curve_cal``）。不在这里登记的样品退回 ``DEFAULT_CAL_KEY``。
+CURVE_CAL_DEFAULT = {
+    'A4': 'd1_long',            # 第一周测的，用第一周长波标定
+    'A3c0.5': 'd2_long', 'A3c1': 'd2_long', 'A3c5': 'd2_long',
+    'A3c10': 'd2_long', 'A3c20': 'd2_long', 'A3c20b': 'd2_long',
+    'A3c50': 'd2_long', 'A3c50b': 'd2_long', 'A3c5b': 'd2_long',
+    'A3_DW': 'd2_long', 'A2': 'd2_long', 'A2b': 'd2_long',
+    'A1': 'd2_short', 'B1': 'd2_short', 'B1b': 'd2_short',
+    'B1c': 'd2_short', 'B2': 'd2_short',
+}
+#: 兜底标定（样品没登记、或用户选的标定已被删掉时用）。
+DEFAULT_CAL_KEY = 'd2_long'
+
 # 测量登记表。key 唯一；mol 指向 MOLECULES；series 标记用途。
 #   sample / blank 均为相对于数据目录的路径
 A3_OFF = '2\\2026-10-21 & 12-56-02-A3-0.txt'      # A3 浓度系列的空白（乙醇）
@@ -229,13 +244,15 @@ def _pick_sig(picks_mol, picks_conc):
     return (tuple(sorted(pm.items())), tuple(sorted(pc.items())))
 
 
-def file_slots(picks_mol=None, picks_conc=None):
+def file_slots(picks_mol=None, picks_conc=None, cals=None):
     """界面上的槽位清单：标定 → 浓度系列 → 其余分子 → 空白。
 
     每个浓度、每个分子各**一行**：重复测量里只列「测量选择」当前选中的那一条。
     多条用途指向同一份文件时合并成一行（如 A3 在浓度系列和其余分子里都取 5 μmol/L）。
     """
-    sig = _pick_sig(picks_mol, picks_conc)
+    cals = list(cals if cals is not None else CALIBRATIONS)
+    # 缓存键必须带上标定清单：用户增删标定后槽位会变，否则会拿到旧列表。
+    sig = _pick_sig(picks_mol, picks_conc) + (tuple(c['key'] for c in cals),)
     if sig in _SLOTS:
         return [dict(s) for s in _SLOTS[sig]]
     pm = dict(MOLECULE_DEFAULT)
@@ -256,7 +273,7 @@ def file_slots(picks_mol=None, picks_conc=None):
                         default=default, note=note)
         order.append(key)
 
-    for c in CALIBRATIONS:
+    for c in cals:
         put(SLOT_CAL + c['key'], 'cal', '标定文件', c['short'], c['file'])
     for c in CONC_VALUES:
         key = pc.get(conc_label(c))
@@ -294,21 +311,115 @@ def file_slots(picks_mol=None, picks_conc=None):
     return [dict(s) for s in rows]
 
 
-def all_slot_keys():
+def clean_calibrations(entries):
+    """把 settings.json 里的自定义标定条目清洗成可用的 dict 列表。
+
+    一条标定只需要两样东西：**光源谱文件**（相对数据目录）与可选的先验
+    ``(a, b)``。没给先验也能用——``calibrate()`` 会自己找峰按候选组合拟合，
+    只是稳一点的做法是先给个粗略先验（先验只用来限定 ±45 px 的寻峰窗口）。
+    """
+    out = []
+    for raw in (entries or []):
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get('key') or '').strip()
+        file = str(raw.get('file') or '').strip().strip('"')
+        if not key or not file:
+            continue
+        # key 只允许字母数字下划线连字符：它要拼进槽位名（cal:<key>）、
+        # 当图文件名（calib_<key>.png），带路径分隔符或空格会出问题。
+        if not re.match(r'^[\w.\-]+$', key):
+            continue
+        prior = raw.get('prior')
+        if prior:
+            try:
+                pa, pb = float(prior[0]), float(prior[1])
+                prior = (pa, pb) if pa else None
+            except (TypeError, ValueError, IndexError):
+                prior = None
+        else:
+            prior = None
+        out.append(dict(
+            key=key,
+            label=str(raw.get('label') or key).strip(),
+            short=str(raw.get('short') or raw.get('label') or key).strip(),
+            day=raw.get('day'),
+            file=os.path.normpath(file).replace(os.sep, os.sep),
+            prior=prior,
+            custom=True,
+        ))
+    return out
+
+
+def effective_calibrations(custom=None):
+    """本次实际使用的标定清单 = 出厂默认三条 + 用户添加的。
+
+    同 key 时**用户条目覆盖默认**（这样用户可以把某条默认标定换成自己重测的
+    光源谱，而不必改代码）。顺序保持「默认在前、新增在后」，报告 3.1 的子节
+    编号就按这个顺序排。
+
+    ``custom`` 为空时返回出厂默认（报告与测试的基准路径）。
+    """
+    base = [dict(c) for c in CALIBRATIONS]
+    extra = clean_calibrations(custom)
+    if not extra:
+        return base
+    by_key = {c['key']: c for c in base}
+    order = [c['key'] for c in base]
+    for c in extra:
+        if c['key'] in by_key:
+            merged = dict(by_key[c['key']])
+            merged.update(c)
+            by_key[c['key']] = merged
+        else:
+            by_key[c['key']] = c
+            order.append(c['key'])
+    return [by_key[k] for k in order]
+
+
+def curve_cal_map(cfg_cal=None, cals=None):
+    """每条曲线最终用哪条标定：``{sample_key: cal_key}``。
+
+    ``cfg_cal`` 是界面上逐条选的结果（settings.json 的 ``curve_cal``）。
+    用户选了一个**不存在**的标定时退回该曲线的默认值，再退到
+    ``DEFAULT_CAL_KEY``——绝不返回一个空值让后面 KeyError。
+    """
+    available = {c['key'] for c in (cals if cals is not None
+                                   else CALIBRATIONS)}
+    out = {}
+    for s in SAMPLES:
+        key = s['key']
+        want = (cfg_cal or {}).get(key) or CURVE_CAL_DEFAULT.get(key)
+        if want not in available:
+            want = CURVE_CAL_DEFAULT.get(key)
+        if want not in available:
+            want = DEFAULT_CAL_KEY if DEFAULT_CAL_KEY in available else None
+        out[key] = want
+    return out
+
+
+def samples_using_cal(cal_key, cfg_cal=None, cals=None):
+    """哪些样品用了这条标定（报告 3.1 各子节的「本实验中……使用该标定」要用）。"""
+    mapping = curve_cal_map(cfg_cal, cals)
+    return [k for k, v in mapping.items() if v == cal_key]
+
+
+def all_slot_keys(cals=None):
     """所有**可能**出现的槽位（校验 file_map 用，与当前选择无关）。
 
     file_map 里允许保留「当前没选中」的测量，这样来回切换测量时
     之前指定的文件不会丢。
     """
-    keys = {SLOT_CAL + c['key'] for c in CALIBRATIONS}
+    keys = {SLOT_CAL + c['key']
+            for c in (cals if cals is not None else CALIBRATIONS)}
     keys |= {SLOT_SAMPLE + s['key'] for s in SAMPLES}
     keys |= {SLOT_BLANK + b['key'] for b in BLANKS}
     return keys
 
 
-def clean_file_map(mapping):
+def clean_file_map(mapping, cals=None):
     """只保留合法槽位，值统一成路径字符串（绝对路径原样保留）。"""
-    valid = all_slot_keys()
+    valid = all_slot_keys(cals)
     out = {}
     for key, value in (mapping or {}).items():
         if key not in valid or not isinstance(value, str):
@@ -467,7 +578,7 @@ def fuzzy_match(default_rel, data_dir, files=None):
 
 
 def resolve_slots(file_map=None, data_dir='', fuzzy=True,
-                  picks_mol=None, picks_conc=None):
+                  picks_mol=None, picks_conc=None, cals=None):
     """槽位 → 绝对路径；返回 (paths, missing, detail)。
 
     只解析当前「测量选择」下**报告真正会读**的那几条数据：
@@ -483,11 +594,11 @@ def resolve_slots(file_map=None, data_dir='', fuzzy=True,
     ``missing`` 的每一项都带 ``suggestions``：宁可整份计算明确报错说清缺哪一个，
     也不要静默退回默认文件——那样报告里的数字会和界面上的选择不一致。
     """
-    fm = clean_file_map(file_map)
+    fm = clean_file_map(file_map, cals)
     base = data_dir or ''
     files = _index_files(base) if fuzzy else []
     paths, missing, detail = {}, [], {}
-    for slot in file_slots(picks_mol, picks_conc):
+    for slot in file_slots(picks_mol, picks_conc, cals):
         key = slot['key']
         default_rel = slot['default']
         mapped = fm.get(key)
