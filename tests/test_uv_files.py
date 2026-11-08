@@ -29,9 +29,13 @@ BASE_R2 = 0.99875613
 
 
 def _data_dir():
-    uv = load_module(TOOL, 'uv')
-    return uv.CALIBRATIONS[0] and os.path.join(
-        os.path.dirname(uv.__file__), '..', '..', '3 紫外光谱搭建', '数据')
+    """测试用的真实数据切片（tests/fixtures/紫外光谱）。
+
+    以前这里拼的是仓库外的 `3 紫外光谱搭建/数据`，那个目录不受 git 跟踪：
+    新 clone 上这批用例会 SkipTest，看起来"全绿"其实少跑了 5 个类。
+    现在 fixtures 随仓库走，任何机器结果一致（见 tests/fixtures/README.md）。
+    """
+    return str(REPO_ROOT / 'tests' / 'fixtures' / '紫外光谱')
 
 
 class SlotModelTests(unittest.TestCase):

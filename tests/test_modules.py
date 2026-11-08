@@ -19,7 +19,12 @@ class ModuleRegressionTests(unittest.TestCase):
     def case(self, label):
         if label not in self.cases:
             exc = self.build_errors.get(label)
-            self.skipTest('%s 基准数据不可用：%s' % (label, exc))
+            # 以前这里 skipTest —— 于是「基准数据缺失」被当成正常跳过，
+            # `run_tests.py` 只看 wasSuccessful()，skip 不算失败，防线是空的：
+            # 干净 clone 上燃烧热/溶解热的数值基准一项都没跑却报 OK。
+            # 数据已切进 tests/fixtures/（随仓库走），缺失就说明基建坏了，必须红。
+            self.fail('%s 基准数据不可用（tests/fixtures 缺失或损坏）：%s'
+                      % (label, exc))
         return self.cases[label]
 
     def close(self, actual, expected, rtol=2e-3, label=''):

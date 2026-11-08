@@ -14,6 +14,11 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# 测试用的真实实验数据切片（随仓库走，见 tests/fixtures/README.md）。
+# 以前测试直接读仓库外的 `1 燃烧热/`、`2 溶解热/`、`3 紫外光谱搭建/数据/`，
+# 那些目录不受 git 跟踪 —— 新 clone 上数值基准会静默降级成 skip，看起来全绿
+# 实际少跑好几项。改成读 fixtures 后，任何机器上结果一致。
+FIXTURES = REPO_ROOT / 'tests' / 'fixtures'
 M = '{http://schemas.openxmlformats.org/officeDocument/2006/math}'
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 M_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/math'

@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from support import REPO_ROOT, load_module
+from support import FIXTURES, REPO_ROOT, load_module
 
 PROFILE = {
     'student_name': '测试同学',
@@ -75,6 +75,8 @@ def _conductivity():
 def _echem():
     tool = '电化学工具'
     cfg = _cfg(tool)
+    # 同 _uv：数据目录指向 fixtures，别依赖仓库外的 `物理化学实验/…/电化学/`。
+    cfg['data_dir'] = str(FIXTURES / '电化学')
     an = load_module(tool, 'analysis').Analysis(cfg).run()
     return ModuleCase('电化学', tool, an, cfg)
 
@@ -82,6 +84,9 @@ def _echem():
 def _uv():
     tool = '紫外光谱工具'
     cfg = _cfg(tool)
+    # 数据目录指向随仓库走的 fixtures，不再依赖仓库外的原始数据目录。
+    # 槽位是按文件名匹配的，fixtures 里保留了 `1/ 2/ 3/ 4/` 子目录原名。
+    cfg['data_dir'] = str(FIXTURES / '紫外光谱')
     an = load_module(tool, 'analysis').Analysis(cfg).run()
     return ModuleCase('紫外', tool, an, cfg)
 
@@ -93,7 +98,7 @@ def _combustion():
     cfg = analysis.default_config()
     cfg.update(PROFILE, pressure_kPa=101.3, temperature_C=27.1,
                water_volume_mL=3000)
-    base = REPO_ROOT / '1 燃烧热'
+    base = FIXTURES / '燃烧热'
     cfg['rounds'] = [
         {'role': 'standard', 'name': '苯甲酸', 'substance': 'benzoic',
          'file': str(base / '苯甲酸.csv')},
@@ -116,7 +121,7 @@ def _dissolution():
     cfg = analysis.default_config()
     cfg.update(PROFILE, pressure_kPa=101.3, water_volume_mL=500,
                solute='kno3')
-    base = REPO_ROOT / '2 溶解热'
+    base = FIXTURES / '溶解热'
     files = sorted(str(p) for p in base.glob('*dissolutiondata-*.csv'))
     cfg['rounds'] = [{'file': f, 'name': os.path.basename(f)} for f in files]
     loaders = {}
