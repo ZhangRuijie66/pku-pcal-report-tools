@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,6 +158,48 @@ def _check_text(doc, issues):
                 'WARN', 'text.unicode_script',
                 '文本里残留 Unicode 上下标「%s」，应写成真上下标：%s'
                 % (''.join(bad), text.strip()[:40])))
+        # ---- 以下三条是 2026-11-07 审计补的盲区（原来对这三类完全不报警）----
+        #
+        # 1) 未解析的上下标标记：`σ_{P₂^{∞}}` 被单层正则切坏时，会印出字面
+        #    `_{` / `^{`（偶极矩报告印错过 3 句）。只认「字母或数字后紧跟 _{
+        #    或 ^{」，避免把公式对象里合法的大括号算进来。
+        m = _RAW_MARKER_RE.search(text)
+        if m:
+            issues.append(Issue(
+                'ERROR', 'text.raw_marker',
+                '文本里有未解析的上下标标记「%s」，应渲染成真上下标：%s'
+                % (m.group(0), text.strip()[:40])))
+        # 2) 游离花括号：只有在同一段里同时出现「不成对的 }」时才算标记被切坏。
+        #    公式对象里 `10^{-8}` 是合法的，前面有配对的 {，不算。
+        if text.count('}') > text.count('{'):
+            issues.append(Issue(
+                'ERROR', 'text.stray_brace',
+                '文本里花括号不配对（} 多于 {），通常是上下标记号被切坏：%s'
+                % text.strip()[:40]))
+        # 3) 裸下划线：`μ_B`、`χ_m` 当普通字符串写，Word 里就显示下划线。
+        #    合法的 `_{...}` 标记已排除。
+        m = _BARE_UNDERSCORE_RE.search(text)
+        if m:
+            issues.append(Issue(
+                'ERROR', 'text.bare_underscore',
+                '文本里有裸下划线「%s」，应写成真下标（μ_{B}）：%s'
+                % (m.group(0), text.strip()[:40])))
+        # 4) C 风格科学计数法：`%.3e` 印出的 `1.798e-08` 不该出现在 Word 里，
+        #    应写成 1.798×10^{-8}（真上标）。
+        m = _C_EXP_RE.search(text)
+        if m:
+            issues.append(Issue(
+                'ERROR', 'text.c_exponent',
+                '文本里是 C 记数法「%s」，Word 报告应写成 ×10 的上标形式：%s'
+                % (m.group(0), text.strip()[:40])))
+
+
+# 未解析的标记：字母/数字/右括号后紧跟 `_{` 或 `^{`
+_RAW_MARKER_RE = re.compile(r'[\w)₂³⁰-⁹][_^]\{')
+# 「字母_字母」但**不是** `_{…}` 标记：捕获 μ_B / χ_m 这类裸下划线
+_BARE_UNDERSCORE_RE = re.compile(r'[A-Za-zα-ωΑ-Ω]_[A-Za-z0-9](?!})')
+# 1.798e-08 / 2.5e+06 —— 前后不能再跟数字字母，避免撞上编号
+_C_EXP_RE = re.compile(r'(?<![\w.])[-+]?\d+(?:\.\d+)?e[-+]\d{2,3}(?![\w])')
 
 
 def _check_body_fonts(doc, issues):

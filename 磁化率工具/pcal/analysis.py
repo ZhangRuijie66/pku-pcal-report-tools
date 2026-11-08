@@ -31,6 +31,7 @@ def run_analysis(data_dict):
         'm_zero': results['tube']['m_zero'],
         'm_field': results['tube']['m_field'],
         'delta_m': results['tube']['delta_m'],
+        'delta_m_gross': results['tube']['delta_m'],
     })
 
     # 莫尔盐
@@ -39,17 +40,32 @@ def run_analysis(data_dict):
         'm_zero': results['mohr_salt']['m_zero'],
         'm_field': results['mohr_salt']['m_field'],
         'delta_m': results['mohr_salt']['delta_m'],
+        'delta_m_gross': results['mohr_salt']['delta_m'],
         'delta_m_corrected': results['mohr_salt']['delta_m_corrected'],
         'm_net': results['mohr_salt']['m_net'],
     })
 
     # 各样品
+    #
+    # ⚠ 口径：表 1 必须整张表都用**毛重**（含样品管），否则同一张表里空管/莫尔盐
+    # 是毛重、样品是净质量，两种口径混排，读者用 m − m₀ 一减就对不上 Δm。
+    # `process_sample` 只回传净质量 m_sample（= 毛重 − 空管），拿不到毛重；
+    # 毛重就在原始数据 data_dict[name] 里，直接从那里取，不去改计算内核。
     for name, sample in results['samples'].items():
+        raw = data_dict.get(name) or {}
+        m_zero = raw.get('m_zero')
+        m_field = raw.get('m_field')
+        # 毛重质量变化 Δm = m − m₀（扣空管之前的值，也就是参照报告的 Δm_I）
+        delta_m_gross = (m_field - m_zero) if (m_zero is not None
+                                              and m_field is not None) else None
         table_data.append({
             'name': name,
-            'm_zero': sample['m_zero'] if 'm_zero' in sample else sample['m_sample'],
-            'm_field': sample['m_field'] if 'm_field' in sample else None,
+            'm_zero': m_zero,
+            'm_field': m_field,
+            'delta_m_gross': delta_m_gross,
+            # delta_m 保留「扣空管后」的口径：它是 χ 公式里真正用到的量
             'delta_m': sample['delta_m'],
+            'm_sample': sample['m_sample'],
             'chi_mass': sample['chi_mass'],
             'chi_m': sample['chi_m'],
             'mu': sample['mu'],

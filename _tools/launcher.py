@@ -4,7 +4,8 @@
 由 启动.vbs（以及桌面的「物化实验报告工具」快捷方式）调用：
 
     python _tools\\launcher.py "<某个工具目录>"      后台启动该工具，不弹命令行窗口
-    python _tools\\launcher.py --stop                停掉入口页和全部实验模块
+    python _tools\\launcher.py --stop                停掉入口页和全部实验模块（不弹框）
+    python _tools\\launcher.py --stop --interactive  同上，但停完弹框确认（双击 vbs 用）
     python _tools\\launcher.py --install "<目录>"    在命令行窗口里装依赖，装完再后台启动
     python _tools\\launcher.py --restart             静默重启入口页（更新装完后自己调）
     python _tools\\launcher.py --update [--apply] [--no-restart]
@@ -17,11 +18,13 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 LAB_DIR = os.path.dirname(TOOLS_DIR)
@@ -29,6 +32,50 @@ PORTAL_DIR = os.path.join(LAB_DIR, '物化实验报告工具')
 LOG_FILE = os.path.join(TOOLS_DIR, '启动日志.log')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 RESTART_WAIT = 8.0                       # 等入口端口释放的上限（秒）
+
+
+def _probe_ports(ports, timeout=0.4):
+    """并发探测一组端口，返回监听中的那些（**保持原顺序**）。
+
+    `portal.find_portal_port()` 是一个个串行 connect_ex 的：空端口每个都要等满
+    0.4 s 超时，30 个就是 12 s。收摊时入口通常根本没在跑，于是 --stop 光"找
+    入口"就卡十几秒。改成先并发筛一遍，只有真在监听的那一两个端口才进后面的
+    HTTP 校验，语义不变、时间降到一次超时。
+    """
+    ports = list(ports)
+    if not ports:
+        return []
+
+    def _one(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            return port, s.connect_ex(('127.0.0.1', port)) == 0
+
+    open_ports = set()
+    with ThreadPoolExecutor(max_workers=min(32, len(ports))) as pool:
+        for port, is_open in pool.map(_one, ports):
+            if is_open:
+                open_ports.add(port)
+    return [p for p in ports if p in open_ports]
+
+
+def _portal_port():
+    """入口页端口；没有在跑就返回 0。
+
+    先并发筛出真正在监听的入口端口，再让 portal 自己按原逻辑确认（它会校验
+    /api/modules 返回的 portal_port）。这样"入口没在跑"时不再白等 30×0.4 s。
+    """
+    portal = _portal_module()
+    candidates = []
+    env_port = portal._env_port()
+    if env_port:
+        candidates.append(env_port)
+    for port in range(*portal.PORTAL_PORTS):
+        if port not in candidates:
+            candidates.append(port)
+    if not _probe_ports(candidates, timeout=0.25):
+        return 0
+    return portal.find_portal_port()
 
 # 每个工具额外需要的第三方库（缺了就开个窗口 pip 安装）
 DEPS = {
@@ -127,7 +174,7 @@ def _running_port(tool_dir):
             continue
         if portal._healthy(mod['port'], 0.6):
             return mod['port']
-        p_port = portal.find_portal_port()
+        p_port = _portal_port()
         if not p_port:
             return 0
         try:
@@ -203,11 +250,19 @@ def install_and_start(tool_dir):
     return rc
 
 
-def stop_all():
-    """停掉入口页（入口会顺手收掉它拉起的模块），再兜底清理独立启动的模块。"""
+def stop_all(interactive=True):
+    """停掉入口页（入口会顺手收掉它拉起的模块），再兜底清理独立启动的模块。
+
+    ``interactive``：停完是否弹消息框告诉用户「已停止」。
+    * 双击 `停止服务.vbs` 是人在操作 → 传 True，弹框确认（这是唯一能看到
+      「已经停干净了」的反馈，因为后台服务没有命令行窗口）。
+    * 脚本/命令行调用（`python _tools\\launcher.py --stop`）→ 传 False，
+      **绝不弹框**：`_alert` 用的是 MessageBoxW，没人去点它时永不返回，
+      调用方会永久卡在等消息框上（实测 20 秒都不退出）。
+    """
     portal = _portal_module()
     stopped = []
-    p_port = portal.find_portal_port()
+    p_port = _portal_port()
     if p_port:
         try:
             with urllib.request.urlopen('http://127.0.0.1:%d/api/shutdown' % p_port,
@@ -224,7 +279,8 @@ def stop_all():
         stopped.append('%s（后台进程）' % name)
     text = '、'.join(stopped) if stopped else '没有正在运行的服务'
     print('已停止：%s' % text)
-    _alert('已停止：\n%s' % text)
+    if interactive:
+        _alert('已停止：\n%s' % text)
     return 0
 
 
@@ -319,7 +375,7 @@ def restart_services():
 
     p_port = 0
     try:
-        p_port = portal.find_portal_port()
+        p_port = _portal_port()
     except Exception as exc:              # noqa: BLE001
         _report('探测入口端口出错（%s），按「入口不在」处理。' % exc)
         p_port = 0
@@ -331,7 +387,7 @@ def restart_services():
         released = False
         while time.time() < deadline:
             try:
-                still = portal.find_portal_port()
+                still = _portal_port()
             except Exception:             # noqa: BLE001
                 still = 0
             if not still:
@@ -465,7 +521,9 @@ def main(argv):
     if not argv:
         return start(PORTAL_DIR)
     if argv[0] == '--stop':
-        return stop_all()
+        # 只有双击 停止服务.vbs 时会带 --interactive（弹框确认「已停止」）；
+        # 命令行/脚本来调不弹框，否则无交互环境下会永久卡在消息框上。
+        return stop_all(interactive=('--interactive' in argv[1:]))
     if argv[0] == '--install':
         return install_and_start(argv[1])
     if argv[0] == '--restart':

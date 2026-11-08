@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 
 from . import vapor
+from .atomicio import atomic_write_json
 
 
 def default_config():
@@ -69,7 +69,10 @@ def load_data(path):
 
 
 def save_data(path, data):
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    return path
+    """原子写盘：先在内存里序列化成功，再整体替换。
+
+    旧写法 ``open(path, 'w')`` 会**先把文件截断成 0 字节**，之后 ``json.dump``
+    中途抛异常（数据里混进 numpy 标量 / set，或磁盘满）就把用户的实验读数
+    留在半截状态，而且没有任何备份。
+    """
+    return atomic_write_json(path, data)

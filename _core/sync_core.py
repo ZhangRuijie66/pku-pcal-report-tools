@@ -50,6 +50,7 @@ FILES = (
     ('sigfig.py', Path('pcal') / 'sigfig.py'),
     ('workspace.py', Path('pcal') / 'workspace.py'),
     ('profile.py', Path('pcal') / 'profile.py'),
+    ('atomicio.py', Path('pcal') / 'atomicio.py'),
 )
 
 # 需要前端草稿的 6 个手工录入模块；draft.js 由 _core/web_draft.js 同步。

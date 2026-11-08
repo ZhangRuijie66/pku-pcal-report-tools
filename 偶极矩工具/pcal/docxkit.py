@@ -90,6 +90,34 @@ def _ppr_insert(ppr, elem):
     return elem
 
 
+# w:tblPr 子元素的 schema 顺序（ECMA-376 CT_TblPr）。和 pPr 同一个坑：
+# 原来 _set_cell_margins 直接 tblpr.append(tblCellMar)，于是它排在 tblLook
+# 之后——Word 容错、看不出来，严格渲染器会忽略 tblCellMar，单元格边距退回
+# 默认值，本来"刚好不换行"的表头就被挤成两行。（§24.5 只修了 pPr，tblPr 漏了。）
+_TBLPR_SEQ = (
+    'w:tblStyle', 'w:tblpPr', 'w:tblOverlap', 'w:bidiVisual',
+    'w:tblStyleRowBandSize', 'w:tblStyleColBandSize', 'w:tblW', 'w:jc',
+    'w:tblCellSpacing', 'w:tblInd', 'w:tblBorders', 'w:shd', 'w:tblLayout',
+    'w:tblCellMar', 'w:tblLook', 'w:tblCaption', 'w:tblDescription',
+    'w:tblPrChange')
+
+_TBLPR_TAG_INDEX = {qn(name): i for i, name in enumerate(_TBLPR_SEQ)}
+
+
+def _tblpr_insert(tblpr, elem):
+    """按 CT_TblPr 的 schema 顺序把 elem 插进 tblpr（重复的同类元素先删掉）。"""
+    tag = elem.tag
+    old = tblpr.find(tag)
+    if old is not None:
+        tblpr.remove(old)
+    idx = _TBLPR_TAG_INDEX.get(tag)
+    if idx is None:
+        tblpr.append(elem)
+        return elem
+    tblpr.insert_element_before(elem, *_TBLPR_SEQ[idx + 1:])
+    return elem
+
+
 def _para_fmt(p, indent_chars=2.0, space_before=0, space_after=0,
               line_spacing=1.0, align=None, left_chars=0.0,
               page_break_before=False):
@@ -344,16 +372,74 @@ def _write_script(p, body, opts, sup):
 
 
 def _rich_tokens(text):
-    """把含 _{..} / ^{..} 标记的文本切成 [(kind, body), …]，kind: t/sub/sup。"""
-    out, pos = [], 0
-    for m in _RICH_RE.finditer(text):
-        if m.start() > pos:
-            out.append(('t', text[pos:m.start()]))
-        out.append(('sub' if m.group(1) == '_' else 'sup', m.group(2)))
-        pos = m.end()
-    if pos < len(text):
-        out.append(('t', text[pos:]))
+    """把含 _{..} / ^{..} 标记的文本切成 [(kind, body), …]，kind: t/sub/sup。
+
+    ⚠️ 花括号要**配对扫描**，不能用单层正则 `([_^])\{([^{}]*)\}`：
+    那样 `σ_{P₂^{∞}}` 会被切坏——`_{P₂^{∞}` 里的内层 `^{∞}` 先被外层匹配吃掉，
+    结果是文本 `σ_{P₂` + 上标 `∞` + 游离的 `}`，报告里直接印出字面 `_{` 和 `}`。
+    （偶极矩报告 2026-11-07 审计时被这一条印错 3 句。）
+
+    嵌套时内层标记降级处理：Word 的 run 只有一档 vertAlign，没法在"下标里再套上标"。
+    所以 `_{P₂^{∞}}` → 下标 `P₂` + 上标 `∞`（视觉上与原意一致，且不会漏出标记符）。
+    """
+    out = []
+    buf = []
+    i, n = 0, len(text)
+
+    def flush_text():
+        if buf:
+            out.append(('t', ''.join(buf)))
+            del buf[:]
+
+    while i < n:
+        ch = text[i]
+        # 只有 `_` / `^` 紧跟 `{` 才算标记起点
+        if ch in '_^' and i + 1 < n and text[i + 1] == '{':
+            depth, j = 0, i + 1
+            while j < n:
+                if text[j] == '{':
+                    depth += 1
+                elif text[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if depth != 0:                 # 花括号没闭合：当普通文本，别吞掉
+                buf.append(ch)
+                i += 1
+                continue
+            body = text[i + 2:j]
+            flush_text()
+            out.append(('sub' if ch == '_' else 'sup', body))
+            i = j + 1
+            continue
+        buf.append(ch)
+        i += 1
+    flush_text()
     return out
+
+
+def _render_nested_markers(p, body, opts, sub_scale=1.0, sup=False):
+    """写上下标内容；内容里若还嵌套 `^{..}` / `_{..}`，把内层降级成相邻的
+    上标/下标 run（Word 只有一档 vertAlign，不能再套）。"""
+    inner = _rich_tokens(body)
+    if all(k == 't' for k, _ in inner):
+        sub = dict(opts)
+        if sub_scale != 1.0:
+            sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
+        _write_script(p, body, sub, sup=sup)
+        return
+    for kind, chunk in inner:
+        if kind == 't':
+            if not chunk:
+                continue
+            sub = dict(opts)
+            if sub_scale != 1.0:
+                sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
+            _write_script(p, chunk, sub, sup=sup)
+        else:
+            _render_nested_markers(
+                p, chunk, opts, sub_scale=sub_scale, sup=(kind == 'sup'))
 
 
 def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
@@ -378,9 +464,10 @@ def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
                 # 数字、单位、说明性缩写（sam、Ni）正体。不能在这里一律置 False，
                 # 否则 Q_{s} 的 s 会被排成正体（题注规范要求斜体）。
                 sub['italic'] = True
-                if sub_scale != 1.0:
-                    sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
-                _write_script(p, body, sub, sup=(kind == 'sup'))
+                # 嵌套标记（σ_{P₂^{∞}}）要交给递归渲染：直接 _write_script 会把
+                # 内层 '^{∞}' 当普通字符印出来，题注里就漏出字面 _{ 和 }。
+                _render_nested_markers(p, body, sub, sub_scale=sub_scale,
+                                       sup=(kind == 'sup'))
                 continue
             nxt = None
             if idx + 1 < len(toks) and toks[idx + 1][0] != 't':
@@ -390,17 +477,13 @@ def add_rich_text(p, text, base_opts=None, sub_scale=1.0, caption=False):
                 o['italic'] = italic
                 style_run(p.add_run(chunk), **o)
         return
-    pos = 0
-    for m in _RICH_RE.finditer(text):
-        if m.start() > pos:
-            _emit_text(p, text[pos:m.start()], opts)
-        sub = dict(opts)
-        if sub_scale != 1.0:
-            sub['size'] = round(sub.get('size', 10.5) * sub_scale, 1)
-        _write_script(p, m.group(2), sub, sup=(m.group(1) == '^'))
-        pos = m.end()
-    if pos < len(text):
-        _emit_text(p, text[pos:], opts)
+    for kind, body in _rich_tokens(text):
+        if kind == 't':
+            if body:
+                _emit_text(p, body, opts)
+            continue
+        _render_nested_markers(p, body, opts, sub_scale=sub_scale,
+                               sup=(kind == 'sup'))
 
 
 def _add_text(p, text, opts=None):
@@ -698,6 +781,10 @@ class ReportBuilder:
         return p
 
     def _add_math(self, p, latex, display=False):
+        # 公式通道也要做 Unicode 上下标转换：正文里 'χ_m'、'P₂^{∞}' 这类写法
+        # 混进 latex 是常事（尤其最后迁移过来的偶极矩/磁化率），不转就会以
+        # 固定 Unicode 字形印出来，字号不跟随、和真上下标不一致。
+        latex = _scripts_to_markers('' if latex is None else str(latex))
         if display:
             xml = ('<m:oMathPara %s %s><m:oMathParaPr><m:jc m:val="center"/></m:oMathParaPr>'
                    '<m:oMath>%s</m:oMath></m:oMathPara>') % (W_NS, M_NS, omml.to_omml_body(latex))
@@ -881,15 +968,12 @@ class ReportBuilder:
         """收紧单元格内边距，避免因为默认边距把文字挤到换行。"""
         twips = int(round(mm * 56.7))
         tblpr = table._tbl.tblPr
-        mar = tblpr.find(qn('w:tblCellMar'))
-        if mar is not None:
-            tblpr.remove(mar)
         mar = parse_xml(
             '<w:tblCellMar %s>'
             '<w:top w:w="%d" w:type="dxa"/><w:left w:w="%d" w:type="dxa"/>'
             '<w:bottom w:w="%d" w:type="dxa"/><w:right w:w="%d" w:type="dxa"/>'
             '</w:tblCellMar>' % (W_NS, twips, twips, twips, twips))
-        tblpr.append(mar)
+        _tblpr_insert(tblpr, mar)
 
     def _write_cell(self, p, value, font_size):
         if isinstance(value, tuple) and value and value[0] == 'm':

@@ -42,6 +42,7 @@ from pcal.analysis import (Analysis, SUBSTANCES, PERSIST_KEYS, default_config,
 from pcal import report as rpt             # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal.atomicio import atomic_write_json  # noqa: E402
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 
@@ -71,8 +72,8 @@ def save_settings(cfg):
         if k in cfg:
             saved[k] = cfg[k]
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as fh:
-            json.dump(saved, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        # 原子写盘：设置里含姓名/学号，写到一半崩掉会留下半截 JSON。
+        atomic_write_json(SETTINGS_FILE, saved, sort_keys=True)
         return True
     except OSError:
         return False
@@ -536,14 +537,19 @@ def _unique_path(path, max_tries=50):
 def _default_data_dir():
     """
     数据文件夹的默认值：优先用上次记住的那个（换目录/换机器后也能接着用），
-    再试开发机上的原始数据目录，最后退回本工具目录。
+    再试套件根下的「数据」文件夹（可移植包用法）、课程原始数据目录（相对
+    套件根，跟着包走）、本工具目录里的「样例数据」，最后退回本工具目录。
+
+    **不写死任何一台机器上的绝对路径**：可移植包解压到别人电脑上以后，
+    这里推出的目录一定存在（最后一档是本工具目录），不会抛 FileNotFoundError。
     """
     saved = (load_settings().get('data_dir') or '').strip()
     if saved and os.path.isdir(saved):
         return saved
+    suite = os.path.dirname(ROOT)
     cands = [
-        r'D:\北大\课程\26秋大三上\物理化学实验\1 燃烧热',
-        os.path.join(os.path.dirname(ROOT), '数据'),      # 可移植包：同级放个「数据」文件夹
+        os.path.join(suite, '数据'),      # 可移植包：同级放个「数据」文件夹
+        os.path.join(suite, '1 燃烧热'),   # 课程原始数据（相对套件根）
         os.path.join(ROOT, '样例数据'),
     ]
     for c in cands:

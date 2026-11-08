@@ -3,10 +3,11 @@
   "files": {
     "version.py": "648ab618e98a5f968d83ebd6fdf8b3ae0339785484cc541560b71025ed57afbf",
     "omml.py": "4e46bec4faf2a129881f59bb81c46af1697c3b27004c0dcd2c59e1e3b0b0c3bb",
-    "docxkit.py": "27a40dba71ba9a80639ff44a680c2640045ead549e09b92ddd62d91308a56ba4",
+    "docxkit.py": "5e9bc6ffa1e8b501207802d4c652f9c7daf065eab2091a0502b355fec7a7516d",
     "sigfig.py": "638fb7a989db775b0355d21f4300347082b2176fe2ba9cd2deaa69cbbefe4ed0",
     "workspace.py": "0fe745f926b2d6b2f36d53b2ecd8bd5d1b09e07e15836bcd07ed91c002a66c07",
-    "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3"
+    "profile.py": "d1cf89bc68392f54e6be0d67f5a4fcb63bd79297ae2c23786f9a37c8edc600d3",
+    "atomicio.py": "b479864e7fd3fdea8cba0186f6b2bfe0b6dfb11ae0e12a61b0c16bcc446b68d8"
   },
   "web_files": {
     "web_draft.js": "f23dfb8643b5fa876e242c0bfe9f26cdfea7c165d12bc8cbcbfa826a1d4d0125"

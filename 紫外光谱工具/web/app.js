@@ -348,7 +348,9 @@ function updateFileMapNote() {
 async function autoMap() {
   busy(true, '正在按文件名匹配…');
   try {
-    const r = await api('/api/files/auto');
+    // 后端只在 do_POST 里注册了 /api/files/auto（服务端会写映射），
+    // 走 GET 会一直是 404 —— 必须显式 POST。
+    const r = await api('/api/files/auto', { method: 'POST' });
     if (!r.ok) { toast('匹配失败：' + r.error); return; }
     const n = Object.keys(r.map).length;
     Object.keys(r.map).forEach((k) => { MAP_EDIT[k] = r.map[k]; });

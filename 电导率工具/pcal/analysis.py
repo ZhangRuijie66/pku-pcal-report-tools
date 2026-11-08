@@ -16,8 +16,30 @@ import numpy as np
 
 from . import conduct
 
-DEFAULT_DATA_DIR = (r'D:\北大\课程\26秋大三上\物理化学实验'
-                    r'\物理化学实验\物理化学实验\电导率')
+# 默认数据目录：**运行时推导**，不写死任何一台机器上的绝对路径。
+# 可移植包解压到别人电脑上以后照样能跑：先找套件根下的 数据/，再找课程原始
+# 数据目录（相对套件根，跟着包走），再找工具目录里的 样例数据/；都没有就退回
+# 工具目录本身（目录一定存在，绝不会因为路径不存在抛 FileNotFoundError）。
+# 优先级：settings.json / profile.json 里记住的 data_dir（由调用方先填进
+#        cfg，见 server）＞ 本函数的推导结果。
+_TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SUITE_DIR = os.path.dirname(_TOOL_DIR)
+
+
+def _default_data_dir():
+    cands = [os.path.join(_SUITE_DIR, '数据'),                   # 可移植包用法
+             # 课程原始数据（电导率数据.json 在 物理化学实验/物理化学实验/电导率/）
+             os.path.join(_SUITE_DIR, '物理化学实验', '物理化学实验',
+                          '电导率'),
+             os.path.join(_SUITE_DIR, '电导率'),                 # 精简布局
+             os.path.join(_TOOL_DIR, '样例数据')]
+    for cand in cands:
+        if os.path.isdir(cand):
+            return cand
+    return _TOOL_DIR
+
+
+DEFAULT_DATA_DIR = _default_data_dir()
 
 STRONG_KEYS = ('NaNO3', 'NaAc', 'HNO3')
 
@@ -78,7 +100,8 @@ class Analysis:
         self.data_dir = data_dir
         self.warnings = []
 
-        self.data, self.data_path = conduct.load_data(data_dir)
+        self.data, self.data_path, data_warnings = conduct.load_data_ex(data_dir)
+        self.warnings.extend(data_warnings)
         self.ctx = conduct.prepare(self.data)
 
         sols = self.data.get('solutions', {})

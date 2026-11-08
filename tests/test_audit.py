@@ -88,5 +88,55 @@ class AuditTests(unittest.TestCase):
             audit_docx(os.path.join(self.tmp.name, 'nope.docx'))
 
 
+class AuditBlindSpotTests(unittest.TestCase):
+    """2026-11-07 审计抓到的三类「audit_docx 完全查不出来」的排版缺陷。
+
+    这三条当时都漏过了自检：偶极矩印出字面 `_{`/`}`、磁化率印出 `1.798e-08`、
+    磁化率印出裸 `μ_B`。所以它们的共同教训是——**审计器自己也要有回归测试**。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dk = load_module('电化学工具', 'docxkit')
+        cls.tmp = tempfile.TemporaryDirectory()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _one_para(self, text, name):
+        doc = docx.Document()
+        doc.add_paragraph(text)
+        path = os.path.join(self.tmp.name, name)
+        doc.save(path)
+        return path
+
+    def test_detects_unparsed_subscript_marker(self):
+        codes = {i.code for i in audit_docx(
+            self._one_para('比磁化率 σ_{P₂ 的表达式', 'marker.docx'))}
+        self.assertIn('text.raw_marker', codes)
+
+    def test_detects_bare_underscore(self):
+        for text in ('分子磁矩 μ_B 为 1.84', '摩尔磁化率 χ_m 是负数'):
+            codes = {i.code for i in audit_docx(
+                self._one_para(text, 'underscore.docx'))}
+            self.assertIn('text.bare_underscore', codes, text)
+
+    def test_detects_c_style_exponent(self):
+        codes = {i.code for i in audit_docx(
+            self._one_para('比磁化率为 1.798e-08 m³·kg⁻¹', 'cexp.docx'))}
+        self.assertIn('text.c_exponent', codes)
+
+    def test_properly_rendered_text_has_no_false_positive(self):
+        """走 docxkit 正常渲染的文本必须零误报（否则审计器会被忽略）。"""
+        doc = docx.Document()
+        self.dk.add_rich_text(
+            doc.add_paragraph(),
+            'σ_{P₂^{∞}} 与 m_{Ni-1}、Q_{V}、10^{-8} 并列')
+        path = os.path.join(self.tmp.name, 'proper.docx')
+        doc.save(path)
+        self.assertEqual([str(i) for i in audit_docx(path)], [])
+
+
 if __name__ == '__main__':
     unittest.main()

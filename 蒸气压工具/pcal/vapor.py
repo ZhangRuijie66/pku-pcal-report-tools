@@ -154,7 +154,12 @@ def normalize_data(data):
 
 # ---------------------------------------------------------------- 统计内核
 def _ols(x, y):
-    """一次线性拟合 y = m·x + b，返回参数与其标准误、R²、点数。"""
+    """一次线性拟合 y = m·x + b，返回参数与其标准误、协方差、R²、点数。
+
+    `cov_mb` 是 Cov(m, b) = −x̄·σ²/S_xx（斜率和截距由同一批点算出，
+    两者强相关，不能当独立量）。Tb = A/(B−c) 里 A = −m 与 B = b 同时出现，
+    漏掉这项会把 σ_Tb 高估几十倍（相关系数 0.9999 量级）。
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     n = x.size
@@ -174,8 +179,9 @@ def _ols(x, y):
     s2 = ss_res / (n - 2)
     sigma_m = math.sqrt(s2 / sxx)
     sigma_b = math.sqrt(s2 * (1.0 / n + xm * xm / sxx))
+    cov_mb = -xm * s2 / sxx
     return {'m': m, 'b': b, 'sigma_m': sigma_m, 'sigma_b': sigma_b,
-            'r2': r2, 'n': int(n)}
+            'cov_mb': cov_mb, 'r2': r2, 'n': int(n)}
 
 
 def _delta_t(T):
@@ -218,7 +224,19 @@ def fit_liquid(points, p1=P_NORM, shift=0.0):
 
     d = B - math.log(p1 / P_STD)        # 分母 B − ln(p1/p⊖)
     tb = A / d
-    sigma_tb = math.sqrt((sigma_A / d) ** 2 + (A * sigma_B / d ** 2) ** 2)
+    # σ_Tb 的传播：Tb = A/d，d = B − ln(p1/p⊖)。
+    #   ∂Tb/∂A = 1/d，∂Tb/∂B = −A/d²
+    # A = −m、B = b 出自同一次最小二乘，相关系数 0.99987（水）/0.99981（环己烷），
+    # 协方差项 Cov(A,B) = −Cov(m,b) = +x̄·σ²/S_xx 与两个平方项同量级、符号为负，
+    # 漏掉它会把 σ_Tb 高估约 48.9 倍（水 3.2359 K vs 真值 0.0662 K）：
+    #   旧：(σ_A/d)² + (A·σ_B/d²)²                       → 3.2359 K
+    #   新：上式 + 2·(∂Tb/∂A)(∂Tb/∂B)·Cov(A,B)          → 0.0662 K
+    # 40 万次 MC（对 A、B 抽带协方差的二元正态）确认 0.0662 K。
+    dA = 1.0 / d
+    dB = -A / (d ** 2)
+    cov_AB = -ols['cov_mb']             # A = −m，所以 Cov(A,B) = −Cov(m,b)
+    var_tb = (dA * sigma_A) ** 2 + (dB * sigma_B) ** 2 + 2.0 * dA * dB * cov_AB
+    sigma_tb = math.sqrt(max(0.0, var_tb))
 
     dh_J = A * R_GAS                    # J·mol⁻¹
     sigma_dh_J = sigma_A * R_GAS
@@ -232,7 +250,7 @@ def fit_liquid(points, p1=P_NORM, shift=0.0):
 
     return {
         'A': A, 'sigma_A': sigma_A, 'B': B, 'sigma_B': sigma_B,
-        'r2': ols['r2'], 'n': ols['n'],
+        'cov_AB': cov_AB, 'r2': ols['r2'], 'n': ols['n'],
         'tb': tb, 'sigma_tb': sigma_tb,
         'dh_kJ': dh_J / 1000.0, 'sigma_dh_kJ': sigma_dh_J / 1000.0,
         'ds': ds, 'sigma_ds': sigma_ds,

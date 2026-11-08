@@ -13,9 +13,30 @@ import numpy as np
 
 from . import echem
 
-# 默认数据目录（2025 参照数据；今年做完实验后在界面上改成自己的目录并「存为默认」）
-DEFAULT_DATA_DIR = (r'D:\北大\课程\26秋大三上\物理化学实验'
-                    r'\物理化学实验\物理化学实验\电化学\chi的全部附件20251028')
+# 默认数据目录：**运行时推导**，不写死任何一台机器上的绝对路径。
+# 可移植包解压到别人电脑上以后照样能跑：先找套件根下的 数据/，再找课程原始
+# 数据目录（相对套件根，跟着包走），再找工具目录里的 样例数据/；都没有就退回
+# 工具目录本身（目录一定存在，绝不会因为路径不存在抛 FileNotFoundError）。
+# 优先级：settings.json / profile.json 里记住的 data_dir（由调用方先填进
+#        cfg，见 server）＞ 本函数的推导结果。
+_TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SUITE_DIR = os.path.dirname(_TOOL_DIR)
+
+
+def _default_data_dir():
+    cands = [os.path.join(_SUITE_DIR, '数据'),                   # 可移植包用法
+             # 课程原始数据（2025 参照数据；今年做完实验后在界面上改成自己的目录）
+             os.path.join(_SUITE_DIR, '物理化学实验', '物理化学实验',
+                          '电化学', 'chi的全部附件20251028'),
+             os.path.join(_SUITE_DIR, '电化学'),                 # 精简布局
+             os.path.join(_TOOL_DIR, '样例数据')]
+    for cand in cands:
+        if os.path.isdir(cand):
+            return cand
+    return _TOOL_DIR
+
+
+DEFAULT_DATA_DIR = _default_data_dir()
 
 # 平滑窗口 / 起始电位判据 / ESA 积分窗口的默认值（都可在界面上改）
 DEFAULT_SMOOTH = 9            # 点（1 mV/点 → 9 mV）

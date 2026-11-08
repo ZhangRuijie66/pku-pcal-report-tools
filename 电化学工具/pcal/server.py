@@ -32,6 +32,7 @@ from pcal import plotting                        # noqa: E402
 from pcal import report as rpt                   # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal.atomicio import atomic_write_json
 from pcal.analysis import (Analysis, PERSIST_KEYS, default_config,  # noqa: E402
                            default_config_with_saved)
 
@@ -93,8 +94,8 @@ def load_settings():
 
 def save_settings(cfg):
     data = {k: cfg.get(k) for k in PERSIST_KEYS if k in cfg}
-    with open(SETTINGS_FILE, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    # 原子写盘：设置里含姓名/学号，写到一半崩掉会留下半截 JSON。
+    atomic_write_json(SETTINGS_FILE, data)
     return data
 
 
@@ -367,7 +368,10 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self, rel):
         rel = rel.replace('\\', '/').lstrip('/')
         target = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not target.startswith(os.path.normpath(WEB_DIR)):
+        # 补 os.sep：原来只比前缀，同级的 web2/ 兄弟目录也能通过
+        # （/static/../web2/secret.txt 会 200）。
+        root = os.path.normpath(WEB_DIR) + os.sep
+        if not (target + os.sep).startswith(root):
             return self._json({'ok': False, 'error': 'forbidden'}, 403)
         ext = os.path.splitext(target)[1].lower()
         ctype = {'.css': 'text/css; charset=utf-8',

@@ -41,11 +41,15 @@ from pcal.analysis import (Analysis, SUBSTANCES, PERSIST_KEYS, default_config,
 from pcal import report as rpt                # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal.atomicio import atomic_write_json   # noqa: E402
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
 
 STATE = {'config': None, 'datasets': {}, 'analysis': None}
 LOCK = threading.Lock()   # STATE 的读写都在它里面
+# matplotlib 的 pyplot 不是线程安全的：两个请求同时建图/存图会互相踩坏对方的
+# figure（"2 并发就 100% 失败"）。建图到取回 PNG 字节这一段必须串行。
+PREVIEW_LOCK = threading.Lock()
 
 
 def load_settings():
@@ -63,8 +67,8 @@ def save_settings(cfg):
         if k in cfg:
             saved[k] = cfg[k]
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as fh:
-            json.dump(saved, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        # 原子写盘：设置里含姓名/学号，写到一半崩掉会留下半截 JSON。
+        atomic_write_json(SETTINGS_FILE, saved, sort_keys=True)
         return True
     except OSError:
         return False
@@ -429,8 +433,12 @@ class Handler(BaseHTTPRequestHandler):
         an = STATE.get('analysis')
         if an is None or an.fit is None:
             return self._json({'ok': False, 'error': '尚未计算'}, 400)
-        fig = plotting.make_fit_figure(an.fit, an.diff)
-        return self._send(200, plotting.figure_png(fig), 'image/png')
+        # 建图 + savefig + 取回 bytes 必须整段串行：pyplot 是进程级单例，
+        # 并发会互相 close/覆盖对方的 figure。
+        with PREVIEW_LOCK:
+            fig = plotting.make_fit_figure(an.fit, an.diff)
+            png = plotting.figure_png(fig)
+        return self._send(200, png, 'image/png')
 
     def _calc(self, payload):
         base, datasets, an = build_state(payload)
@@ -544,14 +552,19 @@ def _unique_path(path, max_tries=50):
 def _default_data_dir():
     """
     数据文件夹的默认值：优先用上次记住的那个（换目录/换机器后也能接着用），
-    再试开发机上的原始数据目录，最后退回本工具目录。
+    再试套件根下的「数据」文件夹（可移植包用法）、课程原始数据目录（相对
+    套件根，跟着包走）、本工具目录里的「样例数据」，最后退回本工具目录。
+
+    **不写死任何一台机器上的绝对路径**：可移植包解压到别人电脑上以后，
+    这里推出的目录一定存在（最后一档是本工具目录），不会抛 FileNotFoundError。
     """
     saved = (load_settings().get('data_dir') or '').strip()
     if saved and os.path.isdir(saved):
         return saved
+    suite = os.path.dirname(ROOT)
     cands = [
-        r'D:\北大\课程\26秋大三上\物理化学实验\2 溶解热',
-        os.path.join(os.path.dirname(ROOT), '数据'),      # 可移植包：同级放个「数据」文件夹
+        os.path.join(suite, '数据'),      # 可移植包：同级放个「数据」文件夹
+        os.path.join(suite, '2 溶解热'),   # 课程原始数据（相对套件根）
         os.path.join(ROOT, '样例数据'),
     ]
     for c in cands:

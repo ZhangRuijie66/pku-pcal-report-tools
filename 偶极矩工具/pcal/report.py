@@ -529,8 +529,10 @@ def _sec_error(rb, r):
 
     rb.heading('4.1.2 温度不是主要的误差来源', 3)
     tc = r['T_check']
-    rb.para('假设测量时温度有 σ_T = %.1f ℃ 的波动（已经相当保守），'
-            '则偶极矩不确定度的计算公式为：' % tc['sigma_T'], keep_next=True)
+    rb.para(['假设测量时温度有 ',
+             ('t', 'σ', {'italic': True}), ('t', '_{T}', {}),     # 真下标，别写成裸 σ_T
+             ' = %.1f ℃ 的波动（已经相当保守），'
+             '则偶极矩不确定度的计算公式为：' % tc['sigma_T']], keep_next=True)
     rb.equation(r'σ_{μ}=12.81\times\frac{1}{2}\times\sqrt{\frac{T}{P₂^{∞}-R}'
                 r'\times(σ_{P₂^{∞}}^{2}+σ_{R}^{2})'
                 r'+\frac{P₂^{∞}-R}{T}\timesσ_{T}^{2}}=%s\ D' % unc(tc['s_mu']))

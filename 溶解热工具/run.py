@@ -14,7 +14,24 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-DATA_DIR = r'D:\北大\课程\26秋大三上\物理化学实验\2 溶解热'
+
+def _default_data_dir():
+    """默认数据目录：**运行时推导**，不写死任何一台机器上的绝对路径。
+
+    换台电脑（可移植包解压到别处）也能跑：套件根下的 数据/ → 课程原始数据
+    目录（相对套件根）→ 工具目录里的 样例数据/ → 工具目录本身。最后一档
+    一定存在，所以 --test 不会因为路径不存在而抛 FileNotFoundError。
+    """
+    suite = os.path.dirname(HERE)
+    for cand in (os.path.join(suite, '数据'),
+                 os.path.join(suite, '2 溶解热'),
+                 os.path.join(HERE, '样例数据')):
+        if os.path.isdir(cand):
+            return cand
+    return HERE
+
+
+DATA_DIR = _default_data_dir()
 
 
 def self_test():
@@ -24,13 +41,20 @@ def self_test():
     from pcal.analysis import Analysis, default_config, default_round
     from pcal.server import TEMPLATE, OUT_DIR, _scan_dir, _software_summary
 
-    print('数据目录：', DATA_DIR)
-    files = _scan_dir(DATA_DIR)
-    software = _software_summary(DATA_DIR)
+    data_dir = os.environ.get('PCAL_DATA_DIR') or DATA_DIR
+    print('数据目录：', data_dir)
+    files = _scan_dir(data_dir)
+    software = _software_summary(data_dir)
     print('找到 %d 个溶解热数据文件，dissolution.csv 记录 %d 轮' %
           (len(files), len(software)))
     if not files:
-        raise SystemExit('没有找到数据文件（需要含 time(s),Delta_T(K) 表头的 csv）。')
+        # 空目录是**正常**情形（别人刚解压可移植包、还没放自己的数据）。
+        # 自检要报「装好了、但还没有数据」，而不是抛 SystemExit 退出非 0。
+        print('\n⚠ 这个目录里没有数据文件（需要含 time(s),Delta_T(K) 表头的 csv）。')
+        print('  把课程软件导出的 csv 放进上面的目录（或子目录 样例数据/），'
+              '再跑一次 --test。')
+        print('  本次跳过报告生成。')
+        return 0
 
     cfg = default_config()
     cfg['student_name'] = '张瑞杰'

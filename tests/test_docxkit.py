@@ -218,5 +218,134 @@ class DocxKitIndexTests(unittest.TestCase):
                          [('Ni', True), ('-', True), ('1', True)])
 
 
+class DocxKitNestedBraceTests(unittest.TestCase):
+    """嵌套花括号上下标（σ_{P₂^{∞}}）——2026-11-07 审计的 P0。
+
+    原来是单层正则 `([_^])\{([^{}]*)\}`，遇到嵌套就把标记漏印成字面文本：
+    `σ_{P₂^{∞}}` → 文本 `σ_{P₂` + 上标 `∞` + 游离 `}`。偶极矩报告因此印错 3 句。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dk = load_module(TOOL, 'docxkit')
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.blank = _new_docx(cls.tmp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def builder(self):
+        return self.dk.ReportBuilder(self.blank, cover_tail_blanks=None)
+
+    def _all_text(self, path):
+        import re
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            xml = z.read('word/document.xml').decode('utf-8')
+        return ''.join(re.findall(r'<w:t(?:\s[^>]*)?>(.*?)</w:t>', xml, re.S))
+
+    def test_tokens_keep_nested_body_intact(self):
+        self.assertEqual(self.dk._rich_tokens('σ_{P₂^{∞}}'),
+                         [('t', 'σ'), ('sub', 'P₂^{∞}')])
+        # 不嵌套的老写法不受影响
+        self.assertEqual(self.dk._rich_tokens('P_{2}^{∞}'),
+                         [('t', 'P'), ('sub', '2'), ('sup', '∞')])
+
+    def test_unclosed_brace_is_plain_text(self):
+        """花括号没闭合时整段当普通文本，绝不能把后面的正文吞掉。"""
+        self.assertEqual(self.dk._rich_tokens('a_{b'), [('t', 'a_{b')])
+        self.assertEqual(self.dk._rich_tokens('x^{y'), [('t', 'x^{y')])
+
+    def test_paragraph_leaks_no_literal_markers(self):
+        rb = self.builder()
+        rb.para([('t', 'σ_{P₂^{∞}} 与 Q_{V} 并列')])
+        out = os.path.join(self.tmp.name, 'nested_para.docx')
+        rb.doc.save(out)
+        text = self._all_text(out)
+        self.assertNotIn('_{', text)
+        self.assertNotIn('}', text)
+        self.assertIn('σ', text)
+
+    def test_caption_leaks_no_literal_markers(self):
+        """题注走的是另一个分支（_split_caption_runs），历史上单独踩过这个坑。"""
+        rb = self.builder()
+        rb.caption('表1  题注里的 σ_{P₂^{∞}} 与 Q_{V}')
+        rb.table(['样品', 'm_{0} / g'], [['硫酸铜', '2.4722']])
+        out = os.path.join(self.tmp.name, 'nested_caption.docx')
+        rb.doc.save(out)
+        text = self._all_text(out)
+        self.assertNotIn('_{', text)
+        self.assertNotIn('}', text)
+
+
+class DocxKitEquationScriptTests(unittest.TestCase):
+    """公式通道也要做 Unicode 上下标转换——2026-11-07 审计的 P0。
+
+    `add_rich_text`（正文通道）一直有 `_scripts_to_markers`，`_add_math`
+    （公式通道）漏了，于是偶极矩报告 16 处 `₀`/`₂` 以固定 Unicode 字形印出，
+    字号不跟随上下标缩放。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dk = load_module(TOOL, 'docxkit')
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.blank = _new_docx(cls.tmp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_add_math_converts_unicode_scripts(self):
+        rb = self.dk.ReportBuilder(self.blank, cover_tail_blanks=None)
+        rb.para([('m', r'\chi_m = 1.798 \times 10^{-8}\ \text{m}^{3}')])
+        out = os.path.join(self.tmp.name, 'math_unicode.docx')
+        rb.doc.save(out)
+        import re
+        import zipfile
+        with zipfile.ZipFile(out) as z:
+            xml = z.read('word/document.xml').decode('utf-8')
+        # 转换后不应再有 Unicode 下标的固定字形
+        for ch in ('₀', '₁', '₂', '³', '⁻'):
+            self.assertNotIn(ch, xml, '公式通道漏转 Unicode 上下标 %r' % ch)
+
+
+class DocxKitTablePrOrderTests(unittest.TestCase):
+    """w:tblPr 子元素顺序——2026-11-07 审计的 P1（§24.5 只修了 w:pPr）。
+
+    原来 `_set_cell_margins` 直接 `tblpr.append(tblCellMar)`，它排在 `tblLook`
+    之后。Word 容错看不出来，严格渲染器会忽略 tblCellMar，单元格边距退回默认，
+    "刚好不换行"的表头被挤成两行。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dk = load_module(TOOL, 'docxkit')
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.blank = _new_docx(cls.tmp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_cell_margin_precedes_tbl_look(self):
+        rb = self.dk.ReportBuilder(self.blank, cover_tail_blanks=None)
+        rb.table(['样品', 'm_{0} / g'], [['硫酸铜', '2.4722']])
+        out = os.path.join(self.tmp.name, 'tblpr.docx')
+        rb.doc.save(out)
+        import re
+        import zipfile
+        with zipfile.ZipFile(out) as z:
+            xml = z.read('word/document.xml').decode('utf-8')
+        blocks = re.findall(r'<w:tblPr>(.*?)</w:tblPr>', xml, re.S)
+        self.assertTrue(blocks, '没有找到 tblPr')
+        for block in blocks:
+            tags = re.findall(r'<w:(\w+)', block)
+            if 'tblCellMar' in tags and 'tblLook' in tags:
+                self.assertLess(tags.index('tblCellMar'), tags.index('tblLook'),
+                                'tblCellMar 必须排在 tblLook 之前（CT_TblPr 顺序）')
+
+
 if __name__ == '__main__':
     unittest.main()

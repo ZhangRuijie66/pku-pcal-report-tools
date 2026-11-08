@@ -58,9 +58,17 @@ class ModuleRegressionTests(unittest.TestCase):
     def test_phase_diagram(self):
         an = self.case('双液系').an
         self.close(an['curve']['fit']['r2'], 0.99955555, rtol=1e-5, label='R2')
-        self.close(an['azeotrope']['w'], 0.30576065, label='azeotrope w')
-        self.close(an['azeotrope']['sigma_w'], 0.0144319, rtol=2e-3,
+        # ⚠ 基准来自**外部**（2025 参照报告 3.2.3 从同一张相图上读的 0.3126），
+        #   不是照代码输出写的。原来这里锁的是 0.30576065，那正是 2026-11-07
+        #   审计判定的错误值：`_envelope` 取窗口 min 让 |V−L| 在恒沸点附近出现
+        #   精确相等的平底，`nanargmin` 取最左端 → 系统性偏移且方向不可预测
+        #   （合成检验：真 0.10→0.0766、真 0.60→0.6522）。
+        #   改成「底部抛物线顶点」后：0.31233（参照 0.3126，偏差 −0.09%；
+        #   修正前 −2.19%），T_K 338.2070（参照 338.21，差 0.003 K）。
+        self.close(an['azeotrope']['w'], 0.3126, rtol=2e-3, label='azeotrope w')
+        self.close(an['azeotrope']['sigma_w'], 0.0146737, rtol=2e-3,
                    label='sigma_w')
+        self.close(an['azeotrope']['T_K'], 338.21, rtol=1e-4, label='azeotrope T_K')
         self.assertEqual(an['mode'], 'ratio')
 
     def test_dipole_moment(self):

@@ -439,7 +439,9 @@ def _analyze_bubble(data, cfg):
     wr = _stats(water.get('right') or [], sigma_read)
     dhw = (wr['mean'] - wl['mean']) - (dh0 if zero_corr else 0.0)
     w_mode = keys.get('water_bubble') or 'both'
-    sigma_dhw = math.sqrt(_dh_sigma(wl, wr, w_mode, sigma_read) ** 2 +
+    # 纯水高度差自身的读数不确定度（不含零点差）
+    s_dhw_read = _dh_sigma(wl, wr, w_mode, sigma_read)
+    sigma_dhw = math.sqrt(s_dhw_read ** 2 +
                           (sigma_dh0 ** 2 if zero_corr else 0.0))
 
     rows = []
@@ -450,14 +452,39 @@ def _analyze_bubble(data, cfg):
         sr = _stats(it.get('right') or [], sigma_read)
         r_mode = (row_modes[i] if i < len(row_modes) else None) or 'both'
         dh = (sr['mean'] - sl['mean']) - (dh0 if zero_corr else 0.0)
-        sigma_dh = math.sqrt(_dh_sigma(sl, sr, r_mode, sigma_read) ** 2 +
+        # 溶液高度差自身的读数不确定度（不含零点差）
+        s_dh_read = _dh_sigma(sl, sr, r_mode, sigma_read)
+        sigma_dh = math.sqrt(s_dh_read ** 2 +
                              (sigma_dh0 ** 2 if zero_corr else 0.0))
         gamma = gw * dh / dhw if dhw else float('nan')
-        sigma_gamma = (abs(gamma) * math.sqrt((sigma_dh / dh) ** 2 +
-                                              (sigma_dhw / dhw) ** 2)
-                       if dh and dhw else float('nan'))
+        # γ = γ_w·Δh/Δh_w 的不确定度。
+        #
+        # ⚠ Δh 与 Δh_w 都含**同一个**零点差 Δh0（Δh = Δh_read − Δh0，
+        # Δh_w = Δh_w,read − Δh0），两者强正相关：
+        #     ∂γ/∂Δh0 = γ·(−1/Δh − (−1/Δh_w)) = γ·(1/Δh_w − 1/Δh)
+        # 所以 σ_Δh0 这一项**不能**在 Δh 和 Δh_w 里各算一次再平方相加
+        #（那样等于把它算了两遍且当成独立量）。正确做法是按自变量求全微分：
+        #     γ = γ_w·(a − z)/(b − z)，  a = Δh_read, b = Δh_w,read, z = Δh0
+        #     ∂γ/∂a = γ_w/(b−z) = γ/(a−z) = γ/Δh
+        #     ∂γ/∂b = −γ_w(a−z)/(b−z)² = −γ/Δh_w
+        #     ∂γ/∂z = γ_w·[−1/(b−z) + (a−z)/(b−z)²] = γ·(1/Δh_w − 1/Δh)
+        #     σ_γ² = (γ/Δh·s_a)² + (γ/Δh_w·s_b)² + (∂γ/∂z·σ_dh0)²
+        #（a 与 b 来自不同的读数集合，互相独立，可以平方相加。）
+        # 旧式按 sqrt((σ_Δh/Δh)² + (σ_Δhw/Δhw)²) 把 z 算了两遍：
+        # 实测 σ_γ = 0.4642 而 MC 真值 0.3303（高估 41%）。
+        if dh and dhw:
+            inv_a = 1.0 / dh
+            inv_b = 1.0 / dhw
+            sz = sigma_dh0 if zero_corr else 0.0
+            var = ((gamma * inv_a * s_dh_read) ** 2 +
+                   (gamma * inv_b * s_dhw_read) ** 2 +
+                   (gamma * (inv_b - inv_a) * sz) ** 2)
+            sigma_gamma = math.sqrt(max(0.0, var))
+        else:
+            sigma_gamma = float('nan')
         rows.append(dict(c=c, left=sl, right=sr, dh=dh, sigma_dh=sigma_dh,
                          gamma=gamma, sigma_gamma=sigma_gamma,
+                         sigma_dh_read=s_dh_read,
                          derived=(r_mode != 'both'),
                          fit=bool(it.get('fit', False))))
 

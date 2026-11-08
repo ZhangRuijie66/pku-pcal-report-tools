@@ -32,6 +32,7 @@ from pcal import plotting                        # noqa: E402
 from pcal import report as rpt                   # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal.atomicio import atomic_write_json
 from pcal.analysis import (Analysis, PERSIST_KEYS, default_config,  # noqa: E402
                            default_config_with_saved)
 
@@ -88,8 +89,7 @@ def load_settings():
 
 def save_settings(cfg):
     data = {k: cfg.get(k) for k in PERSIST_KEYS if k in cfg}
-    with open(SETTINGS_FILE, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    atomic_write_json(SETTINGS_FILE, data)
     return data
 
 
@@ -344,7 +344,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._body()
                 cfg = _config_from(body)
                 payload = body.get('data') or {}
-                data, _ = conduct.load_data(cfg.get('data_dir'))
+                # 用 load_data_ex 拿告警：坏文件已被改名留证时**不要再写回去**，
+                # 否则默认参照数据会把用户（可能还能救回来的）读数顶掉。
+                data, _path, data_warnings = conduct.load_data_ex(cfg.get('data_dir'))
+                # 紧接着取留证路径：load_data_ex 每次调用都会重置这个状态，
+                # 而下面 _analysis() 内部还会再读一次数据文件，晚取就丢了。
+                corrupt_path = conduct.last_corrupt_path()
                 for key in ('temp_c', 'kcl_label_uS', 'kcl_theory_uS',
                             'cell_constant_label', 'cell_constant',
                             'kcl_after_uS', 'kappa_w_uS', 'compensation'):
@@ -358,6 +363,17 @@ class Handler(BaseHTTPRequestHandler):
                 an = _analysis(cfg, force=True)
                 s = _summary(an)
                 s['saved_path'] = path
+                if data_warnings:
+                    s['corrupt_warnings'] = data_warnings
+                if corrupt_path:
+                    # 保存成功了，但这份数据是从"原文件已坏、已备份"的状态长出来的。
+                    # 明确告诉用户原读数在哪，别让他以为坏文件被悄无声息地覆盖了。
+                    s['corrupt_backup'] = corrupt_path
+                    s['corrupt_notice'] = (
+                        '原数据文件无法读取，已被完整备份为 %s（未删除）。'
+                        '本次已按当前界面内容保存新文件；如需找回原读数，'
+                        '把该备份文件改回 %s 即可。'
+                        % (os.path.basename(corrupt_path), conduct.DATA_FILENAME))
                 return self._json(s)
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
         except Exception as exc:  # noqa: BLE001
@@ -381,7 +397,10 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self, rel):
         rel = rel.replace('\\', '/').lstrip('/')
         target = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not target.startswith(os.path.normpath(WEB_DIR)):
+        # 补 os.sep：原来只比前缀，同级的 web2/ 兄弟目录也能通过
+        # （/static/../web2/secret.txt 会 200）。
+        root = os.path.normpath(WEB_DIR) + os.sep
+        if not (target + os.sep).startswith(root):
             return self._json({'ok': False, 'error': 'forbidden'}, 403)
         ext = os.path.splitext(target)[1].lower()
         ctype = {'.css': 'text/css; charset=utf-8',

@@ -56,13 +56,59 @@ INTRO_IMG = os.path.join(ASSETS, '引言图.jpg')
 
 
 
+DASH = '—'
+
+
+def sci(x, nd=3):
+    """科学计数法：'1.798×10^{-8}'（指数由 docxkit 转成真上标）。
+
+    ⚠ 不能用 '%.3e'：那会印出 C 记数法 '1.798e-08'，Word 里既不是乘号也不是
+    上标（审计 2026-11-07 §1.3 #15，本文件共 5 处）。None / NaN 输出 '—'。
+    """
+    if x is None or not np.isfinite(x):
+        return DASH
+    if x == 0:
+        return '0'
+    exp = int(math.floor(math.log10(abs(x))))
+    m = float(x) / 10.0 ** exp
+    # 修约进位后可能变成 10.000（如 9.9996e-8）：降一档，否则印成 '10.000×10^{-8}'
+    if abs(round(m, nd)) >= 10.0:
+        exp += 1
+        m = float(x) / 10.0 ** exp
+    return '%.*f×10^{%d}' % (nd, m, exp)
+
+
 def sci_pm(x, u, exp=-6):
-    if not np.isfinite(x):
-        return '—'
+    if x is None or not np.isfinite(x):
+        return DASH
     s = 10.0 ** exp
-    if u in (None, 0) or not np.isfinite(u):
+    if u is None or u == 0 or not np.isfinite(u):
         return '(%s)×10^{%d}' % (k(x / s, 2), exp)
     return '(%s)×10^{%d}' % (pm(x / s, u / s), exp)
+
+
+# μ_B 的 B 是「玻尔磁子」的说明性标记，按 §3.2 要正体；写成 ('t','μ_{B}',ITALIC)
+# 会把单字母下标 B 当变量排成斜体。所以拆成「斜体的 μ」+「正体的 _B 下标」。
+# 前面带一个空格：数值与单位之间要空开（'1.837 μB' 而不是 '1.837μB'）。
+MU_B_SEGS = (' ', ('t', 'μ', ITALIC), ('t', '_{B}', {}))
+
+
+def _g4(v):
+    """表 1 的 4 位小数格：缺测（None / NaN）印 '—'，绝不印 'nan'。"""
+    if v is None or not np.isfinite(v):
+        return '—'
+    return '%.4f' % v
+
+
+def _num(v, nd):
+    """表格数值格：None / NaN 印 '—'。
+
+    反磁性物质（χ_m < 0，如 K₄Fe(CN)₆）没有永久磁矩，μ/n 是 None；
+    直接 '%.*f' % None 会抛 TypeError，所以每一处都要先判 None。
+    """
+    if v is None or not np.isfinite(v):
+        return '—'
+    return '%.*f' % (nd, v)
 
 
 # ---------------------------------------------------------------- 主流程
@@ -96,6 +142,9 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         log('封面字段为空：%s' % '、'.join(missing))
 
     rb.set_cover(cover, title_size=26.0)
+    # 页眉：模板页眉里第三段是占位符「物理化学实验 | 实验题目」，
+    # 不替换的话每页页眉都印着「实验题目」四个字（其余 10 个模块各调用一次）。
+    rb.set_header_title(TITLE)
     log('封面已生成')
 
     # ---- 摘要
@@ -103,34 +152,34 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     samples = analysis['samples']
     sample_names = list(samples.keys())
 
-    # 摘要内容
-    abstract_text = (
+    # 摘要内容（片段列表：χ_m / μ_B 必须走真下标，不能拼成普通字符串）
+    abs_segs = [
         '本实验采用古埃磁天平法测定了莫尔盐、硫酸铜、亚铁氰化钾等物质的磁化率。'
-        '以莫尔盐为标准样品标定仪器常数，在室温条件下测量了各样品在不同励磁电流下的质量变化，'
-        '计算出各样品的比磁化率、摩尔磁化率、分子磁矩及未成对电子数。'
-    )
+        '以莫尔盐为标准样品标定仪器常数，在室温条件下测量了各样品在不同励磁电流下的'
+        '质量变化，计算出各样品的比磁化率、摩尔磁化率、分子磁矩及未成对电子数。'
+    ]
 
     # 添加主要结果
     for name in sample_names:
         s = samples[name]
         if s['chi_m'] is None:
             continue
+        abs_segs += [
+            '实验测得%s的摩尔磁化率为 ' % name,
+            ('t', 'χ_{m}', ITALIC), ' = ', sci(s['chi_m']), ' m^{3}·mol^{-1}',
+        ]
         # χ_m < 0 是反磁性物质（如 K₄Fe(CN)₆·3H₂O）：没有永久磁矩，
         # 不能印成「分子磁矩为 0」——那是把反磁性说成「磁矩为零的顺磁体」。
         if s['mu'] is None:
-            abstract_text += (
-                '实验测得%s的摩尔磁化率为 %.3e m³·mol⁻¹（小于 0，'
-                '为反磁性物质，无永久磁矩、未成对电子数为 0）。'
-            ) % (name, s['chi_m'])
-        else:
-            abstract_text += (
-                '实验测得%s的摩尔磁化率为 %.3e m³·mol⁻¹，'
-                '分子磁矩为 %.3f μ_B，未成对电子数约为 %.1f。'
-            ) % (name, s['chi_m'], s['mu'], s['n'])
+            abs_segs.append(
+                '（小于 0，为反磁性物质，无永久磁矩、未成对电子数为 0）。')
+            continue
+        abs_segs += ['，分子磁矩为 ', '%.3f' % s['mu'], *MU_B_SEGS,
+                     '，未成对电子数约为 %.1f。' % s['n']]
 
-    abstract_text += '实验结果与理论预期基本吻合，验证了古埃磁天平法的可靠性。'
+    abs_segs.append('实验结果与理论预期基本吻合，验证了古埃磁天平法的可靠性。')
 
-    rb.para([abstract_text])
+    rb.para(abs_segs)
     rb.para([('关键词', {'bold': True}), ' 磁化率；古埃磁天平；未成对电子数；摩尔磁化率'])
     log('摘要已生成')
 
@@ -196,22 +245,41 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.para(['室温 %.1f ℃（%.2f K）。' % (T_C, T_K)])
 
     # 表 1：原始数据
+    #
+    # ⚠ 口径必须统一：整张表都用**毛重**（空管、莫尔盐、各样品一视同仁），
+    # 这样每一行都满足 m − m₀ = Δm。曾经的 bug：样品的 m_field 是 None，
+    # 于是回落到 m_zero（= 净质量），印出「m₀ = m = 2.4722、Δm = +0.0054」，
+    # 读者一减对不上，而且同表里空管/莫尔盐是毛重、样品是净质量，两种口径混排。
+    # 样品的净质量（= 毛重 − 空管质量）交给表注说明。
     table_data = analysis['table']
     headers = ['样品', 'm₀ / g', 'm / g', 'Δm / g']
     rows = []
     for item in table_data:
-        m_field = item.get('m_field')
-        if m_field is None:
-            m_field = item['m_zero']
+        # Δm 用毛重口径（= m − m₀），与同行的 m₀/m 严格自洽；
+        # 扣空管后的值（item['delta_m']）在正文 3.3 的 χ 公式里使用，不进表 1。
+        dm = item.get('delta_m_gross')
+        if dm is None:
+            dm = item.get('delta_m')
         rows.append([
             item['name'],
-            '%.4f' % item['m_zero'],
-            '%.4f' % m_field,
-            '%.4f' % item['delta_m'],
+            _g4(item.get('m_zero')),
+            _g4(item.get('m_field')),
+            _g4(dm),
         ])
 
     rb.caption('表1  不同条件下的样品称量值')
     rb.table(headers, rows)
+    rb.para([
+        '注：', ('t', 'm_{0}', ITALIC), ' 为 0 A（无磁场）时的称量值，',
+        ('t', 'm', ITALIC), ' 为 3.00 A 时的称量值，',
+        ('t', 'Δ m', ITALIC), ' = ', ('t', 'm', ITALIC), ' − ',
+        ('t', 'm_{0}', ITALIC),
+        '；三者均为含样品管的毛重。各样品的净质量 = 该行毛重 − 空管毛重，'
+        '扣除空管后的质量变化 = 该行 ', ('t', 'Δ m', ITALIC), ' − 空管的 ',
+        ('t', 'Δ m', ITALIC), '（后者用于 3.3 节的 ', ('t', 'χ', ITALIC),
+        ' 计算）。',
+    ], indent_chars=0)
+    rb.blank()
     log('表1 已生成')
 
     rb.heading('3.2 莫尔盐标定', 2)
@@ -222,7 +290,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.para([
         '本次实验测得莫尔盐的比磁化率为 ',
         ('m', r'\chi_{\text{莫}} = '),
-        ('t', '%.3e' % chi_std, {}),
+        ('t', sci(chi_std), {}),
         ('m', r'\ \text{m}^{3}\cdot\text{kg}^{-1}'),
         '。'
     ])
@@ -235,22 +303,31 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     ])
 
     # 表 2：计算结果
-    headers2 = ['样品', 'χ / (10⁻⁶ m³·kg⁻¹)', 'χ_m / (10⁻⁶ m³·mol⁻¹)', 'μ / μ_B', 'n']
+    # 表头里的 χ_m / μ_B 必须写成真下标（'χ_m' 会原样印出下划线）。
+    # 表头按 '/' 分正斜体的：'/' 前是量符号（斜体），'/' 后是单位（正体），
+    # 所以 'μ / μ_{B}' 的 μ_B 落在单位侧、B 自动正体，正合 §3.2。
+    #
+    # 用真上标（'10^{−6}'）后表头比原来的 Unicode 上标宽，第 2/3 列会折行，
+    # 所以给显式列宽（正文宽约 18 cm，五列合计 16.6 cm）。
+    headers2 = ['样品', 'χ / (10^{−6} m^{3}·kg^{−1})',
+                'χ_{m} / (10^{−6} m^{3}·mol^{−1})', 'μ / μ_{B}', 'n']
+    widths2 = [2.4, 4.0, 4.4, 3.2, 2.6]
     rows2 = []
     for name, s in samples.items():
-        chi_mass_str = '%.3f' % (s['chi_mass'] * 1e6)
-        if s['chi_m'] is not None:
-            chi_m_str = '%.3f' % (s['chi_m'] * 1e6)
-            mu_str = '%.3f' % s['mu'] if s['mu'] is not None else '—'
-            n_str = '%.2f' % s['n'] if s['n'] is not None else '—'
-        else:
-            chi_m_str = '—'
-            mu_str = '—'
-            n_str = '—'
-        rows2.append([name, chi_mass_str, chi_m_str, mu_str, n_str])
+        if s['chi_m'] is None:
+            # 未知样没有摩尔质量 → χ_m / μ / n 都算不出来，明确印 '—'
+            rows2.append([name, _num(s['chi_mass'] * 1e6, 3), '—', '—', '—'])
+            continue
+        rows2.append([
+            name,
+            _num(s['chi_mass'] * 1e6, 3),
+            _num(s['chi_m'] * 1e6, 3),
+            _num(s['mu'], 3),
+            _num(s['n'], 2),
+        ])
 
     rb.caption('表2  各样品磁化率计算结果')
-    rb.table(headers2, rows2)
+    rb.table(headers2, rows2, widths_cm=widths2)
     log('表2 已生成')
 
     # 生成图表
@@ -278,21 +355,15 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             rb.para([
                 ('t', name, {}),
                 ' 的摩尔磁化率为 ',
-                ('m', r'\chi_{m} = '),
-                ('t', '%.3e' % s['chi_m'], {}),
-                ('m', r'\ \text{m}^{3}\cdot\text{mol}^{-1}'),
+                ('t', 'χ_{m}', ITALIC), ' = ', sci(s['chi_m']), ' m^{3}·mol^{-1}',
                 '，为反磁性物质，无永久磁矩，未成对电子数为 0。',
             ])
             continue
         rb.para([
             ('t', name, {}),
             ' 的摩尔磁化率为 ',
-            ('m', r'\chi_{m} = '),
-            ('t', '%.3e' % s['chi_m'], {}),
-            ('m', r'\ \text{m}^{3}\cdot\text{mol}^{-1}'),
-            '，分子磁矩为 ',
-            ('t', '%.3f' % s['mu'], {}),
-            ('m', r'\ \mu_{B}'),
+            ('t', 'χ_{m}', ITALIC), ' = ', sci(s['chi_m']), ' m^{3}·mol^{-1}',
+            '，分子磁矩为 ', '%.3f' % s['mu'], *MU_B_SEGS,
             '，未成对电子数约为 ',
             ('t', '%.1f' % s['n'], {}),
             '。'
@@ -313,8 +384,8 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.para([
         '（4）对于顺磁性物质，测得的磁化率包含了顺磁和反磁两部分贡献。'
         '在常温下，顺磁贡献远大于反磁贡献，因此可以近似认为测得的是顺磁磁化率^{[3]}。'
-        '亚铁氰化钾的 χ_m 为负，说明反磁贡献占主导，与其 [Fe(CN)₆]⁴⁻ '
-        '低自旋 d⁶ 组态（无未成对电子）一致^{[2]}。'
+        '亚铁氰化钾的 ', ('t', 'χ_{m}', ITALIC), ' 为负，说明反磁贡献占主导，'
+        '与其 [Fe(CN)₆]⁴⁻ 低自旋 d⁶ 组态（无未成对电子）一致^{[2]}。'
     ])
 
     rb.heading('4.3 实验结论', 2)

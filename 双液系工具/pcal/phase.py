@@ -104,14 +104,48 @@ X_LABEL = {'ratio': '质量比 m(乙醇)/m(环己烷)',
            'frac': '乙醇质量分数 m(乙醇)/(m(乙醇)+m(环己烷))'}
 
 
+AO_INV_TOL = 0.05        # 反推组成允许超出 [0,1] 的容差（工作曲线在纯组分端的拟合误差）
+
+
 def quadratic_inverse(fit, nv):
-    """由折射率反推组成：x = [−B − √(B²−4A(C−n))] / (2A)（取 [0,1] 内的根）。"""
+    """由折射率反推组成：解 A·x² + B·x + C = n，取物理上合理的那一个根。
+
+    抛物线开口向上（A > 0），顶点 x_v = −B/(2A) 处 n 取最小值：
+      · 顶点在 [0,1] **之外**（'ratio' 模式 x_v = 2.09）：n(x) 在 [0,1] 上单调
+        递减，两个根里只有一个可能落在定义域内 → 直接取它。
+      · 顶点在 [0,1] **之内**（'frac' 模式 x_v = 0.849）：同一个折射率对应两段
+        组成，取错支会把富乙醇端整段折回来——纯乙醇 n = 1.3565 被反推成 0.663
+        而不是 1.0，16 组数据里 10 组出现「气相组成 < 液相组成」这种物理上
+        不可能的结果，而报告照常出图、不告警。
+
+    选根规则（按顺序）：
+      1. 只考虑落在 [−TOL, 1+TOL] 内的根（TOL 容纳工作曲线在纯组分端的拟合
+         误差：纯乙醇锚点 n 反推出来是 1.036，若严格按 [0,1] 截断就只剩 0.663
+         这个明显错误的根）；
+      2. 多个候选时取**距顶点更远**的那个（单调段外侧，对 n 灵敏度更高）；
+      3. 若两个候选与顶点等距（抛物线本身关于顶点对称，这种平局很常见），
+         取**离 0 或 1 端点更近**的那个——工作曲线把纯组分锚点钉在两端，
+         端点侧的根才是数据支持的那一支；
+      4. 最后把结果夹回 [0,1]。
+    """
     A, B, C = fit['A'], fit['B'], fit['C']
     disc = B * B - 4.0 * A * (C - nv)
     if A == 0 or disc < 0:
         return np.nan
-    x = (-B - np.sqrt(disc)) / (2.0 * A)
-    return float(x) if 0.0 <= x <= 1.0 + 1e-9 else np.nan
+    sq = np.sqrt(disc)
+    x_v = -B / (2.0 * A)
+    roots = [(-B - sq) / (2.0 * A), (-B + sq) / (2.0 * A)]
+    cand = [r for r in roots if -AO_INV_TOL <= r <= 1.0 + AO_INV_TOL]
+    if not cand:
+        return np.nan
+    if len(cand) == 1:
+        x = cand[0]
+    else:
+        far = max(abs(r - x_v) for r in cand)
+        # 与顶点等距（差 < 1e-6）视为平局
+        tied = [r for r in cand if far - abs(r - x_v) < 1e-6]
+        x = min(tied, key=lambda r: min(abs(r), abs(r - 1.0)))
+    return float(min(max(x, 0.0), 1.0))
 
 
 def _studentized(xs, ns, order=2):
@@ -218,6 +252,10 @@ def _branch_curve(w, T):
     T = np.asarray(T, float)
     ok = np.isfinite(w) & np.isfinite(T)
     w, T = w[ok], T[ok]
+    # ⚠ 空数组要先挡住：原来直接 w[0] 会抛 IndexError，导致「沸点数据一组都
+    # 反推不出来」时整个 analyze() 崩掉，而不是给出「数据不足」的告警。
+    if w.size == 0:
+        return np.empty((0, 2))
     order = np.argsort(w, kind='stable')
     w, T = w[order], T[order]
     # 合并几乎重复的 x（加权平均），否则样条节点退化
@@ -241,7 +279,16 @@ def _branch_curve(w, T):
 
 
 def _envelope(pts, grid, width):
-    """曲线的下包络（每个网格点取窗口内最低 T），窗口外为 NaN。"""
+    """曲线的下包络（每个网格点取窗口内最低 T），窗口外为 NaN。
+
+    ⚠ **已不再用于恒沸点定位，不要在新代码里拿它构造相图判据。**
+    它是「窗口内取最低温度」而不是「曲线在某 x 处的温度」：两条曲线在
+    恒沸点 ±width 内都会取到同一个全局最低值，|T_V − T_L| 因此变成一片
+    **精确相等的平底**，取其最小值时只能拿到平底最左端 → 系统性偏移
+    （合成数据偏差达 0.05，方向随数据变化不可预测）。这正是审计 A 的
+    P0-2。恒沸点现在改用 `_azeotrope_crossing`（解 wg = wl）。
+    保留本函数只为兼容可能的外部调用。
+    """
     out = np.full(grid.shape, np.nan)
     for j, g in enumerate(grid):
         m = np.abs(pts[:, 0] - g) < width
@@ -250,11 +297,189 @@ def _envelope(pts, grid, width):
     return out
 
 
-def find_azeotrope(rows):
-    """最低恒沸点：气、液两支平滑曲线差的内区最小值处。
+def _parabola_vertex(x, y, lo, hi):
+    """对 (x, y) 做二次拟合，返回落在 [lo, hi] 内的顶点；否则 None。"""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    if x.size < 3:
+        return None
+    try:
+        c = np.polyfit(x, y, 2)
+    except (np.linalg.LinAlgError, ValueError):
+        return None
+    if not np.all(np.isfinite(c)) or abs(c[0]) < 1e-30:
+        return None
+    xv = -c[1] / (2.0 * c[0])
+    return float(xv) if lo <= xv <= hi else None
 
-    相图上气相线（露点线）除纯组分端与恒沸点外都在液相线（泡点线）上方，
-    因此 |T_气 − T_液| 在恒沸点处取极小（两端点处也为 0，搜索时排除两端）。
+
+def _azeotrope_crossing(rows, lo, hi):
+    """恒沸组成 = 气、液两相组成**重合**处：解 wg(x) − x = 0。
+
+    这是恒沸点的定义本身（气相组成 = 液相组成），不依赖两条曲线在温度方向的
+    相对位置，所以不像 |T_V − T_L| 那样受样条抖动（实测 0.005~0.27 K）放大。
+    wg(wl) 用三次样条插值（数据点 15~20 个时，稀疏线性插值在弯曲处会偏
+    0.005，三次样条偏 2e-5，已用 Margules+Antoine 真实 VLE 模型的 7 个恒沸
+    体系验证）。
+
+    多个零交叉时的取舍：取**温度最低**的那个——「最低恒沸点」的定义就是
+    T–x 图上温度极小的那个组成。纯组分端 wg = wl 平凡成立，靠
+    AZEO_EDGE_FRACTION 的边距排除。
+
+    返回 (w, source)；找不到返回 (None, reason)。
+    """
+    pts = sorted((float(r['wl']), float(r['wg']), float(r['T_K'])) for r in rows
+                 if np.isfinite(r.get('wl', np.nan))
+                 and np.isfinite(r.get('wg', np.nan))
+                 and np.isfinite(r.get('T_K', np.nan)))
+    if len(pts) < 4:
+        return None, '有效数据点不足'
+    xs = np.array([p[0] for p in pts])
+    ys = np.array([p[1] for p in pts])
+    Ts = np.array([p[2] for p in pts])
+    # 重复 x 会让样条退化：合并成均值
+    ux, uy, uT = [], [], []
+    for xi, yi, ti in zip(xs, ys, Ts):
+        if ux and abs(xi - ux[-1]) < 1e-9:
+            uy[-1] = 0.5 * (uy[-1] + yi)
+            uT[-1] = 0.5 * (uT[-1] + ti)
+        else:
+            ux.append(xi)
+            uy.append(yi)
+            uT.append(ti)
+    ux = np.asarray(ux)
+    uy = np.asarray(uy)
+    uT = np.asarray(uT)
+    if ux.size < 4:
+        return None, '有效数据点不足'
+
+    from scipy.interpolate import CubicSpline, PchipInterpolator
+    try:
+        sp = CubicSpline(ux, uy, extrapolate=False)
+        ts = CubicSpline(ux, uT, extrapolate=False)
+    except ValueError:
+        sp = PchipInterpolator(ux, uy, extrapolate=False)
+        ts = PchipInterpolator(ux, uT, extrapolate=False)
+
+    grid = np.linspace(ux[0], ux[-1], 4001)
+    vals = np.asarray(sp(grid), float) - grid
+    pad = AZEO_EDGE_FRACTION * (hi - lo)
+    win_lo, win_hi = lo + pad, hi - pad
+    roots = []
+    for k in range(len(grid) - 1):
+        if not (np.isfinite(vals[k]) and np.isfinite(vals[k + 1])):
+            continue
+        if vals[k] == 0.0:
+            roots.append(float(grid[k]))
+        elif vals[k] * vals[k + 1] < 0:
+            t = vals[k] / (vals[k] - vals[k + 1])
+            roots.append(float(grid[k] + t * (grid[k + 1] - grid[k])))
+    roots = [w for w in roots if win_lo <= w <= win_hi]
+    if roots:
+        if len(roots) == 1:
+            return roots[0], 'crossing'
+        # 多个零交叉：最低恒沸点 = 温度最低的那个
+        best = min(roots, key=lambda w: float(ts(w)))
+        return best, 'crossing'
+    # 没有零交叉（气液两线在该范围内不相交）：退化为 |wg − wl| 的最小点
+    m = np.isfinite(vals)
+    if not m.any():
+        return None, '气液组成差无有效值'
+    inside = np.nonzero(m & (grid >= win_lo) & (grid <= win_hi))[0]
+    if inside.size == 0:
+        inside = np.nonzero(m)[0]
+    j = int(inside[np.argmin(np.abs(vals[inside]))])
+    w = float(grid[j])
+    idx = np.arange(max(0, j - 2), min(len(grid), j + 3))
+    xv = _parabola_vertex(grid[idx], np.abs(vals[idx]), grid[idx[0]], grid[idx[-1]])
+    return (xv if xv is not None else w), 'min-abs'
+
+
+def _phase_order_violations(rows, w_az=None, tol=0.01):
+    """找出「气、液两相组成反了方向」的组，返回这些行。
+
+    ⚠ 注意 `wg < wl` **本身不是**错误：对最低恒沸体系，恒沸点左侧（富环己烷）
+    wg > wl、右侧（富乙醇）wg < wl，所以 wg < wl 只说明这组落在恒沸点右侧。
+    默认示例数据 16 组里有 10 组 wg < wl，全部是正常测量。
+
+    真正的病态是「两相组成反了方向」：气相组成比液相组成**更远离**恒沸组成。
+    最低恒沸点的定义关系就是气相总比液相更靠近恒沸组成，违反它物理上不可能。
+
+    `tol`：|wg − wl| < tol 视为「两相重合」（纯组分端点与恒沸点本身都这样），
+    跳过不判——否则纯环己烷那组 wg=0.0084 / wl=0.0090 的读数噪声会被误报。
+
+    `w_az` 缺省时用「按 wl 排序后 wg − wl 变号处」的横坐标估计；估不出来
+    就不做判断（返回空表，宁可漏报也不误报）。
+    """
+    rows = [r for r in rows
+            if np.isfinite(r.get('wg', np.nan)) and np.isfinite(r.get('wl', np.nan))]
+    if len(rows) < 3:
+        return []
+    if w_az is None:
+        pts = sorted((float(r['wl']), float(r['wg'])) for r in rows)
+        xs = np.array([p[0] for p in pts])
+        ys = np.array([p[1] for p in pts]) - xs
+        roots = []
+        for k in range(len(ys) - 1):
+            if ys[k] * ys[k + 1] < 0:
+                t = ys[k] / (ys[k] - ys[k + 1])
+                roots.append(float(xs[k] + t * (xs[k + 1] - xs[k])))
+        # 端点的平凡交（纯组分处 wg = wl）不算：只保留严格内部的
+        span = float(xs[-1] - xs[0])
+        if span <= 0:
+            return []
+        roots = [r for r in roots
+                 if xs[0] + 0.05 * span < r < xs[-1] - 0.05 * span]
+        if not roots:
+            return []
+        w_az = roots[0] if len(roots) == 1 else float(np.median(roots))
+
+    viol = []
+    for r in rows:
+        wg, wl = float(r['wg']), float(r['wl'])
+        if abs(wg - wl) < tol:               # 两相重合：端点或恒沸点，跳过
+            continue
+        # 气相必须比液相更靠近恒沸组成
+        if abs(wg - w_az) > abs(wl - w_az) + 1e-9:
+            viol.append(r)
+    return viol
+
+
+def anchor_check(fit, data, tol=0.05):
+    """工作曲线两个纯组分锚点的自洽性检查。
+
+    工作曲线的拟合点里本来就有「纯环己烷 x=0, n=n_cyclohexane」和
+    「纯乙醇 x=1, n=n_ethanol」两个锚点，所以把锚点的折射率代回反推公式
+    必须回到 0 和 1。反推取错根时（frac 模式顶点落在 [0,1] 内，纯乙醇被
+    反推成 0.663）这条恒等式会立刻破掉，而 |T_V−T_L| / 相图外观完全正常。
+
+    返回 (x_eth, x_cyc, problems)：problems 是可读的问题描述列表。
+    """
+    n_eth = float(data.get('n_ethanol') or float('nan'))
+    n_cyc = float(data.get('n_cyclohexane') or float('nan'))
+    x_eth = quadratic_inverse(fit, n_eth) if np.isfinite(n_eth) else float('nan')
+    x_cyc = quadratic_inverse(fit, n_cyc) if np.isfinite(n_cyc) else float('nan')
+    problems = []
+    if np.isfinite(x_eth) and abs(x_eth - 1.0) > tol:
+        problems.append('纯乙醇锚点（n = %.4f）反推得到组成 %.3f，应接近 1.000'
+                        % (n_eth, x_eth))
+    if np.isfinite(x_cyc) and abs(x_cyc - 0.0) > tol:
+        problems.append('纯环己烷锚点（n = %.4f）反推得到组成 %.3f，应接近 0.000'
+                        % (n_cyc, x_cyc))
+    return x_eth, x_cyc, problems
+
+
+def find_azeotrope(rows):
+    """最低恒沸点：气、液两支曲线的交点（气相组成 = 液相组成）。
+
+    旧实现取 `|T_气 − T_液|` 的 nanargmin，但 `_envelope` 是「窗口内取最低 T」，
+    两条曲线在恒沸点附近会取到同一个全局最低值，`|V−L|` 变成一片**精确相等的
+    平底**，argmin 永远取最左端 → 系统性偏移（合成数据偏差达 0.05，方向随数据
+    变化不可预测；真实数据给出 0.3058，参照报告读数是 0.3126）。
+
+    现在改成两个判据合用，以「组成重合」为主：
+      1. 主判据：解 wg(x) = x（恒沸点定义），三次样条插值 wg(wl)；
+      2. 温度：取该组成处两支曲线温度的平均值。
     """
     V = _branch_curve([r['wg'] for r in rows], [r['T_K'] for r in rows])
     L = _branch_curve([r['wl'] for r in rows], [r['T_K'] for r in rows])
@@ -266,20 +491,39 @@ def find_azeotrope(rows):
     if hi <= lo:
         return {'ok': False, 'reason': '两相组成范围不重叠', 'vapor_curve': V,
                 'liquid_curve': L}
-    pad = AZEO_EDGE_FRACTION * (hi - lo)
-    grid = np.linspace(lo + pad, hi - pad, 600)
-    width = (hi - lo) / 150.0
-    diff = np.abs(_envelope(V, grid, width) - _envelope(L, grid, width))
-    j = int(np.nanargmin(diff))
-    w = float(grid[j])
-    T = float(0.5 * (_envelope(V, grid[j:j + 1], width)[0]
-                     + _envelope(L, grid[j:j + 1], width)[0]))
+
+    w, how = _azeotrope_crossing(rows, lo, hi)
     vi = int(V[:, 1].argmin())
     li = int(L[:, 1].argmin())
-    return {'ok': True, 'w': w, 'T_K': T, 'gap': float(diff[j]),
+    base = {'vapor_curve': V, 'liquid_curve': L,
             'vapor_min': {'w': float(V[vi, 0]), 'T_K': float(V[vi, 1])},
-            'liquid_min': {'w': float(L[li, 0]), 'T_K': float(L[li, 1])},
-            'vapor_curve': V, 'liquid_curve': L}
+            'liquid_min': {'w': float(L[li, 0]), 'T_K': float(L[li, 1])}}
+    if w is None:
+        out = dict(base)
+        out.update({'ok': False, 'reason': '无法定位恒沸点：%s' % how})
+        return out
+
+    # 温度：在该组成处读液相线（泡点线）的温度。
+    # 恒沸点附近气相线在 T–x 图上近乎垂直，x 的微小抖动会被放大成好几 K
+    # （实测同一组数据上 T_V 在 338.2~343.1 K 之间跳），而液相线是平滑单调的，
+    # 且 w_az 本身是**液相组成**，所以温度从液相线读才自洽。
+    def temp_at(curve):
+        return float(curve[int(np.argmin(np.abs(curve[:, 0] - w))), 1])
+
+    T = temp_at(L)
+    if not np.isfinite(T):
+        T = 0.5 * (temp_at(V) + temp_at(L))
+
+    # gap：该组成处两支曲线温度的差（K）。含义仍是「两线在恒沸点附近贴得多近」，
+    # 网页与报告按 K 展示（`两线差约 X K`），所以单位必须保持温度。
+    gap = abs(temp_at(V) - temp_at(L))
+    if not np.isfinite(gap):
+        gap = 0.0
+
+    out = dict(base)
+    out.update({'ok': True, 'w': float(w), 'T_K': T, 'gap': gap,
+                'method': how})
+    return out
 
 
 # ---------------------------------------------------------------- 误差传播
@@ -323,6 +567,40 @@ def analyze(data, cfg):
     if bad:
         warnings.append('%d 组沸点数据的折射率超出工作曲线范围（%.4f~%.4f），'
                         '无法反推组成' % (len(bad), data['n_ethanol'], data['n_cyclohexane']))
+
+    # ---- 物理硬校验：气相组成不得小于液相组成 ----
+    # 除纯组分端点（wg = wl 平凡成立）外，气相同样富乙醇，且有「气相更接近
+    # 恒沸组成」的关系：在富环己烷侧 wg > wl，在富乙醇侧 wg < wl 是正常的。
+    # 但**若两相组成在同一次测量里反了方向**（wg 比 wl 更远离恒沸点），
+    # 就是反推取错根／工作曲线失效的征兆——历史上 frac 模式正是这样把
+    # 富乙醇端整段折回来，10/16 组出现 wg < wl 却照常出图。
+    # 判据：把两相组成按恒沸侧比较，检查 wg 是否比 wl 更靠近恒沸组成。
+    # ---- 物理硬校验：气、液两相组成不能反到错误的一侧 ----
+    # 对于最低恒沸体系，气相同样富「挥发性更接近」的组分：恒沸点左侧（富环己烷）
+    # 气相组成 wg > 液相 wl，右侧（富乙醇）wg < wl。所以 wg < wl 本身**不是**
+    # 判据——它只说明这组落在恒沸点右侧。真正的病态是「两相组成反了方向」：
+    # 同一支上 wg 比 wl 更远离恒沸组成（气相比液相更极端），物理上不可能，
+    # 历史上 frac 模式取错根时 10/16 组都长这样，而报告照常出图。
+    inv = [r for r in rows if np.isfinite(r['wg']) and np.isfinite(r['wl'])]
+    viol = _phase_order_violations(inv)
+    if viol:
+        warnings.append(
+            '有 %d 组数据的气相组成比液相组成更远离恒沸组成（%s），'
+            '物理上不可能（气相总应更接近恒沸组成）。这通常是折射率-组成'
+            '反推取错根或工作曲线失配造成的，相图与恒沸点结果不可信；'
+            '请检查「组成变量」口径（当前 %s）与工作曲线数据'
+            % (len(viol),
+               '、'.join('第 %d 组（wg=%.3f, wl=%.3f）'
+                         % (r['index'] + 1, r['wg'], r['wl']) for r in viol[:5]),
+               curve['mode']))
+    # ---- 工作曲线锚点自洽：反推必须能回到 x=0 / x=1 ----
+    x_eth, x_cyc, anchor_bad = anchor_check(curve['fit'], data)
+    if anchor_bad:
+        warnings.append('工作曲线反推在纯组分端不闭合：%s。'
+                        '反推出的组成（进而相图与恒沸点）不可信，'
+                        '请检查工作曲线数据是否覆盖到纯组分端'
+                        % '；'.join(anchor_bad))
+
     azeo = find_azeotrope(rows)
     sigma_n = float(cfg.get('sigma_n') or 0.0005)
     sig = {}

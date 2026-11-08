@@ -384,9 +384,24 @@ def _sec_thermo(rb, m, f, p1, idx):
     rb.equation(r'T_{b}=\frac{A}{B-\ln(p_{1}/p^{⊖})}=%s\ K'
                 % val(f['tb'], f['sigma_tb']))
     rb.para('不确定度的公式及结果为：', keep_next=True)
-    rb.equation(r'\sigma_{T_{b}}=\sqrt{(\frac{\sigma_{A}}{B-\ln(p_{1}/p^{⊖})})^{2}'
-                r'+(\frac{A\sigma_{B}}{(B-\ln(p_{1}/p^{⊖}))^{2}})^{2}}=%s\ K'
+    # ⚠ 旧式是纯平方和 (σ_A/d)² + (Aσ_B/d²)²，把 A、B 当独立量。但 A、B 出自同一次
+    # 最小二乘，相关系数 0.99987（水）/0.99981（环己烷），协方差项与两个平方项同量级
+    # 且符号为负，漏掉它会把 σ_Tb 印成 3.2359 K（真值 0.0662 K，40 万次 MC 确认），
+    # 即报告里「374.179 ± 3.236 K」这种一眼假的结果。必须印含协方差的完整式。
+    rb.equation(r'\sigma_{T_{b}}=\sqrt{\left(\frac{\partial T_{b}}{\partial A}'
+                r'\sigma_{A}\right)^{2}+\left(\frac{\partial T_{b}}{\partial B}'
+                r'\sigma_{B}\right)^{2}+2\frac{\partial T_{b}}{\partial A}'
+                r'\frac{\partial T_{b}}{\partial B}\mathrm{Cov}(A,B)}=%s\ K'
                 % unc(f['sigma_tb']))
+    rb.para(['其中 ', ('t', '∂T_{b}/∂A', ITALIC), ' = 1/[', ('t', 'B', ITALIC),
+             ' − ln(', ('t', 'p', ITALIC), '_{1}/', ('t', 'p', ITALIC),
+             '^{⊖})]，', ('t', '∂T_{b}/∂B', ITALIC), ' = −',
+             ('t', 'A', ITALIC), '/[', ('t', 'B', ITALIC), ' − ln(',
+             ('t', 'p', ITALIC), '_{1}/', ('t', 'p', ITALIC), '^{⊖})]^{2}。',
+             ('t', 'A', ITALIC), ' 与 ', ('t', 'B', ITALIC),
+             ' 由同一批数据点拟合得到、高度负相关，故必须保留协方差项；'
+             '若按独立量做平方和，', ('t', 'σ_{T_{b}}', ITALIC),
+             ' 会被高估近 50 倍，结果失去意义。'])
     rb.para(['综上，常压沸点的结果为 ', ('t', 'T_{b}', ITALIC), ' = (%s) K。'
              % pm(f['tb'], f['sigma_tb'])])
 
@@ -409,10 +424,18 @@ def _sec_thermo(rb, m, f, p1, idx):
                    val(f['tb'], f['sigma_tb']),
                    val(f['ds'], f['sigma_ds'])))
     rb.para('其不确定度的公式及结果为：', keep_next=True)
-    rb.equation(r'\sigma_{\Delta_{vap}S_{m}}=\sqrt{(\frac{\sigma_{\Delta_{vap}H_{m}}}'
-                r'{T_{b}})^{2}+(\frac{\Delta_{vap}H_{m}\sigma_{T_{b}}}{T_{b}^{2}})^{2}}'
+    # ⚠ Δ_vapS_m = ΔH/Tb = (A·R)/(A/d) = R·d（d = B − ln(p1/p⊖)），与 A **严格无关**：
+    # ∂ΔS/∂A = 0。旧式 sqrt((σ_ΔH/Tb)² + (ΔH·σ_Tb/Tb²)²) 把 Tb = A/d 当成与 A
+    # 独立的量，等于把同一个 A 的误差算了两遍，代入得 1.16 而真值 0.68（印出来
+    # 和算出来差 70%）。正确式只有 R·σ_B。
+    rb.equation(r'\sigma_{\Delta_{vap}S_{m}}=R\,\sigma_{B}'
                 r'=%s\ J\cdot mol^{-1}\cdot K^{-1}'
                 % unc(f['sigma_ds']))
+    rb.para(['由于 ', ('t', 'Δ_{vap}S_{m}', ITALIC), ' = ',
+             ('t', 'R', ITALIC), '(', ('t', 'B', ITALIC), ' − ln(',
+             ('t', 'p', ITALIC), '_{1}/', ('t', 'p', ITALIC), '^{⊖})) 与 ',
+             ('t', 'A', ITALIC), ' 无关，', ('t', 'σ_{Δ_{vap}S_{m}}', ITALIC),
+             ' 只由 ', ('t', 'B', ITALIC), ' 的标准误传播。'])
     rb.para(['综上，常压下摩尔蒸发熵的结果为 ',
              ('t', 'Δ_{vap}S_{m}', ITALIC), ' = (%s) J·mol^{-1}·K^{-1}。'
              % pm(f['ds'], f['sigma_ds'])])

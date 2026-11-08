@@ -28,6 +28,7 @@ from pcal import dipole, plotting                      # noqa: E402
 from pcal import report as rpt                         # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal.atomicio import atomic_write_json
 from pcal.analysis import (default_config, default_config_with_saved,  # noqa: E402
                            load_data, save_data, PERSIST_KEYS)
 
@@ -48,8 +49,8 @@ def load_settings():
 
 def save_settings(cfg):
     data = {k: cfg.get(k) for k in PERSIST_KEYS if k in cfg}
-    with open(SETTINGS_FILE, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    # 原子写盘：设置里含姓名/学号，写到一半崩掉会留下半截 JSON。
+    atomic_write_json(SETTINGS_FILE, data)
     return data
 
 
@@ -189,7 +190,9 @@ def _unique_path(path, max_tries=50):
 
 def _export(cfg, data):
     an = _analysis(cfg, data)
-    save_data(DATA_FILE, STATE['data'])
+    # 导出报告**不写数据文件**：保存由 /api/data 负责。原来这里会
+    # save_data(DATA_FILE, STATE['data'])，于是「载入示例 → 计算 → 一键生成报告」
+    # 会把用户真实的实验读数整个替换成示例数据，前端却只提示"报告已生成"。
     name = _safe_filename(_report_filename(cfg))
     stem = os.path.splitext(name)[0]
     out_dir = os.path.join(OUT_DIR, stem)
@@ -395,7 +398,10 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self, rel):
         rel = rel.replace('\\', '/').lstrip('/')
         target = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not target.startswith(os.path.normpath(WEB_DIR)):
+        # 补 os.sep：原来只比前缀，同级的 web2/ 兄弟目录也能通过
+        # （/static/../web2/secret.txt 会 200）。
+        root = os.path.normpath(WEB_DIR) + os.sep
+        if not (target + os.sep).startswith(root):
             return self._json({'ok': False, 'error': 'forbidden'}, 403)
         ext = os.path.splitext(target)[1].lower()
         ctype = {'.css': 'text/css; charset=utf-8',

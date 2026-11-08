@@ -27,6 +27,7 @@ from pcal import magnetic, plotting
 from pcal import report as rpt
 from pcal import profile
 from pcal import workspace
+from pcal.atomicio import atomic_write_json
 from pcal.analysis import run_analysis, format_results
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
@@ -69,8 +70,8 @@ def load_settings():
 
 def save_settings(cfg):
     data = {k: cfg.get(k) for k in PERSIST_KEYS if k in cfg}
-    with open(SETTINGS_FILE, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    # 原子写盘：设置里含姓名/学号，写到一半崩掉会留下半截 JSON。
+    atomic_write_json(SETTINGS_FILE, data)
     return data
 
 
@@ -80,9 +81,8 @@ def load_data(path):
 
 
 def save_data(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    """原子写盘：先在内存里序列化成功，再整体替换（失败时原文件不变）。"""
+    return atomic_write_json(path, data)
 
 
 def _current_data():
@@ -234,7 +234,10 @@ class Handler(BaseHTTPRequestHandler):
         # /static/../pcal/server.py、/static/../../profile.json 都能读到。
         rel = path.replace('\\', '/').lstrip('/')
         full = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not full.startswith(os.path.normpath(WEB_DIR)):
+        # 补 os.sep：原来只比前缀，同级的 web2/ 兄弟目录也能通过
+        # （/static/../web2/secret.txt 会 200）。
+        root = os.path.normpath(WEB_DIR) + os.sep
+        if not (full + os.sep).startswith(root):
             self.send_error(403)
             return
         if not os.path.exists(full):
@@ -307,20 +310,30 @@ class Handler(BaseHTTPRequestHandler):
             save_settings(cfg)
             self._json({'ok': True, 'config': cfg})
         elif path == '/api/sample':
+            # 「载入示例数据」**不写盘**：只更新内存里的 STATE。
+            # 旧代码先 save_data(DATA_FILE, data) 再试算，用户点一次示例
+            # 就把自己真实的实验读数覆盖掉了；要保存请走 /api/data。
             data = magnetic.sample_data()
-            save_data(DATA_FILE, data)
             cfg = default_config_with_saved(load_settings())
             an = _analysis(cfg, data, force=True)
-            self._json(_summary(an))
+            summary = _summary(an)
+            summary['saved_path'] = None
+            summary['note'] = ('示例数据只在内存里，未写入数据文件；'
+                               '要保存请点「保存数据」。')
+            self._json(summary)
         elif path == '/api/data':
+            cfg = default_config_with_saved(load_settings())
+            data = payload.get('data', magnetic.sample_data())
+            # 先算成功再落盘：旧代码先 save_data() 后 _analysis()，
+            # 非法数据虽然返 400，文件却已经被写坏了。
             try:
-                data = payload.get('data', magnetic.sample_data())
-                save_data(DATA_FILE, data)
-                cfg = default_config_with_saved(load_settings())
                 an = _analysis(cfg, data, force=True)
-                self._json(_summary(an))
+                summary = _summary(an)
             except Exception as exc:                 # noqa: BLE001
                 self._json({'ok': False, 'error': '数据无法计算：%s' % exc}, 400)
+                return
+            summary['saved_path'] = save_data(DATA_FILE, data)
+            self._json(summary)
         elif path == '/api/export':
             cfg = default_config_with_saved(load_settings())
             for key, value in payload.get('config', {}).items():

@@ -13,6 +13,46 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 
+def _default_data_dir():
+    """默认数据目录：**运行时推导**，不写死任何一台机器上的绝对路径。
+
+    换台电脑（可移植包解压到别处）也能跑：套件根下的 数据/ → 课程原始数据
+    目录（相对套件根）→ 工具目录里的 样例数据/ → 工具目录本身。最后一档
+    一定存在，所以 --test 不会因为路径不存在而抛 FileNotFoundError。
+    """
+    suite = os.path.dirname(HERE)
+    for cand in (os.path.join(suite, '数据'),
+                 os.path.join(suite, '1 燃烧热'),
+                 os.path.join(HERE, '样例数据')):
+        if os.path.isdir(cand):
+            return cand
+    return HERE
+
+
+DATA_DIR = _default_data_dir()
+
+
+def _csv_files(data_dir):
+    """数据目录里含 time(s) 表头的 csv；目录不存在或读不动就当没有。"""
+    out = []
+    try:
+        names = sorted(os.listdir(data_dir))
+    except OSError:
+        return out
+    for fn in names:
+        if not fn.lower().endswith('.csv'):
+            continue
+        try:
+            with open(os.path.join(data_dir, fn), encoding='utf-8-sig',
+                      errors='replace') as fh:
+                head = fh.read(400)
+        except OSError:
+            continue
+        if 'time(s)' in head.replace(' ', ''):
+            out.append(fn)
+    return out
+
+
 def self_test():
     """无界面自检：用默认数据目录里的 csv 走完整流程并输出一份报告。"""
     from pcal import combustion as cb
@@ -20,12 +60,20 @@ def self_test():
     from pcal.analysis import Analysis, default_config, default_round
     from pcal.server import TEMPLATE, OUT_DIR, ASSETS
 
-    data_dir = r'D:\北大\课程\26秋大三上\物理化学实验\1 燃烧热'
-    files = [f for f in os.listdir(data_dir) if f.lower().endswith('.csv')
-             and 'time(s)' in open(os.path.join(data_dir, f), encoding='utf-8-sig',
-                                   errors='replace').read(400).replace(' ', '')]
+    data_dir = os.environ.get('PCAL_DATA_DIR') or DATA_DIR
+    files = _csv_files(data_dir)
     print('数据目录：', data_dir)
     print('找到文件：', files)
+
+    if len(files) < 2:
+        # 空目录是**正常**情形（别人刚解压可移植包、还没放自己的数据）。
+        # 自检要报「装好了、但还没有数据」，而不是抛异常退出 1。
+        print('\n⚠ 只找到 %d 个数据文件，至少需要 2 个（苯甲酸 + 待测样品）。'
+              % len(files))
+        print('  把课程软件导出的 csv 放进上面的目录（或子目录 样例数据/），'
+              '再跑一次 --test。')
+        print('  本次跳过报告生成。')
+        return 0
 
     cfg = default_config()
     cfg['student_name'] = '李晨曦'

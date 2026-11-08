@@ -34,7 +34,9 @@ End If
 If args.Count < 1 Then
     sh.Run """" & py & """ """ & launcher & """", 0, False
 ElseIf args(0) = "--stop" Then
-    sh.Run """" & py & """ """ & launcher & """ --stop", 0, False
+    ' 双击 停止服务.vbs 是人在操作：停完弹框确认「已停止」。
+    ' --interactive 只在这一条路径上加；命令行调 --stop 不弹框（否则会卡死在消息框上）。
+    sh.Run """" & py & """ """ & launcher & """ --stop --interactive", 0, False
 Else
     sh.Run """" & py & """ """ & launcher & """ """ & args(0) & """", 0, False
 End If
@@ -108,17 +110,32 @@ def write(rel, text):
 write(r'_tools\hidden-launch.vbs', SHARED)
 write(r'启动入口.vbs', ENTRY)
 write(r'停止服务.vbs', STOP)
-for folder, name in [(u'物化实验报告工具', u'统一入口'),
-                     (u'燃烧热工具', u'燃烧热的测定'),
-                     (u'溶解热工具', u'溶解热的测定'),
-                     (u'紫外光谱工具', u'紫外可见吸收光谱'),
-                     (u'表面吸附工具', u'溶液表面吸附'),
-                     (u'化学动力学工具', u'化学反应动力学'),
-                     (u'双液系工具', u'双液体系沸点-成分图'),
-                     (u'电化学工具', u'电化学（循环伏安法）'),
-                     (u'电导率工具', u'电解质溶液电导率的测定'),
-                     (u'蒸气压工具', u'液体饱和蒸气压'),
-                     (u'偶极矩工具', u'偶极矩的测定'),
-                     (u'磁化率工具', u'磁化率的测定'),
-                     (u'高斯计算工具', u'高斯计算（TD-DFT）')]:
+
+# 只管理本套件 11 个工具 + 入口页的 启动.vbs。
+#
+# ⚠ 高斯计算工具 **故意不在这个列表里**：它的 启动.vbs 是另一个仓库
+# （Chemdraw-To-Gaussian）的定制启动器，带回退到本地 启动.cmd 的逻辑，
+# 而且**没有进本仓库的 git**——被这里覆盖后没法用 git 恢复。跨仓库边界，
+# 生成器不伸进去。（2026-11-08 实际踩过一次，靠临时备份才捞回来。）
+MANAGED = [
+    (u'物化实验报告工具', u'统一入口'),
+    (u'燃烧热工具', u'燃烧热的测定'),
+    (u'溶解热工具', u'溶解热的测定'),
+    (u'紫外光谱工具', u'紫外可见吸收光谱'),
+    (u'表面吸附工具', u'溶液表面吸附'),
+    (u'化学动力学工具', u'化学反应动力学'),
+    (u'双液系工具', u'双液体系沸点-成分图'),
+    (u'电化学工具', u'电化学（循环伏安法）'),
+    (u'电导率工具', u'电解质溶液电导率的测定'),
+    (u'蒸气压工具', u'液体饱和蒸气压'),
+    (u'偶极矩工具', u'偶极矩的测定'),
+    (u'磁化率工具', u'磁化率的测定'),
+]
+
+# 明确排除、绝不写入的工具（即使以后有人手滑加回上面的列表）
+EXCLUDED = {u'高斯计算工具'}
+
+for folder, name in MANAGED:
+    if folder in EXCLUDED:                # 双保险
+        raise SystemExit('拒绝生成 %s 的 启动.vbs：它归另一个仓库管' % folder)
     write(os.path.join(folder, u'启动.vbs'), THIN.replace('%NAME%', name))
