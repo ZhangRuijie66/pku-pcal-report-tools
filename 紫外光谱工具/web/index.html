@@ -97,6 +97,43 @@ td{white-space:nowrap}
 .slotlist .badge.err{background:#fef3f2;color:var(--err)}
 .slotlist .badge.ok{background:#ecfdf3;color:var(--ok)}
 
+/* 「每条曲线用哪条标定」：分组 + 两列网格。
+   以前每条用 .field + 内联 flex 排，被 .field 的 flex-direction:column 覆盖，
+   一行被撑到 175px（下拉框本身只有 35px），一屏只放得下两条。 */
+.curvecal-group{display:flex;align-items:baseline;gap:8px;
+  margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.curvecal-group:first-child{margin-top:2px}
+.curvecal-title{font-size:12.5px;font-weight:700;color:var(--sub);letter-spacing:.02em}
+.curvecal-count{font-size:11.5px;color:var(--sub);opacity:.75}
+.curvecal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));
+  gap:6px 14px}
+.curvecal-row{display:flex;align-items:center;gap:8px;min-width:0;
+  padding:2px 6px 2px 0;border-radius:6px}
+.curvecal-row:hover{background:#f7f9fc}
+/* 用了非默认标定的那一条：左侧加一条竖色带，一眼能扫出来 */
+.curvecal-row.changed{background:#fff8f0;box-shadow:inset 3px 0 0 var(--warn)}
+.curvecal-row>label{flex:0 0 auto;min-width:132px;max-width:150px;margin:0;
+  font-size:12px;color:var(--sub);white-space:nowrap;
+  display:flex;align-items:baseline;gap:5px}
+/* 测量代号（A3c20 / A3c20b …）：小一号、更淡，让浓度数字仍是主角 */
+.curvecal-key{font-size:10.5px;color:#98a2b3;letter-spacing:.01em}
+.curvecal-row>select{flex:1 1 auto;min-width:0;width:auto;padding:4px 6px;
+  border:1px solid var(--line);border-radius:6px;font:inherit;font-size:12.5px;
+  background:#fff;color:var(--text)}
+.curvecal-row>select:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)}
+@media (max-width:1100px){.curvecal-grid{grid-template-columns:1fr}}
+
+/* 卡片内的小节标题（标定结果里的两块） */
+.sec-h{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--line);
+  font-size:13px;font-weight:700;color:var(--text)}
+.card>h2+.sec-h,.card>table+.sec-h{margin-top:14px}
+
+/* 标定条目表：线性关系那列太长，给它更多宽度、其它列收窄 */
+#calTable th:nth-child(1){width:18%}
+#calTable th:nth-child(2){width:44%}
+#calTable th:nth-child(3){width:14%}
+#calTable th:nth-child(4){width:24%}
+
 @media (max-width:1100px){main{grid-template-columns:1fr}.chartbox img{max-height:380px}}
 </style>
 </head>
@@ -321,22 +358,22 @@ td{white-space:nowrap}
       <h2>标定结果</h2>
       <table id="calTable"></table>
 
-      <h3 style="margin:18px 0 6px;font-size:14px">每条曲线用哪条标定</h3>
+      <h3 class="sec-h">每条曲线用哪条标定</h3>
       <p class="hint">默认按实验安排分配（第一周长波 / 第二周长波 / 第二周短波）。
         逐条改这里可以试「同一条谱用不同标定换算」的影响；改完点右上角「重新计算」。</p>
-      <div class="btnrow" style="margin:6px 0 10px">
-        <button class="btn" id="btnCalReset">全部恢复默认</button>
-        <span class="hint" id="calCurveNote"></span>
+      <div class="btnrow" style="margin:8px 0 4px">
+        <button class="btn" id="btnCalReset" style="flex:0 0 auto">全部恢复默认</button>
+        <span class="hint" id="calCurveNote" style="align-self:center"></span>
       </div>
       <div id="curveCalPicks"></div>
 
-      <h3 style="margin:18px 0 6px;font-size:14px">标定条目（可增删）</h3>
+      <h3 class="sec-h">标定条目（可增删）</h3>
       <p class="hint">出厂三条标定是固定的；这里可以再补做标定：选一张光源谱（氘灯/汞灯），
         工具会自动找特征峰拟合。新增的条目会出现在上面的下拉与报告 3.1 节里。</p>
       <div id="customCalList"></div>
       <div class="btnrow" style="margin:8px 0 0">
-        <button class="btn" id="btnCalAdd">＋ 添加一条标定</button>
-        <span class="hint" id="calAddNote"></span>
+        <button class="btn" id="btnCalAdd" style="flex:0 0 auto">＋ 添加一条标定</button>
+        <span class="hint" id="calAddNote" style="align-self:center"></span>
       </div>
       <div id="calAddForm" style="display:none;margin-top:10px;padding:10px;
            border:1px solid var(--line);border-radius:8px">

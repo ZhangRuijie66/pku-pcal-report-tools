@@ -121,7 +121,20 @@ function _calOptionsHtml(sel) {
   }).join('');
 }
 
-/* 每条曲线选标定：按用途分组列出，避免十几条挤成一团 */
+/* 每条曲线选标定：按用途分组、每组排成两列网格。
+ *
+ * ⚠️ 不要用 `class="field"` 加内联 `display:flex` 来排这一行：
+ * `.field{display:flex;flex-direction:column}` 的内联覆盖只改了 display、
+ * 没改 direction，于是 label / select / 提示各占一整行，每行被撑到 175 px
+ * （下拉框本身只有 35 px），一屏只放得下两条曲线——用户报的「间隔太大」
+ * 就是这个。（2026-11-09）
+ * 现在用专用类 `.curvecal-*`，样式写在 index.html 的 CSS 里。
+ *
+ * 条数是**数据驱动**的：这里遍历后端给的 `s.curve_rows`，没有写死 18 条，
+ * 所以别人用这套工具、重复测量次数不同（每个浓度只测一次 / 某个浓度测 4 次 /
+ * 只测了部分浓度）时，行数与分组都会跟着变。网格是
+ * `repeat(auto-fill,minmax(270px,1fr))`，条数变了自动增减列数。
+ */
 function renderCurveCals(s) {
   const box = $('curveCalPicks');
   if (!box) return;
@@ -129,30 +142,59 @@ function renderCurveCals(s) {
   const rows = s.curve_rows || [];
   const groups = [['conc', 'A3 浓度系列'], ['molecule', '各分子'],
                   ['source', '光源对比']];
+  // 组内按「实验顺序」排，而不是按 SAMPLES 的声明顺序：
+  // 声明顺序里 A3c5b 写在 50 之后（当初是补测的），直接铺开会让 5 μmol/L
+  // 的两条隔着一张表——看着像两个不同的浓度。
+  const sortKey = (r) => {
+    const kind = r.kind || '';
+    const isConc = kind.indexOf('conc') === 0;
+    return [isConc ? 0 : 1, Number(r.conc) || 0, String(r.key)];
+  };
   let html = '';
   let changed = 0;
   groups.forEach(([kind, title]) => {
+    // ⚠️ filter 已经返回新数组，但保险起见排序仍只作用于副本：
+    // s.curve_rows 是 STATE 里的引用，就地 sort 会改掉别处读到的顺序。
     const items = rows.filter((r) =>
       kind === 'molecule' ? (r.kind || '').indexOf('molecule') === 0 :
       kind === 'conc' ? (r.kind || '').indexOf('conc') === 0 :
       (r.kind || '') === 'source');
     if (!items.length) return;
-    html += '<div style="margin:6px 0 2px;font-size:12.5px;color:#5b6472">' +
-      title + '</div>';
+    items.sort((a, b) => {
+      const ka = sortKey(a); const kb = sortKey(b);
+      for (let i = 0; i < ka.length; i += 1) {
+        if (ka[i] < kb[i]) return -1;
+        if (ka[i] > kb[i]) return 1;
+      }
+      return 0;
+    });
+    html += '<div class="curvecal-group"><span class="curvecal-title">' +
+      esc(title) + '</span><span class="curvecal-count">' +
+      items.length + ' 条</span></div><div class="curvecal-grid">';
     items.forEach((r) => {
       const sel = cur[r.key] || '';
       const def = (s.curve_cal_default || {})[r.key] || '';
-      if (sel && def && sel !== def) changed += 1;
-      const label = (r.kind || '').indexOf('conc') === 0
-        ? (r.conc + ' μmol·L⁻¹')
-        : (r.key + (r.mol && r.mol !== r.key ? '（' + r.mol + '）' : ''));
-      html += '<div class="field" style="display:flex;gap:8px;align-items:center">' +
-        '<label style="flex:0 0 132px;margin:0">' + esc(label) + '</label>' +
-        '<select data-curve-cal="' + esc(r.key) + '" style="flex:1">' +
+      const isCustom = !!(sel && def && sel !== def);
+      if (isCustom) changed += 1;
+      // 标签：主名（大字）+ 测量代号（小字）。两组风格统一，列表读起来才整齐。
+      // ⚠️ 浓度组以前只印 conc，于是 A3c20 与 A3c20b 两行都写「20 μmol·L⁻¹」，
+      // 分不清是哪次测量；分子组的重复测量（A2b / B1b / B1c）也容易读成
+      // 「另一个分子」。现在两组的代号位置一致。
+      const isConc = (r.kind || '').indexOf('conc') === 0;
+      const isRep = (r.kind || '').indexOf('_rep') > 0;
+      const main = isConc ? (r.conc + ' μmol·L⁻¹') : (r.mol || r.key);
+      let sub = '';
+      if (isConc) sub = r.key;
+      else if (isRep) sub = r.key;              // A2b：重复测量的代号
+      html += '<div class="curvecal-row' + (isCustom ? ' changed' : '') + '">' +
+        '<label title="' + esc(r.key + (r.day ? ' · 第 ' + r.day + ' 天' : '')) + '">' +
+        esc(main) + (sub ? '<span class="curvecal-key">' + esc(sub) + '</span>' : '') +
+        '</label>' +
+        '<select data-curve-cal="' + esc(r.key) + '">' +
         _calOptionsHtml(sel) + '</select>' +
-        (sel !== def ? '<span class="hint" style="flex:0 0 auto">非默认</span>' : '') +
         '</div>';
     });
+    html += '</div>';
   });
   box.innerHTML = html || '<p class="hint">还没有可选的曲线。</p>';
   const note = $('calCurveNote');
@@ -160,6 +202,7 @@ function renderCurveCals(s) {
     note.textContent = changed
       ? ('有 ' + changed + ' 条曲线用了非默认标定')
       : '当前全部使用默认标定';
+    note.className = 'hint' + (changed ? ' warn' : '');
   }
 }
 
