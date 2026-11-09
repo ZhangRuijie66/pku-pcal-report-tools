@@ -1312,6 +1312,10 @@ def box_length(x, i_units):
     return lo * x, hi * x
 
 
-def box_lambda(L_nm, n_elec):
-    """λ(nm) = K·L²/(2n+1)，n_elec 为 π 电子数。"""
-    return BOX_K * L_nm ** 2 / (n_elec + 1)
+def box_lambda(L_nm, n_pi):
+    """λ(nm) = K·L²/(N+1)，n_pi 为 π 电子数 N。
+
+    分母是 **N+1**，不要与量子数 n 混：含 N 个 π 电子时 HOMO 为 n = N/2、
+    跃迁到 n+1，能级差正比于 (2n+1) = N+1。写成 /(N) 或 /(2N+1) 都错。
+    """
+    return BOX_K * L_nm ** 2 / (n_pi + 1)

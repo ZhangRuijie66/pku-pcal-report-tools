@@ -1001,48 +1001,94 @@ def _sec_box(rb, analysis, mol):
     rb.caption('表6  A 类分子一维势箱模型预测结果')
     rb.table(['a', 'x / nm', 'y / nm', 'λ_{2} 预测值 / nm', 'λ_{3} 预测值 / nm'],
              rows, widths_cm=[1.8, 2.4, 2.4, 3.2, 3.2], keep_together=True)
-    rb.para('表6可以提供不少信息。首先 y 随 a 的变化符合预期：参与共轭的电子数越多，'
-            '芳香基团对箱长的贡献越大。其次，对 λ₂ 与 λ₃ 的预测在 540~655 nm 之间，'
-            '与实验值（%s 与 %s nm）相当接近，说明一维势箱模型在结构上有一定的'
-            '合理性。需注意这里说的“结构上”的合理性是有限的：一维势箱要求体系是'
-            '一维线性的，而苯环的存在显然打破了这一要求。通过拟合经验参数可以部分规避'
-            '这一影响，即箱长不再具有表观的物理意义，而是通过实验拟合出芳香基团的'
-            '“有效箱长”，这样基团是否一维线性就变得不那么重要了；'
-            '波长与箱长平方成正比、与电子数成反比这一结构关系，仍然是有意义的。'
-            % (lam_txt(mol.get('A2', {}).get('lam')),
-               lam_txt(mol.get('A3', {}).get('lam'))))
-    rb.para('从表6看，a = 4 和 a = 6 时对 λ₂、λ₃ 的预测与实验值最为接近，a = 0 与 '
-            'a = 10 的偏差最大。这说明 N 原子一定参与共轭，S 原子大概率不参与共轭；'
-            '苯环虽然参与共轭，但共轭程度有限，不会提供全部 6 个 π 电子。'
-            '取 a = %d 时得到的 x = %.4f nm 与 Atkins 给出的 C–C 平均键长 0.140 nm '
-            '处于同一量级，也支持这一图像。'
-            % (analysis.box.get('a_used', 6), analysis.box.get('x_used', float('nan'))))
+    box = analysis.box
+    a_used = box.get('a_used', 6)
+    x_used = box.get('x_used', float('nan'))
+    row_a = next((r for r in box['a_rows'] if r['a'] == a_used), None) or {}
+    lam2_exp = box.get('lam2_exp', float('nan'))
+    lam3_exp = box.get('lam3_exp', float('nan'))
+    p2 = row_a.get('lam2', float('nan'))
+    p3 = row_a.get('lam3', float('nan'))
+    if np.isfinite(p2) and np.isfinite(p3):
+        rb.para('表6可以提供不少信息。首先 y 随 a 的变化符合预期：参与共轭的电子数'
+                '越多，芳香基团对箱长的贡献越大。其次，取 a = %d 时 λ₃ 的预测值为 '
+                '%.1f nm，与实验值 %.1f nm 相差 %+.1f nm，吻合得相当好；但 λ₂ 的'
+                '预测值 %.1f nm 比实验值 %.1f nm 低 %.1f nm（%.1f%%），而且 a 取 '
+                '0 到 10 之间的任何值都改变不了这一点，说明这是模型的系统性偏差，'
+                '而不是参数选择的问题。还需注意一维势箱要求体系是线性的，而苯环'
+                '显然打破了这一要求；通过拟合经验参数可以部分规避这一影响，即箱长'
+                '不再具有表观的物理意义，而是通过实验拟合出芳香基团的“有效箱长”，'
+                '这样基团是否一维线性就变得不那么重要了；波长与箱长平方成正比、'
+                '与电子数成反比这一结构关系，仍然是有意义的。'
+                % (a_used, p3, lam3_exp, p3 - lam3_exp, p2, lam2_exp,
+                   lam2_exp - p2, (lam2_exp - p2) / lam2_exp * 100.0))
+
+        best_a = box.get('best_a')
+        worst_a = box.get('worst_a')
+        pen_a = box.get('best_pen', float('nan'))
+        pen_w = box.get('worst_pen', float('nan'))
+        span2 = box.get('span_lam2', float('nan'))
+        span3 = box.get('span_lam3', float('nan'))
+        txt = ('从表6看，若以 λ₂、λ₃ 绝对偏差之和为判据，a = %s 时最小（%.1f nm）、'
+               'a = %s 时最大（%.1f nm）。但这个比较本身没有分辨力：a 从 0 变到 '
+               '10，λ₂ 的预测值只在 %.1f nm 内变动、λ₃ 只在 %.1f nm 内变动，'
+               '远小于模型对 λ₂ 的系统残差 %.1f nm，残差随 a 的起伏主要来自 x、y '
+               '两个自由参数随之调整，不足以据以判定芳香基团究竟贡献几个 π 电子。'
+               '因此本报告不把 a 的取值当作“N 原子参与共轭、S 原子不参与”的证据；'
+               'a = %d 只是外推到 B 组时选定的一个唯象参数，它的物理含义需要独立'
+               '的电子结构计算才能确定。'
+               % (best_a, pen_a, worst_a, pen_w, span2, span3,
+                  lam2_exp - p2, a_used))
+        if np.isfinite(x_used):
+            bond2 = 2.0 * 0.140
+            txt += ('反过来，取 a = %d 得到的 x = %.4f nm 与两个 C–C 平均键长之和'
+                    '（2 × 0.140 nm = 0.280 nm）只差 %.1f%%，与“每个 C–C=C 基团'
+                    '含两个 C–C 键”的几何图像一致，这一自洽性检验支持模型的'
+                    '基本框架。' % (a_used, x_used, abs(bond2 - x_used) / bond2 * 100.0))
+        else:
+            txt += '取 a = %d 时 x 无法求出，下面不再外推到 B 组。' % a_used
+        rb.para(txt)
 
     rb.heading('4.1.2.2 B 组分子的分析', 4)
-    x_used = analysis.box.get('x_used', float('nan'))
+    x_used = box.get('x_used', float('nan'))
     rb.para([
         '下面尝试把 A 组拟合得到的经验参数外推到 B 组分子（这一外推实际上风险很大）。'
         '取 a = %d 时的结果，即每个 C–C=C 基团贡献 x = %.4f nm，'
         'B 组分子的共轭单元数不能精确对应整数个 C–C=C 基团，故给出范围，'
-        '结果列于表7。' % (analysis.box.get('a_used', 6), x_used),
+        '结果列于表7。注意 π 电子数同样随单元数变化：箱长取下限（少一个 '
+        'C–C=C）时，π 电子数也要相应减少两个，否则区间两端的箱长与电子数'
+        '不自洽，N 一列因此给出范围。' % (a_used, x_used),
     ])
+    b_rows = box.get('b_rows') or []
     rows = []
-    for r in analysis.box['b_rows']:
-        units = r['units']
-        rows.append([r['code'], '%d~%d' % units,
-                     '%.2f~%.2f' % (r['L_lo'], r['L_hi']), '%d' % r['n'],
+    for r in b_rows:
+        rows.append([r['code'], '%d~%d' % (r['units_lo'], r['units_hi']),
+                     '%.2f~%.2f' % (r['L_lo'], r['L_hi']),
+                     '%d~%d' % (r['n_lo'], r['n_hi']),
                      '%.0f~%.0f' % (r['lam_lo'], r['lam_hi']),
                      lam_txt(r.get('exp'))])
     rb.caption('表7  B 类分子一维势箱模型预测结果')
     rb.table(['编号', 'C–C=C 数', '箱长 L / nm', 'N', 'λ 预测值 / nm', 'λ 实验值 / nm'],
-             rows, widths_cm=[1.8, 2.6, 2.8, 1.4, 3.4, 3.0], keep_together=True)
-    rb.para('由结果可见，对于小分子 B2，预测值（140~315 nm）与实验值（%s nm）比较'
-            '接近；但对于长共轭体系 B1，预测值为 1066~1290 nm，与实验值 %s nm '
-            '相差甚远。这一失败的原因是长共轭体系严重偏离一维线性：β-胡萝卜素'
-            '的共轭链并非直链，而是存在 s-顺/s-反构象与环的限制，用一维势箱描述'
-            '其离域范围已经超出了模型的适用范围。'
-            % (lam_txt(mol.get('B2', {}).get('lam')),
-               lam_txt(mol.get('B1', {}).get('lam'))))
+             rows, widths_cm=[1.8, 2.6, 2.8, 2.0, 3.4, 3.0], keep_together=True)
+    seg = []
+    for r in b_rows:
+        exp = r.get('exp')
+        if not (exp and np.isfinite(exp)):
+            continue
+        if r['lam_lo'] <= exp <= r['lam_hi']:
+            seg.append('%s 的预测区间为 %.0f~%.0f nm，实验值 %s nm 正落在该区间内，'
+                       '说明按单元数把箱长外推到小共轭体系是可行的'
+                       % (r['code'], r['lam_lo'], r['lam_hi'], lam_txt(exp)))
+        else:
+            ratio = (r['lam_lo'] / exp) if exp > 0 else float('nan')
+            seg.append('%s 的预测区间高达 %.0f~%.0f nm，比实验值 %s nm 高出约 '
+                       '%.1f 倍，模型明显失效'
+                       % (r['code'], r['lam_lo'], r['lam_hi'], lam_txt(exp), ratio))
+    if seg:
+        rb.para('由结果可见，' + '；而 '.join(seg) + '。长共轭体系之所以失败，'
+                '是因为它严重偏离一维线性：β-胡萝卜素的共轭链并非直链，而是存在 '
+                's-顺/s-反构象与环的限制，用一维势箱描述其离域范围已经超出了'
+                '模型的适用范围。')
     rb.para('综上，可以对一维势箱模型作一个完整的评述：在短共轭体系（A1~A4、B2）中，'
             '模型呈现“定性合理、半定量可用”的特点，其用法是把 C–C 平均键长取为'
             '0.140 nm 左右、对非线性基团用实验拟合的经验箱长替代；对于长共轭体系（B1），'

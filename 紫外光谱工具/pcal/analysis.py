@@ -335,16 +335,66 @@ class Analysis:
         row = next((r for r in a_rows if r['a'] == a_use), None)
         self.box['a_used'] = a_use
         self.box['x_used'] = row['x'] if row else float('nan')
+        if row is None:
+            # 以前这里静默给 x=nan、表 6/表 7 整块空白，报告照出。
+            valid = [r['a'] for r in a_rows]
+            self.warnings.append(
+                '一维势箱的 a 取 %d，不在候选值 %s 之内，表 6 的 x、y 与表 7 '
+                '都无法计算；请在界面「一维势箱参数」里改回候选值。'
+                % (a_use, '、'.join('%d' % v for v in valid)))
+        elif not (np.isfinite(lam.get('A1', np.nan))
+                  and np.isfinite(lam.get('A4', np.nan))):
+            self.warnings.append(
+                '一维势箱用 A1 与 A4 作锚点求解 x、y，本次缺少其中一个的 λmax，'
+                '表 6 与表 7 无法给出。')
+
+        # a 的辨识力：候选 a 之间预测值的跨度 vs 模型自身的系统残差。
+        # 跨度远小于残差 ⇒ 残差随 a 的起伏主要来自 x、y 的重新调整，
+        # 不能拿"哪个 a 偏差小"去反推芳香基团贡献几个 π 电子。
+        f2 = [r['lam2'] for r in a_rows if np.isfinite(r['lam2'])]
+        f3 = [r['lam3'] for r in a_rows if np.isfinite(r['lam3'])]
+        lam2_exp = lam.get('A2', float('nan'))
+        lam3_exp = lam.get('A3', float('nan'))
+        pen = []
+        for r in a_rows:
+            if np.isfinite(r['lam2']) and np.isfinite(r['lam3']):
+                pen.append((abs(r['lam2'] - lam2_exp) + abs(r['lam3'] - lam3_exp),
+                            r['a']))
+        self.box.update(
+            lam2_exp=lam2_exp, lam3_exp=lam3_exp,
+            span_lam2=(max(f2) - min(f2)) if len(f2) > 1 else float('nan'),
+            span_lam3=(max(f3) - min(f3)) if len(f3) > 1 else float('nan'),
+            best_a=(min(pen)[1] if pen else None),
+            best_pen=(min(pen)[0] if pen else float('nan')),
+            worst_a=(max(pen)[1] if pen else None),
+            worst_pen=(max(pen)[0] if pen else float('nan')),
+        )
+
         b_rows = []
         if row and np.isfinite(row['x']):
             x = row['x']
-            for code, n in (('B1', int(_num(cfg.get('box_n_B1'), 22))),
-                            ('B2', int(_num(cfg.get('box_n_B2'), 6)))):
+            for code, key, n_default in (('B1', 'box_n_B1', 22),
+                                         ('B2', 'box_n_B2', 6)):
                 units = uv.MOLECULES[code]['i']
+                u_lo, u_hi = ((tuple(units) if isinstance(units, (tuple, list))
+                               else (units, units)))
+                # π 电子数由单元数决定：每个 C–C=C 贡献 2 个 π 电子。
+                # 箱长取"少一个单元"的下限时，电子数也必须同时减 2，
+                # 否则区间两端 (L, N) 不自洽（曾把 10 单元配 N=22）。
+                n_lo, n_hi = 2 * u_lo, 2 * u_hi
+                n_cfg = int(_num(cfg.get(key), n_default))
+                if n_cfg != n_hi:
+                    self.warnings.append(
+                        '%s 的 π 电子数按每个 C–C=C 两个电子算应为 %d，'
+                        '配置里给的是 %d；表中一律按 2×单元数取值。'
+                        % (code, n_hi, n_cfg))
                 l_lo, l_hi = uv.box_length(x, units)
                 b_rows.append(dict(
-                    code=code, units=units, L_lo=l_lo, L_hi=l_hi, n=n,
-                    lam_lo=uv.box_lambda(l_lo, n), lam_hi=uv.box_lambda(l_hi, n),
+                    code=code, units=units, units_lo=u_lo, units_hi=u_hi,
+                    L_lo=l_lo, L_hi=l_hi, n=n_hi,
+                    n_lo=n_lo, n_hi=n_hi, n_cfg=n_cfg,
+                    lam_lo=uv.box_lambda(l_lo, n_lo),
+                    lam_hi=uv.box_lambda(l_hi, n_hi),
                     exp=lam.get(code)))
         self.box['b_rows'] = b_rows
         return self
