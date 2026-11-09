@@ -169,7 +169,10 @@ function shortName(rel) {
 }
 
 function slotControl(info, cur) {
-  const st = info.status || 'missing';
+  let st = info.status || 'missing';
+  // 用户刚在下拉框里改过、还没点「重新计算」时，服务端的 status 仍是旧的。
+  // 先在本地说「已手动指定」，否则会一直挂着「默认」徽标，让人以为没改成功。
+  if (cur && info.default && cur !== info.default && st === 'default') st = 'manual';
   const badge = SLOT_BADGE[st] || SLOT_BADGE.missing;
   const score = info.score;
   const badgeText = st === 'fuzzy'
@@ -322,32 +325,64 @@ async function loadFiles(dir) {
   }
 }
 
-/** 把一个文件名填给最接近的槽位（用户从文件清单里点了一行）。 */
-function assignToSlot(rel) {
-  const info = slotsByKey();
-  let bestKey = '';
-  let bestScore = -1;
-  let bestSuggest = null;
-  FILE_KEYS.forEach(([key]) => {
-    const it = info[key] || {};
-    const hit = (it.suggestions || []).filter((x) => x.rel === rel)[0];
-    const sc = hit ? hit.score : 0;
-    if (sc > bestScore) { bestScore = sc; bestKey = key; bestSuggest = it; }
-  });
-  if (!bestKey) { toast('没有可填的槽位'); return; }
-  const sel = document.querySelector('select[data-slot="' + bestKey + '"]');
-  if (!sel) { toast('槽位下拉框还没渲染好，稍后再试'); return; }
+/** 把一个文件名填给最接近的槽位（用户从文件清单里点了一行）。
+ *
+ * ⚠️ 2026-11-09 修 bug：以前是纯前端评分，只在每个槽位的 `suggestions` 里找
+ * 这个文件。但 `suggestions` 只在「登记的文件名找不到」时才由服务端填
+ * （见 analysis.resolve_slots ② 分支）——七个槽位全都 `status='default'` 时
+ * 人人都是空数组 → 所有候选同分 0 → `sc > bestScore` 一次都不成立，
+ * `bestKey` 停在遍历的第一个槽位 = file_n2_blank。
+ * 用户看到的症状就是：「点击之后只会把数据派给 N₂ 空白」。
+ *
+ * 现在改成**问后端**（POST /api/files/assign），后端用与「一键自动匹配」
+ * 完全同一套规则（slot_tail + dataloc.match_score）正向打分，口径一致。
+ * 分数不够就弹候选让用户自己挑，绝不静默塞进某一格。
+ */
+async function assignToSlot(rel) {
+  let r;
+  try {
+    r = await api('/api/files/assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rel: rel }),
+    });
+  } catch (e) {
+    toast('没算出该填给哪个槽位：' + e.message, 6000);
+    return;
+  }
+  const best = r.best;
+  const cands = r.candidates || [];
+  if (!best) {
+    // 分都不够：把最像的几个列出来让用户点，不替他决定
+    const top = cands.slice(0, 3).map((x) =>
+      x.label + '（' + Math.round((x.score || 0) * 100) + '%）').join('、');
+    toast('“' + rel + '”和哪个槽位都不太像' + (top ? '，最接近的是：' + top : '') +
+          '。请在「数据文件映射」里手动挑一格。', 8000);
+    return;
+  }
+  const sel = document.querySelector('select[data-slot="' + best.key + '"]');
+  if (!sel) { toast('槽位下拉框还没渲染好，稍后再试', 5000); return; }
   if (sel.querySelector('option[value="' + CSS.escape(rel) + '"]') === null) {
     const o = document.createElement('option');
     o.value = rel;
     o.textContent = rel;
     sel.appendChild(o);
   }
+  const before = sel.value;
   sel.value = rel;
-  const label = (bestSuggest && bestSuggest.label) || bestKey;
-  toast('已把 ' + rel + ' 填给「' + label + '」' +
-        (bestScore > 0 ? '（匹配 ' + (bestScore * 100).toFixed(0) + '%）' : '') +
-        '，记得点「重新计算」', 6000);
+  // 同步进 STATE.config 再重渲染：renderFileMap 只读 STATE.config，
+  // 不先写进去的话重渲染会把刚填的值弹回去（下拉框闪一下又变回原值）。
+  if (STATE && STATE.config) STATE.config[best.key] = rel;
+  const pct = Math.round((best.score || 0) * 100);
+  let msg = '已把 ' + rel + ' 填给「' + best.label + '」（匹配 ' + pct + '%）';
+  if (before && before !== rel) msg += '，原来是 ' + before;
+  // 分不高就提醒核对：0.80 是自动采用门槛，低于它说明是猜的
+  if ((best.score || 0) < 0.8) {
+    msg += '。这个匹配度不高，请核对是不是填对了格子';
+  }
+  toast(msg + '，记得点「重新计算」', 7000);
+  // 填完刷新那一行，让用户看到「手动」徽标
+  if (STATE) renderFileMap(STATE);
 }
 
 async function autoMap() {

@@ -279,6 +279,41 @@ def _auto_map(query):
             'saved': False}
 
 
+def _assign(query, body):
+    """``POST /api/files/assign``：用户从文件清单里点了一行，该填给哪个槽位。
+
+    请求体 ``{"rel": "N2_2.txt"}``；``?dir=`` 覆盖数据目录。
+
+    返回 ``{'ok', 'rel', 'best', 'candidates': [...]}``：
+
+    * ``best``：分最高的槽位 ``{'key','label','score','why','current'}``，
+      分数够高时前端直接填进下拉框；
+    * ``candidates``：全部槽位按分数降序（含 ``best``），供前端在分数不够
+      （或用户想改派）时让他自己挑——**不替用户静默决定**。
+
+    **写盘端点必须是 POST**（项目审计结论：GET 被地址栏/书签/`<img src>`
+    误触时不能有副作用）。这里只算不写，映射仍由用户点「重新计算」时随
+    ``config`` 提交。
+    """
+    from pcal.analysis import ASSIGN_MIN_SCORE, rank_slots_for_file
+    data_dir = _data_dir(query)
+    rel = str((body or {}).get('rel') or '').strip().replace('\\', '/')
+    if not rel:
+        return {'ok': False, 'error': '缺少文件名 rel'}
+    cfg = _config_from()
+    files = dataloc.list_data_files(data_dir, exts=('.txt',)) \
+        if data_dir and os.path.isdir(data_dir) else []
+    if files and rel not in files:
+        # 允许点目录外的绝对路径，但要说清它不在当前数据目录里
+        return {'ok': False, 'error': '这个文件不在当前数据目录里：%s' % rel,
+                'rel': rel, 'candidates': []}
+    detail = resolve_slots(data_dir, cfg, files) if files else {}
+    ranked = rank_slots_for_file(rel, cfg, detail)
+    best = ranked[0] if ranked and ranked[0]['score'] >= ASSIGN_MIN_SCORE else None
+    return {'ok': True, 'rel': rel, 'best': best, 'candidates': ranked[:7],
+            'min_score': ASSIGN_MIN_SCORE}
+
+
 
 # ---------------------------------------------------------------- 预览图
 def _preview(kind, cfg, query):
@@ -471,6 +506,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_export(cfg))
             if u.path == '/api/files/auto':
                 return self._json(_auto_map(urllib.parse.parse_qs(u.query)))
+            if u.path == '/api/files/assign':
+                body = self._body()          # 只能读一次（见审计结论 §24.4）
+                return self._json(_assign(urllib.parse.parse_qs(u.query), body))
             if u.path == '/api/settings':
                 cfg = _config_from(self._body())
                 data = save_settings(cfg)

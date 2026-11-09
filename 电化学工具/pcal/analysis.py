@@ -294,6 +294,65 @@ def unresolvable_slots(detail):
             if v.get('status') not in ('default', 'manual', 'fuzzy')]
 
 
+#: 用户从「文件清单」里点一行时，分数低于此值就不替他决定，让他自己挑。
+#: 比 ``dataloc.FUZZY_SUGGEST``(0.45) 低——那是「值不值得列进候选」的门槛，
+#: 这里是「敢不敢替你填」的门槛，两个问题不一样：鼠标点下去是明确的意图，
+#: 只是不知道该填哪一格，所以宁可按最高分填、并在提示里写清匹配度让他核对。
+ASSIGN_MIN_SCORE = 0.30
+
+
+def rank_slots_for_file(rel, cfg, detail=None):
+    """反查：用户点了文件 ``rel``，最该填给哪几个槽位（按分数降序）。
+
+    解决的是 **「点击选择」全部派给第一个槽位** 的 bug（2026-11-09 用户报：
+    「点击之后只会把数据派给 N₂ 空白」）。
+
+    根因：前端原来的 ``assignToSlot()`` 只在每个槽位的 ``suggestions`` 里找这个
+    文件。而 ``suggestions`` 是 ``resolve_slots`` **只在登记的文件名找不到时**
+    才填的（见该函数 ② 分支），七个槽位全部 ``status='default'`` 时人人都是
+    空数组 → 所有候选同分 0 → ``sc > bestScore`` 一次都不成立，``bestKey``
+    停在遍历的第一个槽位 = ``file_n2_blank``（「N₂ 空白」）。于是点哪个文件都
+    落到同一格，看起来「只会派给 N₂ 空白」。
+
+    正确做法是**用与自动匹配完全同一套规则正向打分**：拿文件去比每个槽位的
+    目标文件名（``slot_tail`` 优先，再退 ``dataloc.match_score``），谁分高给谁。
+    这样界面上手动点选与「一键自动匹配」的判定口径一致，不会互相矛盾。
+
+    返回 ``[{'key', 'label', 'score', 'why', 'current'}, …]``（分数降序）。
+    空列表表示这份文件与任何槽位都不像，调用方应提示用户自己挑。
+    """
+    from . import dataloc
+    rel = str(rel or '').strip().replace('\\', '/')
+    if not rel:
+        return []
+    cfg = cfg or default_config()
+    detail = detail or {}
+    out = []
+    for key, label, _why in FILE_SLOTS:
+        requested, default = slot_target(cfg, key)
+        probe = os.path.basename(requested) if os.path.isabs(requested) else requested
+        # 与 _rank_for_slot 同口径：先看语义尾巴是否一致，否则走模糊打分
+        tail = slot_tail(probe)
+        if tail and slot_tail(rel) == tail:
+            score = max(dataloc.match_score(probe, rel), dataloc.FUZZY_ACCEPT)
+            why = '文件名尾部一致（%s）' % tail
+        else:
+            score = dataloc.match_score(probe, rel)
+            why = ('文件名相同' if os.path.basename(probe) == os.path.basename(rel)
+                   else '相似度 %.0f%%' % (score * 100))
+        entry = detail.get(key) or {}
+        out.append({
+            'key': key,
+            'label': label,
+            'score': round(score, 4),
+            'why': why,
+            # 这个槽位**当前**登记的是哪个文件（前端据此说「原来是 X」）
+            'current': entry.get('rel') or '',
+        })
+    out.sort(key=lambda d: (-d['score'], d['key']))
+    return out
+
+
 #: 槽位配置键 -> 显示名（告警里用）
 _SLOT_LABELS = dict((key, label) for key, label, _why in FILE_SLOTS)
 
