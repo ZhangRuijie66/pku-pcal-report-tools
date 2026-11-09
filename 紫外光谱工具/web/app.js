@@ -5,9 +5,12 @@ const $ = (id) => document.getElementById(id);
 const COVER_FIELDS = ['student_name', 'student_id', 'partner_name', 'group', 'group_no', 'date',
   'room_temp_1', 'room_temp_2', 'pressure_1', 'pressure_2'];
 const PROC_FIELDS = ['data_dir', 'voigt_peaks', 'stray_mode',
-  'stray', 'stray_a3', 'path_cm', 'anchor_pad', 'box_a', 'box_n_B1', 'box_n_B2'];
+  'stray', 'stray_a3', 'path_cm', 'anchor_pad', 'box_a', 'box_n_B1', 'box_n_B2',
+  // 高斯 TD-DFT 日志目录：进 PROC_FIELDS 才会被 fillConfig/readConfig 带上，
+  // 否则选完的目录刷新页面就丢了
+  'gcalc_logs_dir'];
 // 配置键 -> 页面元素 id（data_dir 的输入框 id 是 dataDir）
-const EL_ID = { data_dir: 'dataDir' };
+const EL_ID = { data_dir: 'dataDir', gcalc_logs_dir: 'gcalcLogs' };
 
 let STATE = null;
 let SAVED = false;
@@ -711,23 +714,42 @@ async function doExport() {
   }
 }
 
-async function pickDir() {
-  const cur = $('dataDir').value.trim();
-  busy(true, '请在弹出的窗口里选择数据文件夹…');
+/**
+ * 弹出系统文件夹选择窗口，把选中的绝对路径填进指定输入框。
+ *
+ * 后端 /api/pickdir 早就有了（tkinter 子进程），这里只做成通用函数，
+ * 数据目录、高斯日志目录共用一套，免得每加一处就抄一遍。
+ * onPicked 可选：选完后的附加动作（数据目录要顺带 scanDir）。
+ */
+async function pickFolderInto(inputId, opts) {
+  const o = opts || {};
+  const el = $(inputId);
+  if (!el) { toast('找不到输入框：' + inputId); return null; }
+  const cur = el.value.trim();
+  busy(true, o.busyText || '请在弹出的窗口里选择文件夹…');
   try {
     const r = await api('/api/pickdir?initial=' + encodeURIComponent(cur));
     busy(false);
-    if (r.path) {
-      $('dataDir').value = r.path;
+    if (r && r.path) {
+      el.value = r.path;
       toast('已选择：' + r.path, 4000);
-      await scanDir();
-    } else {
-      toast('已取消');
+      if (o.onPicked) await o.onPicked(r.path);
+      return r.path;
     }
+    toast('已取消');
+    return null;
   } catch (e) {
     busy(false);
     toast('打开选择窗口失败：' + e.message, 5000);
+    return null;
   }
+}
+
+async function pickDir() {
+  return pickFolderInto('dataDir', {
+    busyText: '请在弹出的窗口里选择数据文件夹…',
+    onPicked: () => scanDir(),
+  });
 }
 
 async function scanDir() {
@@ -845,8 +867,20 @@ async function readGcalc() {
     if (!r.ok) { toast('读取失败：' + r.error); return; }
     renderGcalc(r);
     toast('读到 ' + r.molecules.length + ' 个 TD-DFT 结果');
+    // 实际用的目录回填到输入框：留空时后端是"自动找"，如果不回填，
+    // 界面上永远看不出到底读了哪个文件夹，出问题无从核对。
+    if (r.dir && !dir) {
+      $('gcalcLogs').value = r.dir;
+      $('gcalcNote').textContent = '已自动找到日志目录并读入；要换目录请点「选择文件夹…」。';
+    }
   } catch (e) { toast('读取失败：' + e.message); }
   finally { busy(false); }
+}
+
+function pickGcalcLogs() {
+  return pickFolderInto('gcalcLogs', {
+    busyText: '请选择高斯 TD-DFT 日志所在文件夹…',
+  });
 }
 
 /* ---------------------------------------------------------------- 绑定 */
@@ -935,6 +969,7 @@ $('btnPickLast').onclick = () => {
   $('btnCalSave').onclick = saveCal;
 
   $('chartKind').onchange = drawChart;
+  $('btnGcalcPick').onclick = pickGcalcLogs;
   $('btnGcalcOpen').onclick = openGcalc;
   $('btnGcalcRead').onclick = readGcalc;
   // 数据文件映射
