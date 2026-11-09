@@ -320,12 +320,39 @@ def to_float(v):
 
 
 def line_fit(x, y):
-    """加权?不加权 OLS 直线拟合，返回 k, b, σk, σb, r, n。"""
+    """不加权 OLS 直线拟合，返回 k, b, σk, σb, r, n。
+
+    ⚠ 点数与「能算什么」的关系（2026-11-09 审计修正）：
+
+      0 点      → 全 NaN（没有数据，没什么可算）
+      1 点      → 全 NaN（过一点有无数条直线，斜率不唯一）
+      **2 点**  → **k、b 照常给**（两点唯一确定一条直线，斜率与截距是精确解），
+                  σk、σb、r 给 NaN（残差自由度 n−2 = 0，不确定度无定义）
+      ≥3 点     → k、b、σk、σb、r 全给
+
+    原来写成 `if n < 3: 全 NaN`，把**两点时的点估计也一起丢了**。两点数据
+    在真实验里并不罕见（浓度档次少、或部分点被判为异常剔除后只剩两点），
+    那样整个 Λm∞ 会变成 NaN，报告里一片「—」，而用户看不出是「工具不支持」
+    还是「数据有问题」。现在点估计保留，不确定度留空由上层显示为「—」，
+    并配一条警告说明为什么没有不确定度。
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     n = len(x)
-    if n < 3:
+    if n < 2 or x.size != y.size:
         return dict(k=float('nan'), b=float('nan'),
+                    sigma_k=float('nan'), sigma_b=float('nan'),
+                    r=float('nan'), n=n)
+    if n == 2:
+        # 两点：斜率和截距是唯一解，直接用差分算（比 polyfit 更稳、更准）
+        dx = float(x[1] - x[0])
+        if dx == 0:
+            return dict(k=float('nan'), b=float('nan'),
+                        sigma_k=float('nan'), sigma_b=float('nan'),
+                        r=float('nan'), n=n)
+        k = float((y[1] - y[0]) / dx)
+        b = float(y[0] - k * x[0])
+        return dict(k=k, b=b,
                     sigma_k=float('nan'), sigma_b=float('nan'),
                     r=float('nan'), n=n)
     k, b = np.polyfit(x, y, 1)

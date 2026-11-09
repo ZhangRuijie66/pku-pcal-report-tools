@@ -121,6 +121,19 @@ class Analysis:
             self.tables[key] = rows
             if key in STRONG_KEYS:
                 self.fits[key] = conduct.kohlrausch(rows)
+                # 点数决定「能算什么」：2 点可定直线（Λm∞ 与 B 有精确解），
+                # 但残差自由度 n−2 = 0，算不出不确定度。这类退化必须说出来，
+                # 否则报告里 Λm∞ 有值、σ 却是「—」，读者会以为是打印问题。
+                n_used = self.fits[key].get('n') or 0
+                if n_used == 2:
+                    self.warnings.append(
+                        '%s 只有 2 个浓度点：Λm∞ 与 B 按两点连线给出（点估计精确），'
+                        '但无法估计不确定度，报告里对应位置显示「—」。'
+                        % conduct.SPECIES_LABEL.get(key, key))
+                elif n_used < 2:
+                    self.warnings.append(
+                        '%s 的浓度点不足 2 个，无法拟合 Λm∞。'
+                        % conduct.SPECIES_LABEL.get(key, key))
 
         missing = [k for k in STRONG_KEYS if k not in self.fits]
         if missing:
