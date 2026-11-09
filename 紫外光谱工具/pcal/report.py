@@ -1081,7 +1081,9 @@ def _sec_box(rb, analysis, mol):
                        % (r['code'], r['lam_lo'], r['lam_hi'], lam_txt(exp)))
         else:
             ratio = (r['lam_lo'] / exp) if exp > 0 else float('nan')
-            seg.append('%s 的预测区间高达 %.0f~%.0f nm，比实验值 %s nm 高出约 '
+            # "高出 N 倍"在中文里是 (预测-实验)/实验，与下面算的比值差 1；
+            # 比值 2.6 应写"约为实验值的 2.6 倍"，别写成"高出 2.6 倍"。
+            seg.append('%s 的预测区间高达 %.0f~%.0f nm，约为实验值 %s nm 的 '
                        '%.1f 倍，模型明显失效'
                        % (r['code'], r['lam_lo'], r['lam_hi'], lam_txt(exp), ratio))
     if seg:
