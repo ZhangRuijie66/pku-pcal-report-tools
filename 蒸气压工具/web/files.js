@@ -120,6 +120,19 @@
 
   let uid = 0;
 
+  /** 文件名是否在该组允许的后缀里（``opts.exts`` 为空 = 不限制）。 */
+  function _allowed(rel, exts) {
+    if (!exts || !exts.length) return true;
+    const low = String(rel || '').toLowerCase();
+    for (let i = 0; i < exts.length; i += 1) {
+      let e = String(exts[i] || '').toLowerCase();
+      if (!e) continue;
+      if (e[0] !== '.') e = '.' + e;
+      if (low.slice(-e.length) === e) return true;
+    }
+    return false;
+  }
+
   function mount(el, opts) {
     if (!el) throw new Error('PcalFiles.mount: 容器不存在');
     opts = opts || {};
@@ -128,6 +141,9 @@
     let dir = '';
     let value = '';
     let filtered = [];
+    // 目录里所有文件（未过滤）— 只为了在提示里说清「有几个不支持的文件」，
+    // 不然用户会以为工具没扫到它们。
+    let rawCount = 0;
 
     el.innerHTML =
       '<div class="pcal-files">' +
@@ -149,11 +165,16 @@
     function paint() {
       filtered = search(files, q.value, MAX_RENDER);
       if (!files.length) {
-        // 空列表分三种情况，给的下一步不一样：
-        //   没设目录 / 目录不存在 → 去选；目录存在但没数据文件 → 说清要放什么进去。
+        // 空列表分四种情况，给的下一步不一样：
+        //   没设目录 / 目录不存在 → 去选；目录有文件但后缀都不支持 → 说清要哪种格式；
+        //   目录存在但没数据文件 → 说清要放什么进去。
         let msg;
         if (!dir) {
           msg = '还没有选择数据文件夹。点上面的「选择文件…」，或先选好数据文件夹。';
+        } else if (rawCount && opts.exts && opts.exts.length) {
+          msg = '这个文件夹里有 ' + rawCount + ' 个文件，但没有 ' +
+                esc(opts.exts.join(' / ')) + ' 格式的数据文件（' + esc(dir) +
+                '）。本实验只读这几种格式，其它文件不会列出来。';
         } else if (opts.emptyHint) {
           msg = opts.emptyHint;
         } else {
@@ -161,13 +182,21 @@
                 '）。把课程软件导出的数据文件放进这个文件夹，再点「刷新」。';
         }
         list.innerHTML = '<div class="pcal-files-empty">' + msg + '</div>';
-        meta.textContent = '';
+        // 别把 meta 清空：用户要知道「是空的」还是「没扫到」
+        meta.textContent = rawCount
+          ? '共 ' + rawCount + ' 个文件，其中 0 个可用'
+          : '目录里没有文件';
         return;
       }
       const shown = filtered.length;
+      // 被后缀过滤掉的文件数：主动说出来，别让人以为工具漏扫了
+      const skipped = rawCount - files.length;
+      const skipNote = skipped > 0
+        ? '（另有 ' + skipped + ' 个非 ' + (opts.exts || []).join('/') + ' 文件未列出）'
+        : '';
       meta.textContent = q.value
-        ? '匹配 ' + shown + ' / 共 ' + files.length + ' 个文件'
-        : '共 ' + files.length + ' 个文件' +
+        ? '匹配 ' + shown + ' / 共 ' + files.length + ' 个文件' + skipNote
+        : '共 ' + files.length + ' 个文件' + skipNote +
           (files.length > MAX_RENDER ? '（列出前 ' + Math.min(files.length, MAX_RENDER) + ' 个，输入关键字可缩小范围）' : '');
       if (!shown) {
         list.innerHTML = '<div class="pcal-files-empty">没有匹配的文件，换个关键字试试。</div>';
@@ -216,7 +245,8 @@
       const base = (dir || '').replace(/\\/g, '/').replace(/\/$/, '');
       if (base && norm.indexOf(base + '/') === 0) {
         value = norm.slice(base.length + 1);
-        if (files.indexOf(value) < 0) files.push(value);
+        // 用户主动从系统对话框选的，一定收进来（对话框本身已按 opts.exts 过滤过）
+        if (files.indexOf(value) < 0) { files.push(value); rawCount += 1; }
         paint();
         if (opts.onPick) opts.onPick(value, { dir: dir });
       } else if (opts.onPickFile) {
@@ -229,8 +259,16 @@
     async function reload(newDir) {
       dir = newDir || '';
       const j = await index(dir);
+      const all = j.files || [];
+      rawCount = all.length;
       files.length = 0;
-      (j.files || []).forEach((f) => files.push(f));
+      // 只列出本模块真能读的后缀。
+      // ⚠️ 2026-11-09 修：以前 opts.exts 只用于「选择文件…」系统对话框的过滤，
+      // 列表本身按后端 DATA_EXTS（csv/txt/xlsx/xls/json/dat/tsv）全列出来。
+      // 于是表面吸附工具会把 数据处理.xlsx 也列出来，点一下却报
+      // 「导入失败：不是 CSV/TXT 文件」——列表里出现了点不动的文件。
+      // 双液系工具同理（列 3 个，其中 2 个 xlsx 用不上）。
+      all.forEach((f) => { if (_allowed(f, opts.exts)) files.push(f); });
       if (j.dir) dir = j.dir;
       if (j.error && opts.onError) opts.onError(j.error);
       paint();
