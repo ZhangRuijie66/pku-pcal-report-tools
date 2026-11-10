@@ -55,6 +55,10 @@ FILES = (
     # 保证「换机器/换文件名」的行为在所有实验里一致。
     ('dataloc.py', Path('pcal') / 'dataloc.py'),
     ('filepick.py', Path('pcal') / 'filepick.py'),
+    # JSON 安全序列化（2026-11-10）：json.dumps 默认把 nan/inf 写成裸
+    # NaN/Infinity —— 那不是合法 JSON，浏览器 res.json() 直接抛语法错，
+    # 整个页面卡在「初始化失败」。11 个模块的 _json 各写各的，全都有这隐患。
+    ('jsonutil.py', Path('pcal') / 'jsonutil.py'),
 )
 
 # 需要前端草稿的 6 个手工录入模块；draft.js 由 _core/web_draft.js 同步。

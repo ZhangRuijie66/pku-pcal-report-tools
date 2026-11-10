@@ -424,3 +424,80 @@ class TestNoMarkdownInText(unittest.TestCase):
             for m in re.finditer(r"'([^']*\*\*[^']*)'", code):
                 bad.append((i, m.group(1)[:60]))
         self.assertEqual(bad, [], '报告正文里出现了 markdown 粗体标记 **')
+
+
+class TestJsonIsAlwaysLegal(unittest.TestCase):
+    """接口回的 JSON 必须**永远合法**——一个 nan 就能让整个页面打不开。
+
+    2026-11-10 真实事故：分析内核里 alpha_inf['sd'] 取到 float('nan')，
+    `json.dumps` 把它写成裸 `NaN`（不是合法 JSON），前端 `res.json()` 抛
+    `Unexpected token 'N', ...is not valid JSON`，界面卡在「初始化失败」，
+    而错误消息完全指不到源头。
+
+    判据（SKILL §27）：算不了时要**明确表示**——用 null（前端显示「—」），
+    不能用 NaN/Infinity 混过去。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._mods_before = set(sys.modules)
+        cls.srv = support.load_module(TOOL, 'server')
+
+    @classmethod
+    def tearDownClass(cls):
+        for name in [m for m in sys.modules if m not in cls._mods_before]:
+            if name == 'pcal' or name.startswith('pcal.'):
+                del sys.modules[name]
+
+    def test_finite_only_replaces_nan_and_inf(self):
+        import json
+        f = support.load_module(TOOL, 'jsonutil').to_jsonable
+        out = f({'a': float('nan'), 'b': [1.0, float('inf'), float('-inf')],
+                 'c': {'d': float('nan')}})
+        self.assertIsNone(out['a'])
+        self.assertEqual(out['b'], [1.0, None, None])
+        self.assertIsNone(out['c']['d'])
+        # 关键断言：序列化结果必须能被标准 JSON 解析器读回
+        json.loads(json.dumps(out, allow_nan=False))
+
+    def test_analyze_output_has_no_nan_alpha_inf_sd(self):
+        """分析结果里的 alpha_inf['sd'] 必须是 None，不能是 nan。"""
+        k = _k()
+        d = k.sample_data()
+        # 模拟「没有 sd」的输入（用户从界面手填 α∞ 时就是这样）
+        d['alpha_inf_measured'] = -1.10
+        d.pop('alpha_inf_sd', None)
+        d.pop('alpha_inf_n', None)
+        an = k.analyze(d, {'alpha_inf_mode': 'measured', 'order_group': '4M'})
+        sd = an['alpha_inf']['sd']
+        self.assertIsNone(sd, 'alpha_inf.sd 必须是 None，不能是 nan/inf')
+        self.assertEqual(an['alpha_inf']['n'], 1)
+
+    def test_summary_json_parses(self):
+        """/api/state 那一整包结构必须能被 json 解析（含大数据点的真实路径）。"""
+        import json
+        import math
+
+        k = _k()
+        d = k.sample_data()
+        d['alpha_inf_measured'] = -1.10
+        an = k.analyze(d, {'alpha_inf_mode': 'measured', 'order_group': '4M'})
+        cfg = support.load_module(TOOL, 'analysis').default_config()
+
+        # 直接调 _summary 需要 STATE，这里只验证内核输出经过 _finite_only 后可序列化
+        payload = support.load_module(TOOL, 'jsonutil').to_jsonable(
+            {'calibration': an['calibration'],
+                                         'alpha_inf': an['alpha_inf'],
+                                          'groups': [{kk: g[kk] for kk in
+                                                      ('label', 'k1', 'sigma_k1',
+                                                       't_half', 'alpha_inf')}
+                                                     for g in an['groups']]})
+        text = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+        back = json.loads(text)
+        self.assertTrue(math.isfinite(back['groups'][0]['k1']))
+
+    def test_no_bare_nan_literal_in_response(self):
+        """允许 nan 的 dumps 会产出裸 NaN；加了 allow_nan=False 就不该出现。"""
+        import json
+        with self.assertRaises(ValueError):
+            json.dumps({'x': float('nan')}, allow_nan=False)

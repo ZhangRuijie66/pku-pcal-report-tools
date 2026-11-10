@@ -24,6 +24,7 @@ OUT_DIR = os.path.join(os.path.dirname(ROOT), '实验报告输出')
 sys.path.insert(0, ROOT)
 
 from pcal import adsorption, plotting                      # noqa: E402
+from pcal.jsonutil import core_json_dumps
 from pcal import report as rpt                             # noqa: E402
 from pcal import exportdata
 from pcal import dataloc, filepick
@@ -462,8 +463,10 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj, ensure_ascii=False,
-                                    default=_json_default))
+        # 用 core_json_dumps：json.dumps 默认把 nan/inf 写成裸 NaN/Infinity，
+        # 那不是合法 JSON，浏览器 res.json() 直接抛语法错 → 整页「初始化失败」。
+        # 这里统一把非有限值转成 null（前端显示「—」），并禁用 allow_nan。
+        self._send(code, core_json_dumps(obj))
 
     def _error(self, exc):
         """把异常回给前端。traceback 只在本机调试（PCAL_DEBUG=1）时附带——

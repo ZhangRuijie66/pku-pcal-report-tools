@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import os
 import socket
 import sys
@@ -25,6 +26,7 @@ OUT_DIR = os.path.join(os.path.dirname(ROOT), '实验报告输出')
 sys.path.insert(0, ROOT)
 
 from pcal import kinetics, plotting                       # noqa: E402
+from pcal.jsonutil import core_json_dumps
 from pcal import report as rpt                            # noqa: E402
 from pcal import dataloc, filepick
 from pcal import profile
@@ -130,7 +132,11 @@ def _json_default(o):
     if isinstance(o, (np.integer,)):
         return int(o)
     if isinstance(o, (np.floating,)):
-        return float(o)
+        v = float(o)
+        # nan/inf 不能进 JSON（不是合法字面量），统一成 None
+        return v if math.isfinite(v) else None
+    if isinstance(o, np.bool_):
+        return bool(o)
     if isinstance(o, np.ndarray):
         return o.tolist()
     return str(o)
@@ -515,8 +521,21 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj, ensure_ascii=False,
-                                    default=_json_default))
+        """回 JSON，**保证输出是合法 JSON**。
+
+        ⚠ ``json.dumps`` 默认把 ``float('nan')`` / ``inf`` 写成裸
+        ``NaN`` / ``Infinity`` —— **那不是合法 JSON**，浏览器
+        ``await res.json()`` 会抛
+        ``Unexpected token 'N', ...is not valid JSON``，
+        整个页面卡在「初始化失败」（2026-11-10 真栽过一次：内核里
+        alpha_inf 的 sd 取到 nan，/api/state 整包坏掉，界面打不开）。
+
+        两层保险：
+        1. 递归把非有限的 float 换成 None（前端显示成「—」而不是 NaN）；
+        2. ``allow_nan=False``：万一还有漏网的，宁可抛异常走 _error
+           回一条可读错误，也不要吐出半截坏 JSON。
+        """
+        self._send(code, core_json_dumps(obj))
 
     def _error(self, exc):
         """把异常回给前端。traceback 只在本机调试（PCAL_DEBUG=1）时附带——

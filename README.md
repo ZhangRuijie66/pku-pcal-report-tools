@@ -372,6 +372,15 @@ Word 原生公式 OMML、五号字、图表题注）。
 - 后台进程按命令行精确回收：`停止服务.vbs` 只杀命令行里带
   `<某个工具>\run.py` 的 python，不会误伤别的程序。
 
+### 2026-11-10 稳定性修复：回包 JSON 一律合法
+
+`pcal/server.py` 回给浏览器的 JSON 统一走 `pcal/jsonutil.py`（canonical 在
+`_core/jsonutil.py`）。原因：`json.dumps` 默认把 `nan` / `inf` 写成裸
+`NaN` / `Infinity`，**那不是合法 JSON**，浏览器 `res.json()` 直接抛语法错，
+整个页面卡在「初始化失败」。现在非有限值统一转成 `null`（界面显示「—」），
+并用 `allow_nan=False` 兜底——宁可回一条可读错误，也不吐半截坏 JSON。
+
 ## License
 
 MIT
+

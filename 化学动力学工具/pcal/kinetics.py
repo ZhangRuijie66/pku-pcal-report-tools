@@ -675,16 +675,26 @@ def analyze(data, cfg=None):
         alpha_inf_measured = float('nan')
     # α∞ 也是平行重复读数得来的（Polariputer 静态测量连读 N 次），
     # 与标定点同样只报「平均值 + 重复次数」。
+    #
+    # ⚠ sd 用 **None** 表示「不知道」，绝不能用 nan：这个值会进 /api/state 的
+    # JSON，而 `json.dumps` 默认把 float('nan') 写成裸 `NaN`——**那不是合法
+    # JSON**，前端 `await res.json()` 会直接抛
+    #   Unexpected token 'N', " 1, \"sd\": NaN}" is not valid JSON
+    # 于是整页卡在「初始化失败」。2026-11-10 这次就是这么把页面弄挂的：
+    # 分析内核里出现一个 nan，整个界面就打不开了，所以一律用 None 表示缺失。
     try:
         alpha_inf_n = max(1, int(data.get('alpha_inf_n') or 1))
     except (TypeError, ValueError):
         alpha_inf_n = 1
-    try:
-        alpha_inf_sd = float(data.get('alpha_inf_sd'))
-        if not np.isfinite(alpha_inf_sd) or alpha_inf_sd < 0:
-            alpha_inf_sd = float('nan')
-    except (TypeError, ValueError):
-        alpha_inf_sd = float('nan')
+    alpha_inf_sd = None
+    raw_sd = data.get('alpha_inf_sd')
+    if raw_sd not in (None, ''):
+        try:
+            cand = float(raw_sd)
+            if np.isfinite(cand) and cand >= 0:
+                alpha_inf_sd = cand
+        except (TypeError, ValueError):
+            pass
 
     # ---- 1) α–c 标定
     #
