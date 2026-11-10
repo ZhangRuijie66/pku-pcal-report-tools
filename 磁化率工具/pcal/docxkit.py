@@ -265,9 +265,68 @@ def _split_by_var_char(text):
     return out
 
 
-def _split_caption_runs(text, next_body=None):
+def _split_header_symbol(text):
+    """表头/单元格里的「量符号」串 → [(片段, 是否斜体), …]。
+
+    只处理**化学式部分要正体**这一件事：``c(H⁺)`` → 斜体 ``c`` + 正体 ``(H⁺)``；
+    ``c_{suc}``（纯量符号）整块斜体；``6M``（编号）正体。
+
+    判据与 `_split_caption_runs` 一致，但用途不同：题注是整段文字，这里是
+    一个短的量符号串。分开写避免互相牵制——题注还要判 Voigt/μmol 这类词。
     """
-    图题/表题里只把**量符号**排斜体，普通单词与编号保持正体：
+    if not text:
+        return []
+    # 整串是「编号」：6M、3M、A3、B2 —— 正体（组别/样品标签，不是量符号）
+    if re.fullmatch(r'\d+[A-Z]?|[A-Z]\d+', text.strip()):
+        return [(text, False)]
+    out = []
+    buf = []
+    italic_run = True            # 量符号部分默认斜体（调用方只在斜杠前调用）
+
+    def flush():
+        if buf:
+            out.append((''.join(buf), italic_run))
+            del buf[:]
+
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        # 化学式括号 (H⁺)、(KNO₃)：整块正体
+        if ch in '(（':
+            close = ')' if ch == '(' else '）'
+            j = text.find(close, i)
+            if j > i:
+                flush()
+                out.append((text[i:j + 1], False))
+                italic_run = True
+                i = j + 1
+                continue
+        # 独立元素符号紧跟电荷/下标：H^{+} 这种在量符号串里少见，先按原样
+        buf.append(ch)
+        i += 1
+    flush()
+    # 合并相邻同斜体片段
+    merged = []
+    for seg, it in out:
+        if merged and merged[-1][1] is it:
+            merged[-1] = (merged[-1][0] + seg, it)
+        else:
+            merged.append((seg, it))
+    return merged
+
+
+#: 化学元素符号（供题注/下标判断「单字母+数字下标」是不是化学物种）。
+#: 只收常出现在本套报告里的元素，够用即可——判断标准是「这个字母能不能
+#: 当元素符号」，N/O/H/C/S 都在其中，而 k/R/c/t/n 不在，所以 k_{1} 不会被
+#: 误判成化学式。
+_ELEMENTS = frozenset('''H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca
+Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd
+Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf
+Ta W Re Os Ir Pt Au Hg Tl Pb Bi'''.split())
+
+
+def _split_caption_runs(text, next_body=None):
+    """图题/表题里只把**量符号**排斜体，普通单词与编号保持正体：
         'A3'      → 正体 A3（分子编号）
         'Voigt'   → 正体（人名）
         'μmol'    → 正体（单位，μ 是词头）
@@ -292,15 +351,29 @@ def _split_caption_runs(text, next_body=None):
                 it = False                      # Voigt、mol、nm…
             else:
                 it = True
-                if nxt.isdigit():               # A3、B2：编号正体
+                # 「1M、2M、6M」这类组别编号：字母前面紧贴数字 → 正体。
+                # 题注里「表2 1M、2M、3M 盐酸下…」的 M 一度被排成斜体
+                # （用户 2026-11-10 抓到），因为只判了「字母后跟数字」。
+                prev = text[i - 1] if i > 0 else ''
+                if prev.isdigit():
+                    it = False
+                elif nxt.isdigit():             # A3、B2：编号正体
                     it = False
                 elif word == 'L' and nxt in '·−':   # L·mol⁻¹ / L−1：单位升
                     it = False
                 elif nxt == ' ' and text[j + 1:j + 2] == '类':   # A 类
                     it = False
-                elif j >= n and next_body is not None:
+                elif next_body is not None and nxt in ('_', '^', ''):
                     body = next_body.strip()
-                    if not body or not any(c.isalpha() for c in body):
+                    # 「单字母 + 纯数字下标」是化学物种（N₂、O₂）→ 正体；
+                    # 但前提是这个字母**确实是化学元素**。k_{1}、R^{2}、c_{0}
+                    # 的底数是量符号（k、R、c 都不是元素符号）→ 保持斜体。
+                    #
+                    # ⚠ 判据不能要求「字母在文本末尾」（j >= n）：题注常写成
+                    # `N_{2} 的吸收峰`，字母后面紧跟 `_`，末尾是"的吸收峰"。
+                    # 那样 N₂ 的 N 会被排成斜体（2026-11-10 用户报的那一类）。
+                    if (not body or not any(c.isalpha() for c in body)) \
+                            and word in _ELEMENTS:
                         it = False              # N_{2}：化学式下标纯数字
             out.append([word, it])
             i = j
@@ -331,12 +404,28 @@ def _split_caption_runs(text, next_body=None):
 _SUB_CHUNK_RE = re.compile(r'[A-Za-z]+|\d+|[^A-Za-z\d]+')
 
 
+#: 作**说明性**下标时用正体的单字母（元素/物种）。
+#: 只收语义明确的：H（氢离子）、C/N/O/S（原子/物种）。其余单字母下标
+#: （V、p、l、r、m、n…）仍是变量，保持斜体。
+_UPRIGHT_SUB_SINGLE = frozenset('HCNOS')
+
+
 def _sub_chunks(body):
     """
     下标的逐块正斜体：多字母（元素符号、sam/cot/tot 这类缩写）与数字、
     连字符一律正体；单字母是变量本身，斜体。
     'V-Ni' → 斜体的 V + 正体的 '-' + 正体的 Ni
+
+    ⚠ 例外 1：整个下标是**编号**时整块正体。`t_{1M}`、`α_{3M}` 里的 1M/3M 是
+    组别标签（不是变量），逐个字符判会把尾字母 M 排成斜体——表 2/表 3 的
+    列头就印出斜体 M（用户 2026-11-10 抓到）。
+    ⚠ 例外 2：说明性单字母下标。`k_{H}` 的 H 表示「氢离子」（不是变量 H），
+    `c_{H}` 同理——这些是化学元素/物种，按规范正体。
     """
+    if re.fullmatch(r'\d+[A-Za-z]{0,2}', (body or '').strip()):
+        return [(body, True)]
+    if (body or '').strip() in _UPRIGHT_SUB_SINGLE:
+        return [(body, True)]
     out = []
     for m in _SUB_CHUNK_RE.finditer(body):
         s = m.group(0)
@@ -373,11 +462,17 @@ def _write_script(p, body, opts, sup):
     上下标逐块写：说明性文字（sam、Ni…）与数字、符号一律正体，
     单字母变量（V、p、n…）在变量 run 里保持斜体。
     所以 Q_{V-Ni} → 斜体 V + 正体 -Ni；R^{2} → 斜体 R + 正体上标 2。
+
+    ⚠ 底数正体不代表上下标也正体：`c(H^{+})^{n}` 里 `(H^{+})` 是化学式
+    （正体），但指数 `n` 是**变量**（反应级数），必须斜体。
+    以前只在 `opts['italic']` 为真时才按块判正斜，底数为正体时整块正体，
+    上标 n 就印成了正体（用户 2026-11-10 抓到）。
     """
     for chunk, upright in _sub_chunks(body):
         o = {k: v for k, v in opts.items() if k != 'caption_italic'}
-        if o.get('italic'):
-            o['italic'] = not upright
+        # 按块决定：说明性/数字 → 正体；单字母变量 → 斜体。
+        # 与底数本身是否斜体无关。
+        o['italic'] = not upright
         r = p.add_run(chunk)
         if sup:
             r.font.superscript = True
@@ -387,7 +482,7 @@ def _write_script(p, body, opts, sup):
 
 
 def _rich_tokens(text):
-    """把含 _{..} / ^{..} 标记的文本切成 [(kind, body), …]，kind: t/sub/sup。
+    r"""把含 _{..} / ^{..} 标记的文本切成 [(kind, body), …]，kind: t/sub/sup。
 
     ⚠️ 花括号要**配对扫描**，不能用单层正则 `([_^])\{([^{}]*)\}`：
     那样 `σ_{P₂^{∞}}` 会被切坏——`_{P₂^{∞}` 里的内层 `^{∞}` 先被外层匹配吃掉，
@@ -971,7 +1066,12 @@ class ReportBuilder:
                 break
         if cut is not None:
             sym, unit = text[:cut], text[cut:]
-            add_rich_text(p, sym, dict(base, italic=True))
+            # 量符号部分不能整块斜体：c(H⁺) 里 c 是量符号（斜体）、(H⁺) 是化学式
+            # （正体）。整块给 italic 会把 H 也排斜——用户 2026-11-10 抓到的
+            # 「有的 H⁺ 的 H 是斜体」就出在这里，也出在正文的整块 ITALIC 片段里。
+            # 用化学式识别把 (…)/元素符号切出来单独正体。
+            for seg, seg_italic in _split_header_symbol(sym):
+                add_rich_text(p, seg, dict(base, italic=seg_italic))
             add_rich_text(p, unit, base)
         elif re.search(r'[A-Za-zα-ω]', text):
             add_rich_text(p, text, dict(base, italic=True))
@@ -993,6 +1093,53 @@ class ReportBuilder:
     def _write_cell(self, p, value, font_size):
         if isinstance(value, tuple) and value and value[0] == 'm':
             self._add_math(p, value[1])
+            return
+        # 片段列表单元格：('α–t' 这类含希腊字母的单元格整体正体是错的，
+        # 允许调用方写成 [(片段, opts), …] 逐块指定正/斜体。
+        # 与 _write_header 的片段列表同一套写法，避免两处行为不一致。
+        #
+        # ⚠ 判据必须同时认「列表」和「元组片段」两种写法：
+        #   [('t', 'α', {…}), ('t', '–', {})]      ← list of tuples
+        #   (('t', 'α', {…}), ('t', '–', {}))      ← tuple of tuples
+        # 但 ('t', 'k_{1}', ITALIC) 这种**单个片段**不能当片段列表，
+        # 否则会把 't' 当成文本、把整串印成 "ttt"（2026-11-10 踩过：
+        # 表 3「线性化关系」列被印成了 'ttt' / 'tttttt'）。
+        def _is_seg(x):
+            return (isinstance(x, (list, tuple)) and len(x) >= 2
+                    and isinstance(x[0], str) and x[0] in ('t', 'm', 'seg'))
+
+        # 单个片段 ('t', 'k_{1}', ITALIC) 不是片段列表：必须走纯文本通道，
+        # 否则 _is_seg 命中的是它内部的两个元素，会把 't' 当文本印出来。
+        # 判据：value 本身**就是**一个片段 → 不是列表容器。
+        single_seg = _is_seg(value)
+        if (not single_seg and isinstance(value, (list, tuple)) and value
+                and isinstance(value[0], (list, tuple)) and _is_seg(value[0])):
+            for seg in value:
+                if _is_seg(seg):
+                    # 片段格式与 rb.para 完全一致：('t', 文本, opts)
+                    seg_text = seg[1] if len(seg) > 1 else ''
+                    seg_opts = (seg[2] if len(seg) > 2
+                                and isinstance(seg[2], dict) else {})
+                else:
+                    seg_text, seg_opts = seg, {}
+                opts = {'size': font_size}
+                opts.update(seg_opts or {})
+                # ⚠ 片段给 {} 的意思就是「正体」，不能因为没写 italic 就
+                # 跟上一段一起斜。这里显式落到 True/False，不留「未指定」态。
+                opts['italic'] = bool((seg_opts or {}).get('italic', False))
+                add_rich_text(p, seg_text, opts)
+            return
+        # 单个片段 ('t', 'k_{1}', ITALIC)：直接把它的文本渲出来。
+        # 不能让 str(value) 走纯文本通道——那样会把元组印成字面
+        # "('t', 'k1', {'italic': True})"（2026-11-10 测试抓到）。
+        if single_seg:
+            seg_text = value[1] if len(value) > 1 else ''
+            seg_opts = (value[2] if len(value) > 2
+                        and isinstance(value[2], dict) else {})
+            opts = {'size': font_size}
+            opts.update(seg_opts or {})
+            opts['italic'] = bool((seg_opts or {}).get('italic', False))
+            add_rich_text(p, seg_text, opts)
             return
         # 纯文本单元格：支持 m_{Ni-1}/g 这种真下标写法，不再使用公式对象
         add_rich_text(p, '' if value is None else str(value), {'size': font_size})

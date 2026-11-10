@@ -239,7 +239,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         ('t', 'α_{t}–t', ITALIC),
         ' 曲线，用积分法（尝试法）判定蔗糖的反应级数，并求各组速率常数与半衰期；'
         '最后由 ', ('t', 'k_{1}', ITALIC), '–', ('t', 'c', ITALIC),
-        '(', ('t', 'H^{+}', ITALIC), ') 关系确定氢离子反应级数。',
+        ('t', '(H^{+})', {}), ' 关系确定氢离子反应级数。',
     ]
     if cal['fit']:
         abs_segs += [
@@ -451,10 +451,10 @@ def _sec_order(rb, analysis, groups, order, png_at, png_order, num):
         _alpha_t_table(rb, groups, chunk, num)
     rb.figure(png_at, caption='图%d  不同盐酸浓度下蔗糖水解的 α–t 曲线' % fig,
               width_cm=13.5)
-    rb.para('由图%d可见，盐酸浓度越高，达到相同反应进度所需的时间越短，'
-            '说明该反应对氢离子为正级数；曲线本身不是直线，可以排除零级反应。'
-            '但仅凭 α–t 曲线不能判定蔗糖的级数，下面用积分法（尝试法）作定量判断。'
-            % fig)
+    rb.para(['由图%d可见，盐酸浓度越高，达到相同反应进度所需的时间越短，'
+             '说明该反应对氢离子为正级数；曲线本身不是直线，可以排除零级反应。'
+             '但仅凭 ' % fig, ('t', 'α', ITALIC), '–', ('t', 't', ITALIC),
+             ' 曲线不能判定蔗糖的级数，下面用积分法（尝试法）作定量判断。'])
 
     rb.heading(['3.2.2 ', ('t', 'α_{0}', ITALIC), ' 与 ',
                 ('t', 'α_{∞}', ITALIC), ' 的确定'], 3)
@@ -519,7 +519,15 @@ def _sec_order(rb, analysis, groups, order, png_at, png_order, num):
                   % (fig, order['group']), width_cm=15.0)
     rows = []
     names = {'0': '零级', '1': '一级', '2': '二级'}
-    expr = {'0': 'α–t', '1': 'ln(α−α∞)–t', '2': '1/(α−α∞)–t'}
+    # 线性化关系里 α、t 是变量（斜体），ln 是函数名、– 与 ∞ 是符号（正体）。
+    # 以前整块字符串走 _write_cell → 全排正体，渲染出来 α 是正的（用户抓到）。
+    expr = {
+        '0': [('t', 'α', ITALIC), ('t', '–', {}), ('t', 't', ITALIC)],
+        '1': [('t', 'ln', {}), ('t', '(α−α', ITALIC), ('t', '∞', {}),
+              ('t', ')', ITALIC), ('t', '–', {}), ('t', 't', ITALIC)],
+        '2': [('t', '1/(α−α', ITALIC), ('t', '∞', {}), ('t', ')', ITALIC),
+              ('t', '–', {}), ('t', 't', ITALIC)],
+    }
     for i in ('0', '1', '2'):
         concl = '最接近直线' if order['best'] == int(i) else '明显弯曲'
         rows.append([names[i], expr[i], k(order['r2'][i], 5)
@@ -654,7 +662,7 @@ def _sec_first_order(rb, analysis, groups, png, num):
 def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num):
     rb.heading('3.4 氢离子反应级数', 2)
     rb.heading(['3.4.1 ', ('t', 'k_{1}', ITALIC), '–',
-                ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC),
+                ('t', 'c', ITALIC), ('t', '(H^{+})', {}),
                 ') 非线性拟合'], 3)
     tbl = num.t()
     rb.para([
@@ -681,7 +689,7 @@ def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num):
         '结果如图%d所示。' % fig,
     ])
     if png_rate:
-        rb.figure(png_rate, caption='图%d  k₁–c(H⁺) 非线性拟合' % fig,
+        rb.figure(png_rate, caption='图%d  k_{1}–c(H^{+}) 非线性拟合' % fig,
                   width_cm=11.0)
     # sigma 可能为 None：恰好定解（数据点数 = 参数个数）时残差自由度为 0，
     # 点估计成立但不确定度无定义。此时**只给值、不给 ±**，并在正文里说清原因——
@@ -727,7 +735,7 @@ def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num):
         if abs(nval - 2.0) <= 0.3:
             segs += [
                 '氢离子反应级数接近 2 级，说明蔗糖水解速率大致与 ',
-                ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC),
+                ('t', 'c', ITALIC), ('t', '(H^{+})', {}),
                 ')^{2} 成正比。',
             ]
         else:
@@ -746,19 +754,25 @@ def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num):
     rb.para(segs)
 
     rb.heading(['3.4.2 ', ('t', 'lg(k_{1}−k_{0})', ITALIC), '–',
-                ('t', 'lg c(H^{+})', ITALIC), ' 线性验证'], 3)
+                ('t', 'lg c', ITALIC), ('t', '(H^{+})', {}),
+                ' 线性验证'], 3)
     if ll:
         rb.para([
-            '把 ', ('t', 'k_{1} = k_{0} + k_{H}c(H^{+})^{n}', ITALIC),
+            '把 ', ('t', 'k_{1} = k_{0} + k', ITALIC), ('t', '_{H}', {}),
+            ('t', 'c', ITALIC),
+            ('t', '(H^{+})^{n}', {}),
             ' 两边取对数，得 ',
-            ('t', 'lg(k_{1}−k_{0}) = lg k_{H} + n lg c(H^{+})', ITALIC),
+            ('t', 'lg(k_{1}−k_{0}) = lg k', ITALIC), ('t', '_{H}', {}),
+            ('t', ' + n lg c', ITALIC),
+            ('t', '(H^{+})', {}),
             '。以 ', ('t', 'lg(k_{1}−k_{0})', ITALIC), ' 对 ',
-            ('t', 'lg c(H^{+})', ITALIC), ' 作图，直线斜率即为 ',
+            ('t', 'lg c', ITALIC), ('t', '(H^{+})', {}),
+            ' 作图，直线斜率即为 ',
             ('t', 'n', ITALIC), '，结果如图%d所示。' % num.f_next(),
         ])
         if png_log:
             rb.figure(png_log,
-                      caption='图%d  lg(k₁−k₀)–lg c(H⁺) 线性拟合' % num.f(),
+                      caption='图%d  lg(k_{1}−k_{0})–lg c(H^{+}) 线性拟合' % num.f(),
                       width_cm=10.5)
         rb.para([
             '拟合得 ', ('t', 'n', ITALIC), ' = ',
@@ -816,7 +830,7 @@ def _sec_results(rb, analysis):
     if rl:
         segs += [
             '各组 ', ('t', 'k_{1}', ITALIC), ' 随 ',
-            ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC),
+            ('t', 'c', ITALIC), ('t', '(H^{+})', {}),
             ') 增大而增大，非线性拟合得 ', ('t', 'n', ITALIC), ' = ',
             _rl_n(rl), '。',
         ]
@@ -851,12 +865,13 @@ def _sec_discussion(rb, analysis):
     groups = analysis['groups']
     rb.heading('4.2 实验讨论', 2)
     rb.heading('4.2.1 模型训练与零点', 3)
-    rb.para('数智旋光仪用机器学习模型识别三分视场的明暗状态，模型训练质量直接影响'
-            '旋光零点和每个数据点的判断。若训练集中混入少量坏帧，'
-            '软件找到的零点可能偏离均匀暗场，使整条 α–t 曲线平移。'
-            '本次实验发现，只用自己录制的视频训练时零点更稳定；'
-            '也可以手动找到均匀暗场，记住它与软件零点的偏差，'
-            '每次测量前把电机转到该角度，相当于人工校正零点。')
+    rb.para(['数智旋光仪用机器学习模型识别三分视场的明暗状态，模型训练质量直接影响'
+             '旋光零点和每个数据点的判断。若训练集中混入少量坏帧，'
+             '软件找到的零点可能偏离均匀暗场，使整条 ', ('t', 'α', ITALIC),
+             '–', ('t', 't', ITALIC), ' 曲线平移。'
+             '本次实验发现，只用自己录制的视频训练时零点更稳定；'
+             '也可以手动找到均匀暗场，记住它与软件零点的偏差，'
+             '每次测量前把电机转到该角度，相当于人工校正零点。'])
     fastest = max(groups, key=lambda g: g['k1'] if np.isfinite(g['k1']) else -1) \
         if groups else None
     fast_txt = ('%s 组' % fastest['label']) if fastest else '反应最快的一组'
@@ -880,12 +895,15 @@ def _sec_discussion(rb, analysis):
         '会使不同组数据之间产生系统差异。'
         '（3）溶液配制与混合：蔗糖和盐酸的体积、浓度误差会直接进入 ',
         ('t', 'c_{0}', ITALIC), ' 和 ', ('t', 'c', ITALIC),
-        '(', ('t', 'H^{+}', ITALIC), ')；盐酸挥发也会使实际酸度偏低。'
-        '（4）α∞ 的选取：若反应未完全，实验测得的 α∞ 偏大，'
-        '使 ln(α−α∞) 在高转化率区弯曲。'
+        ('t', '(H^{+})', {}), '；盐酸挥发也会使实际酸度偏低。'
+        '（4）', ('t', 'α_{∞}', ITALIC), ' 的选取：若反应未完全，实验测得的 ',
+        ('t', 'α_{∞}', ITALIC), ' 偏大，使 ',
+        ('t', 'ln(α−α_{∞})', ITALIC), ' 在高转化率区弯曲。'
         '（5）数据组之间的差异：本实验共 %d 组数据，由小组成员分工完成，'
         % len(groups),
-        '零点、模型和计时起点不完全相同，这也是 k1–c(H+) 拟合误差的主要来源之一。',
+        '零点、模型和计时起点不完全相同，这也是 ',
+        ('t', 'k_{1}', ITALIC), '–', ('t', 'c', ITALIC),
+        ('t', '(H^{+})', {}), ' 拟合误差的主要来源之一。',
     ])
     rb.heading('4.2.4 实验改进', 3)
     rb.para('（1）统一由一人完成模型训练和零点校准，或每组测量前都用同一标准管复核零点；'
@@ -923,7 +941,7 @@ def _sec_conclusion(rb, analysis):
     if rl:
         segs += [
             '由 ', ('t', 'k_{1}', ITALIC), '–', ('t', 'c', ITALIC),
-            '(', ('t', 'H^{+}', ITALIC), ') 非线性拟合得氢离子反应级数 ',
+            ('t', '(H^{+})', {}), ' 非线性拟合得氢离子反应级数 ',
             ('t', 'n', ITALIC), ' = ', _rl_n(rl), '，',
         ]
     if ll:

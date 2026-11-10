@@ -137,6 +137,47 @@ def _scan_chem(s, i):
     return j
 
 
+#: 元素符号表（供离子识别用；与化学式扫描器共用同一份）
+_ION_ELEMENTS = None
+
+
+def _ion_elements():
+    global _ION_ELEMENTS
+    if _ION_ELEMENTS is None:
+        _ION_ELEMENTS = set('''H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca
+Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd
+Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf
+Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf
+Es Fm Md No Lr'''.split())
+    return _ION_ELEMENTS
+
+
+def _ion_span_end(s, i):
+    """s[i:] 是「元素符号 + 电荷」时返回结束下标，否则 None。
+
+    只认**明确带电荷**的形式（``H^{+}``、``Na^{+}``、``Cl^{-}``、``O^{2-}``）：
+    不带电荷的单字母（H、N、O…）在公式里多半是量符号，必须保持斜体——
+    判错方向会静默把变量排成正体，比漏改更难发现。
+    """
+    if i > 0 and (s[i - 1].isalnum() or s[i - 1] in '_}{'):
+        return None
+    m = re.match(r'[A-Z][a-z]?', s[i:])
+    if not m:
+        return None
+    el = m.group(0)
+    if el not in _ion_elements():
+        return None
+    j = i + len(el)
+    ch = re.match(r'\^\{([^{}]*)\}', s[j:])
+    if not ch:
+        return None
+    body = ch.group(1).strip()
+    # 电荷内容必须像电荷：+、-、2+、3-、\pm …
+    if not re.fullmatch(r'[0-9]*[+\-−]|[+\-−][0-9]*', body):
+        return None
+    return j + ch.end()
+
+
 def _is_chem_span(s, i):
     """s[i:] 开头是否是一段化学式；返回结束下标或 None。"""
     if i > 0 and (s[i - 1].isalnum() or s[i - 1] in '_}{'):
@@ -405,19 +446,33 @@ _SIMPLE_SUB_RE = re.compile(r'^[A-Za-z0-9+\- ]+$')
 _SUB_CHUNK_RE = re.compile(r'[A-Za-z]+|\d+|[^A-Za-z\d]+')
 
 
-def _simple_sub_xml(txt):
+#: 底数 → 该底数下单字母下标属于「说明性文字」、应排正体的集合。
+#:
+#: 为什么需要底数：下标 ``H`` 既可能是变量（某物理量 H），也可能是说明文字
+#: （``k_H`` = 对氢离子的速率常数）。单从下标本身无法判断，必须看底数。
+#: 只收**语义明确**的组合，宁缺勿滥——判错会把变量排成正体，比漏改更难发现。
+_UPRIGHT_SUB_BY_BASE = {
+    'k': {'H', '0', '1', '2', 'obs', 'cat'},     # k_H、k_0、k_1：速率常数记号
+    'K': {'H', 'w', 'a', 'b', 'sp'},             # K_H、K_w：平衡常数记号
+    'c': {'H', 'Na', 'Cl'},                      # c(H) 类浓度记号（少见）
+}
+
+
+def _simple_sub_xml(txt, base_txt=''):
     """把简单下标逐块排成正/斜体；不是简单下标时返回 None。"""
     if not txt or not _SIMPLE_SUB_RE.match(txt):
         return None
+    allow = _UPRIGHT_SUB_BY_BASE.get((base_txt or '').strip(), set())
     out = []
     for m in _SUB_CHUNK_RE.finditer(txt):
         s = m.group(0)
         if not s.strip():
             continue
         # 重复索引 i/j（h_{ii}、ε_{ij} 这类）是变量本身，排斜体；
-        # 其余多字母下标是说明性的，排正体（sam / tot / vap …）。
+        # 说明性下标排正体：多字母（sam / tot / vap），或底数决定的单字母
+        # （k_H 的 H 是「氢离子」，c(H⁺) 的 H 是化学元素 → 正体）。
         if s.isalpha() and (len(s) == 1 or all(c in 'ij' for c in s)):
-            sty = 'i'
+            sty = 'p' if s in allow else 'i'
         else:
             sty = 'p'
         out.append(_mrun(s, sty))
@@ -660,7 +715,12 @@ class _Parser:
                 raw = self.s[start:self.i]
                 if raw.startswith('{') and raw.endswith('}'):
                     raw = raw[1:-1]
-                sub_xml = _simple_sub_xml(raw)
+                # 底数文本：用来判断单字母下标是「说明性」（k_H 的 H = 氢离子）
+                # 还是「变量本身」（Q_V 的 V = 体积）。传进去才能区分——
+                # 用户 2026-11-10 抓到 c(H⁺) 与 k_H 里的 H 被排成斜体。
+                base_txt = ''.join(re.findall(r'<m:t[^>]*>([^<]*)</m:t>',
+                                              node.xml)).strip()
+                sub_xml = _simple_sub_xml(raw, base_txt)
                 if sub_xml is None:
                     sub_xml = operand.xml
                     if _sub_is_upright(sub_xml):
@@ -695,6 +755,19 @@ class _Parser:
         # 化学式（KNO_{3}、H_{2}O…）整段正体；必须放在"普通字符"之前，
         # 否则 \frac{m}{M(KNO_{3})} 这种括号里的化学式会被当成变量排成斜体。
         if c.isascii() and c.isupper():
+            ion_end = _ion_span_end(self.s, self.i)
+            if ion_end and ion_end > self.i:
+                # 元素符号 + 电荷：H^{+}、Na^{+}、Cl^{-}、O^{2-} ——
+                # 这是化学离子，按规范整体正体。以前 H 走普通字符通道被排成
+                # 斜体（用户 2026-11-10 抓到「有的 H⁺ 的 H 是斜体」）。
+                seg = self.s[self.i:ion_end]
+                self.i = ion_end
+                m = re.fullmatch(r'([A-Z][a-z]?)(?:\^\{([^{}]*)\})?', seg)
+                el, charge = (m.group(1), m.group(2)) if m else (seg, None)
+                xml = _mrun(el, 'p')
+                if charge is not None:
+                    xml = _s_sup(xml, _mrun(charge, 'p'))
+                return _Node(xml, is_atom=True)
             end = _is_chem_span(self.s, self.i)
             if end and end > self.i:
                 seg = self.s[self.i:end]
