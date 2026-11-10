@@ -192,8 +192,16 @@ def _normalize_data(data):
     cal = []
     for p in out.get('calibration') or []:
         c, a = _num(p.get('c')), _num(p.get('alpha'))
-        if c is not None and a is not None:
-            cal.append({'c': c, 'alpha': a})
+        if c is None or a is None:
+            continue
+        # n / sd 必须保留：报告表 1 要示出重复次数（用户 2026-11-10 要求），
+        # 在前端与后端之间来回传时若被过滤掉，界面上的次数就静默回 1。
+        item = {'c': c, 'alpha': a}
+        n = _num(p.get('n'))
+        item['n'] = int(n) if (n is not None and n >= 1) else 1
+        sd = _num(p.get('sd'))
+        item['sd'] = sd if (sd is not None and sd >= 0) else None
+        cal.append(item)
     out['calibration'] = cal
     out['calibration_exclude'] = [int(i) for i in (out.get('calibration_exclude') or [])
                                   if str(i).strip() != '']
@@ -380,25 +388,107 @@ def _export_locked(cfg, data):
 
 
 # ---------------------------------------------------------------- 导入
+class ImportError_(ValueError):
+    """导入时文件类型不对（例如把静态读数导入动态分组）。"""
+
+
+def _stem_of(filename):
+    return os.path.splitext(os.path.basename(str(filename or '')))[0]
+
+
 def _import(kind, text, raw, filename):
+    """把上传的文件解析成前端需要的数据。
+
+    ``kind`` 有四种：
+
+    ============== ======================================================
+    ``group``      动态测量 xlsx → ``points``（α–t 时间序列）
+    ``calibration``标定表 → ``rows``（c–α 对）；**也接受静态读数**，此时
+                   用文件名里的浓度（唯一且明确时）配这一组重复读数的平均值
+    ``alpha_inf``  静态读数 → α∞ 的平均值与重复次数
+    ``static``     纯查看静态读数（不写进任何字段）
+    ============== ======================================================
+
+    ⚠ 2026-11-10 的原始 bug 就是这里没有按类型分流：静态文件的
+    ``index/steps/angle`` 被 ``parse_points`` 的 ``r[1], r[-1]`` 兜底
+    解析成 ``[steps, angle]``，整条动力学曲线的时间轴变成步数。
+    现在**先认列名、再按类型分流**，类型不匹配就明确报错。
+    """
     fn = (filename or '').lower()
+    stem = _stem_of(filename)
+    is_xlsx = fn.endswith(('.xlsx', '.xlsm')) or (raw and raw[:2] == b'PK')
+
     if kind == 'group':
-        if fn.endswith('.xlsx') or (raw and raw[:2] == b'PK'):
-            res = kinetics.parse_polariputer_xlsx(raw or text.encode('utf-8'))
+        if is_xlsx:
+            res = kinetics.parse_measurement_xlsx(raw, stem=stem)
+            if res['kind'] == kinetics.KIND_STATIC:
+                raise ImportError_(
+                    '「%s」是静态测量（只有 steps/angle，没有 time 列），'
+                    '不能导入动力学分组。静态读数请用「导入标定表」或'
+                    '「导入 α∞」。' % (filename or '文件'))
+            if res['kind'] != kinetics.KIND_DYNAMIC or not res['points']:
+                raise ImportError_(
+                    '「%s」不像是动态测量文件：%s'
+                    % (filename or '文件',
+                       '；'.join(res['warnings']) or '没有 time/angle 数据列'))
             return dict(ok=True, kind=kind, points=res['points'],
-                        temperature=res.get('temperature'),
-                        sucrose=res.get('sucrose'), count=len(res['points']))
+                        temperature=res['temperature'],
+                        sucrose=res['sucrose'], acid=res['acid'],
+                        count=len(res['points']))
         pts = kinetics.parse_points(text or '')
+        if not pts:
+            raise ImportError_(
+                '「%s」里没有解析出 t–α 数据点；如果这是静态重复读数，'
+                '请改用「导入标定表」或「导入 α∞」。' % (filename or '文本'))
         return dict(ok=True, kind=kind, points=pts, count=len(pts))
-    if kind == 'calibration':
-        if fn.endswith('.xlsx') or (raw and raw[:2] == b'PK'):
-            pts = kinetics.parse_calibration_xlsx(raw)
+
+    if kind in ('alpha_inf', 'static'):
+        if is_xlsx:
+            res = kinetics.parse_measurement_xlsx(raw, stem=stem)
+            alpha = res['alpha']
+            warn = res['warnings']
         else:
-            pts = kinetics.parse_calibration(text or '')
-        return dict(ok=True, kind=kind,
-                    rows=[{'c': p['c'], 'alpha': p['alpha']} for p in pts],
-                    count=len(pts))
-    return dict(ok=False, error='未知导入类型：%s' % kind)
+            alpha, warn = kinetics.parse_static_text(text or ''), []
+        if not alpha or not alpha['n']:
+            raise ImportError_('「%s」里没有可用的旋光度读数：%s'
+                               % (filename or '文件', '；'.join(warn) or '无数字'))
+        return dict(ok=True, kind=kind, alpha=alpha, count=alpha['n'],
+                    c_hint=(res.get('c_hint') if is_xlsx else None),
+                    warnings=warn)
+
+    if kind == 'calibration':
+        if is_xlsx:
+            res = kinetics.parse_measurement_xlsx(raw, stem=stem)
+            if res['kind'] == kinetics.KIND_CALIB:
+                return dict(ok=True, kind=kind,
+                            rows=[{'c': p['c'], 'alpha': p['alpha'],
+                                   'n': p.get('n') or 1,
+                                   'sd': p.get('sd')}
+                                  for p in res['rows']],
+                            count=len(res['rows']), mode='table')
+            if res['kind'] == kinetics.KIND_STATIC and res['alpha']:
+                # 静态读数 → 一个标定点：浓度只能来自文件名
+                alpha = res['alpha']
+                return dict(ok=True, kind=kind, mode='point',
+                            point={'c': res['c_hint'],
+                                   'alpha': alpha['mean'],
+                                   'sd': alpha['sd'], 'n': alpha['n']},
+                            c_hint=res['c_hint'], count=1,
+                            warnings=res['warnings'])
+            if res['kind'] == kinetics.KIND_DYNAMIC:
+                raise ImportError_(
+                    '「%s」是动态测量（含 time 列），请导入到动力学分组。'
+                    % (filename or '文件'))
+            raise ImportError_('「%s」认不出标定所需的列：%s'
+                               % (filename or '文件',
+                                  '；'.join(res['warnings']) or '缺 c/angle 表头'))
+        rows = kinetics.parse_calibration(text or '')
+        if not rows:
+            raise ImportError_('「%s」里没有解析出 c–α 数据对。' % (filename or '文本'))
+        return dict(ok=True, kind=kind, mode='table', rows=rows,
+                    count=len(rows))
+
+    raise ImportError_('未知导入类型：%s' % kind)
 
 
 # ---------------------------------------------------------------- HTTP

@@ -171,9 +171,25 @@ def make_rate_law_figure(rl):
             r'$k_1=%.3f\times10^{-4}+%.3f\times10^{-4}c^{\,%.2f}$'
             % (rl['k0'] * 1e4, rl['k_h'] * 1e4, rl['n']),
             transform=ax.transAxes, fontsize=9.2, va='top')
-    ax.text(0.04, 0.86, r'$n=%.2f\pm%.2f,\quad R^{2}=%.4f$'
-            % (rl['n'], rl['sigma_n'], rl['r2']),
-            transform=ax.transAxes, fontsize=9.2, va='top')
+    # sigma_n 可能是 None（数据点数 = 参数个数，残差自由度 0）。
+    # 此时图里只标 n 的值与「无自由度」，不能 %f 一个 None 直接崩，
+    # 也不能印 "± nan"（SKILL §27：算不了要明确说清楚为什么）。
+    sig = rl.get('sigma_n')
+    try:
+        has_sig = sig is not None and np.isfinite(float(sig))
+    except (TypeError, ValueError):
+        has_sig = False
+    if has_sig:
+        note = r'$n=%.2f\pm%.2f,\quad R^{2}=%.4f$' % (rl['n'], float(sig), rl['r2'])
+    else:
+        note = r'$n=%.2f,\quad R^{2}=%.4f$' % (rl['n'], rl['r2'])
+    ax.text(0.04, 0.86, note, transform=ax.transAxes, fontsize=9.2, va='top')
+    if not has_sig:
+        ax.text(0.04, 0.78, 'n 无不确定度（自由度 0）',
+                transform=ax.transAxes, fontsize=8.5, va='top', color='#b45309')
+    if rl.get('at_bound'):
+        ax.text(0.04, 0.70, 'n 顶到上界 4，仅作下限',
+                transform=ax.transAxes, fontsize=8.5, va='top', color='#b45309')
     ax.set_xlabel(r'$c(\mathrm{H}^{+})$ / (mol$\cdot$L$^{-1}$)')
     ax.set_ylabel(r'$k_1$ / ($10^{-3}$ s$^{-1}$)')
     ax.legend(fontsize=9, loc='lower right')

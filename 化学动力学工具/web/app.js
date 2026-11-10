@@ -97,7 +97,12 @@ function readCal() {
     const a = tr.querySelector('input[data-f="alpha"]');
     if (!c || !a || c.value === '' || a.value === '') return;
     const idx = points.length;
-    points.push({ c: Number(c.value), alpha: Number(a.value) });
+    // n（重复次数）与 sd（读数的标准差）必须原样带回后端：报告表 1 只示出
+    // 「平均值 + 重复次数」，丢了 n 就会把 10 次测量印成 1 次。
+    const nEl = tr.querySelector('input[data-f="n"]');
+    const n = nEl && nEl.value !== '' ? Math.max(1, Math.round(Number(nEl.value))) : 1;
+    points.push({ c: Number(c.value), alpha: Number(a.value), n: n,
+                  sd: (tr._sd === undefined ? null : tr._sd) });
     const ex = tr.querySelector('input[data-f="exclude"]');
     if (ex && ex.checked) exclude.push(idx);
   });
@@ -146,6 +151,8 @@ function readData() {
     temperature_c: $('temperature_c').value === '' ? null : Number($('temperature_c').value),
     sucrose_stock: $('sucrose_stock').value === '' ? null : Number($('sucrose_stock').value),
     alpha_inf_measured: $('alpha_inf_measured').value === '' ? null : Number($('alpha_inf_measured').value),
+    alpha_inf_n: (DATA && DATA.alpha_inf_n) || 1,
+    alpha_inf_sd: (DATA && DATA.alpha_inf_sd != null) ? DATA.alpha_inf_sd : null,
     calibration: cal.points,
     calibration_exclude: cal.exclude,
     groups: readGroups(),
@@ -157,16 +164,25 @@ function readData() {
 function renderCal() {
   const rows = DATA.calibration || [];
   let html = '<thead><tr><th>#</th><th>c / (g·mL⁻¹)</th><th>α / (°)</th>' +
+    '<th title="这份平均值由几次静态读数平均得到">次数</th>' +
     '<th>剔除</th><th></th></tr></thead><tbody>';
   rows.forEach((p, i) => {
-    html += '<tr data-cal="' + i + '"><td>' + (i + 1) + '</td>' +
+    const n = p.n == null ? 1 : p.n;
+    const tie = ' title="' + (p.sd == null ? '' : '读数标准差 ' + Number(p.sd).toFixed(4) + '°') + '"';
+    html += '<tr data-cal="' + i + '" data-sd="' + (p.sd == null ? '' : p.sd) + '"><td>' + (i + 1) + '</td>' +
       '<td><input type="number" step="any" data-f="c" value="' +
       (p.c == null ? '' : esc(p.c)) + '"></td>' +
       '<td><input type="number" step="any" data-f="alpha" value="' +
       (p.alpha == null ? '' : esc(p.alpha)) + '"></td>' +
+      '<td><input type="number" step="1" min="1" data-f="n" value="' + esc(n) + '"' + tie + '></td>' +
       '<td><input type="checkbox" data-f="exclude"' +
       ((DATA.calibration_exclude || []).indexOf(i) >= 0 ? ' checked' : '') + '></td>' +
       '<td><button class="btn mini" data-del-cal="' + i + '">删</button></td></tr>';
+  });
+  // 刷新后把 sd 挂回行元素（readCal 从 tr._sd 取），保证来回不丢
+  document.querySelectorAll('#calTable tbody tr[data-cal]').forEach((tr) => {
+    const v = tr.getAttribute('data-sd');
+    tr._sd = (v === null || v === '') ? null : Number(v);
   });
   $('calTable').innerHTML = html + '</tbody>';
 }
@@ -233,9 +249,21 @@ function renderResults(s) {
   note += ' c₀ = ' + num(s.c0, 4) + ' g·mL⁻¹，α₀ = ' + num(s.alpha0, 2) + '°，' +
     'α∞ 实验 ' + num(ainf.measured, 2) + '° / 理论 ' + num(ainf.theory, 2) + '°。';
   if (s.rate_law) {
-    note += ' k₁–c(H⁺)：k₀ = ' + s.rate_law.k0.toExponential(2) +
-      ' s⁻¹，n = ' + num(s.rate_law.n, 2) + ' ± ' + num(s.rate_law.sigma_n, 2) +
-      '，R² = ' + num(s.rate_law.r2, 4) + '。';
+    const rl = s.rate_law;
+    // sigma_n 为 null = 数据组数恰好等于参数个数（残差自由度 0），
+    // 点估计成立但不确定度无定义。此时只显示值，并明确写「无自由度」，
+    // 不能显示成 "4 ± —" 或干脆漏掉（SKILL §27 点估计与不确定度分开）。
+    const hasSig = rl.sigma_ok && rl.sigma_n != null;
+    note += ' k₁–c(H⁺)：k₀ = ' + rl.k0.toExponential(2) + ' s⁻¹，n = ' +
+      num(rl.n, 2) + (hasSig ? ' ± ' + num(rl.sigma_n, 2) : '（无不确定度）') +
+      '，R² = ' + num(rl.r2, 4) + '。';
+    if (!hasSig) {
+      note += ' 只有 ' + rl.n_points + ' 组数据却拟合 ' + rl.n_params +
+        ' 个参数，残差自由度为 0：点估计是唯一解，但给不出误差棒。';
+    }
+    if (rl.at_bound) {
+      note += ' n 顶到拟合上界 4，只能当下限看待。';
+    }
   }
   if (s.loglog) {
     note += ' lg–lg：n = ' + num(s.loglog.slope, 2) + ' ± ' +
@@ -425,12 +453,49 @@ async function importFile(kind, file, groupIndex) {
     headers: { 'Content-Type': 'application/octet-stream' },
     body: buf,
   });
+  // 标定：可能是整张 c–α 表（mode='table'），也可能是**一个静态重复读数**
+  // （mode='point'，浓度从文件名猜）。后者追加成一行，不覆盖已有标定点。
   if (kind === 'calibration') {
+    if (r.mode === 'point') {
+      const p = r.point || {};
+      if (p.c == null) {
+        // 文件名里没有唯一明确的浓度 → 让用户填，绝不自己编一个
+        toast('已读入 ' + (p.n || 0) + ' 次读数（α = ' +
+          (p.alpha == null ? '—' : Number(p.alpha).toFixed(3)) +
+          '°），但文件名里认不出浓度，请在该行手填 c', 6500);
+      } else {
+        toast('已加入一个标定点：c = ' + p.c + ' g·mL⁻¹，α = ' +
+          Number(p.alpha).toFixed(3) + '°（' + p.n + ' 次读数平均）', 5000);
+      }
+      DATA.calibration = (DATA.calibration || []).concat([
+        { c: p.c, alpha: p.alpha, n: p.n || 1, sd: p.sd }]);
+      renderCal();
+      await recalc();
+      return;
+    }
     DATA.calibration = r.rows || [];
     DATA.calibration_exclude = [];
     renderCal();
     await recalc();
     toast('已导入 ' + r.count + ' 个标定点');
+    return;
+  }
+  // α∞：静态重复读数 → 只留平均值与次数
+  if (kind === 'alpha_inf') {
+    const a = r.alpha || {};
+    $('alpha_inf_measured').value = a.mean == null ? '' : Number(a.mean).toFixed(4);
+    DATA.alpha_inf_n = a.n || 1;
+    DATA.alpha_inf_sd = a.sd == null ? null : a.sd;
+    $('alpha_inf_mode').value = 'measured';
+    await recalc();
+    toast('α∞ = ' + Number(a.mean).toFixed(3) + '°（' + (a.n || 1) +
+      ' 次读数的平均值）', 5000);
+    return;
+  }
+  if (kind === 'static') {
+    const a = r.alpha || {};
+    toast('静态读数：α = ' + Number(a.mean).toFixed(3) + '°（' + (a.n || 1) +
+      ' 次，标准差 ' + (a.sd == null ? '—' : Number(a.sd).toFixed(4)) + '°）', 6000);
     return;
   }
   const g = DATA.groups[groupIndex];
@@ -439,6 +504,7 @@ async function importFile(kind, file, groupIndex) {
   if (r.temperature != null && $('temperature_c').value === '') {
     $('temperature_c').value = r.temperature;
   }
+  if (r.acid != null && g.acid_nominal == null) g.acid_nominal = r.acid;
   renderGroups();
   await recalc();
   toast('已导入 ' + r.count + ' 个数据点' +
@@ -486,15 +552,29 @@ function paintDataDir() {
   if (el) el.textContent = DATA_DIR || '—';
 }
 
+/* 「导入到」下拉的值 → 后端 kind。负数分别是标定表 / α∞ / 只查看。
+ * 单独抽出来：文件选择器与「导入」按钮两条路径必须用同一套映射，
+ * 以前各写一遍 `target < 0 ? 'calibration' : 'group'`，加第三档就漏一处。 */
+function targetKind(target) {
+  if (target === -2) return 'alpha_inf';
+  if (target === -3) return 'static';
+  if (target < 0) return 'calibration';
+  return 'group';
+}
+
 /* 「导入到」下拉：标定表 + 每个动力学分组，跟着分组增删刷新 */
 function refreshFileTargets() {
   const sel = $('fileTarget');
   if (!sel) return;
   const keep = sel.value;
   const labels = (STATE && STATE.group_labels) || [];
-  let html = '<option value="-1">旋光度–浓度标定表</option>';
+  // ⚠ 静态读数（只有 steps/angle、没有 time）必须导到标定表 / α∞ / 查看这几档，
+  // 导到动力学分组后端会直接报错（步数被当成时间就是 2026-11-10 那个 bug）。
+  let html = '<option value="-1">旋光度–浓度标定表（c–α 表 或 静态读数）</option>' +
+    '<option value="-2">α∞（反应终了静态读数）</option>' +
+    '<option value="-3">只查看静态读数（不改数据）</option>';
   labels.forEach((lab, i) => {
-    html += '<option value="' + i + '">动力学分组 ' + esc(lab) + '</option>';
+    html += '<option value="' + i + '">动力学分组 ' + esc(lab) + '（动态 xlsx）</option>';
   });
   sel.innerHTML = html;
   if (keep !== '' && Array.prototype.some.call(sel.options,
@@ -530,10 +610,10 @@ async function initFiles() {
       exts: ['.xlsx', '.xlsm', '.csv', '.txt', '.tsv'],
       onPick: async (rel) => {
         const target = Number($('fileTarget').value);
-        const kind = target < 0 ? 'calibration' : 'group';
+        const kind = targetKind(target);
         busy(true, '从数据目录读取文件…');
         try { await importFile(kind, await fileFromDir(rel), target); }
-        catch (e) { toast('导入失败：' + e.message, 5000); }
+        catch (e) { toast('导入失败：' + e.message, 6000); }
         finally { busy(false); }
       },
     });

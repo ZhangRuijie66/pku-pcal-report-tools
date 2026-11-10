@@ -55,10 +55,111 @@ INTRO_IMG = os.path.join(ASSETS, '引言图.jpg')
 
 
 
+# ---------------------------------------------------------------- 数字格式
+
+
+def _cal_claim(analysis):
+    """摘要里关于「旋光度–浓度线性」的那半句，按标定的实际质量生成。
+
+    不能无条件写「验证旋光度与浓度呈良好线性关系」：用户 2026-11-10 这批数据
+    只有一个浓度点的静态读数，根本无从验证线性（SKILL §27：算不了就说清为什么）。
+    """
+    fit = analysis['calibration']['fit']
+    n = (fit or {}).get('n') or 0
+    if not fit:
+        return '测量不同浓度蔗糖溶液的旋光度并尝试建立标定直线，'
+    if n < 3:
+        return ('测量蔗糖溶液的旋光度作为标定参考（本次只有 %d 个浓度点，'
+                '线性关系未能独立验证）；' % n)
+    r2 = fit.get('r2')
+    if r2 is not None and r2 >= 0.999:
+        return '测量不同浓度蔗糖溶液的旋光度，验证旋光度与浓度呈良好线性关系；'
+    return '测量不同浓度蔗糖溶液的旋光度，其线性关系一般；'
+
+
+def _ll_agrees(ll, rl):
+    """lg–lg 线性拟合的 n 与非线性拟合的 n 是否在不确定度内一致。
+
+    非线性拟合的自由度为 0 时没有 sigma，只能用「相差 < 20%」这种粗判据，
+    并且明确说明这是粗判据——不能假装有误差棒。
+
+    """
+
+    try:
+
+        a = float(ll['slope'])
+
+        b = float(rl['n'])
+
+    except (TypeError, ValueError):
+
+        return False
+
+    sa = ll.get('sigma_slope')
+
+    sb = rl.get('sigma_n')
+
+    if sa is not None and sb is not None:
+
+        try:
+
+            return abs(a - b) <= 2.0 * math.hypot(float(sa), float(sb))
+
+        except (TypeError, ValueError):
+
+            pass
+
+    return abs(a - b) <= 0.2 * max(abs(b), 1e-9)
+
+
+
+
+def _rl_n(rl, nd=2):
+    """把非线性拟合的 n 写成「值 ± σ」或「只有值」。
+
+    自由度 0（数据点数 = 参数个数）时 ``sigma_n`` 是 None——此时只给点估计，
+    不能拿 None 去 pm()：那会静默印成「4.000」，读者会以为 n 精确到毫位。
+    """
+    sig = rl.get('sigma_n')
+    try:
+        ok = sig is not None and np.isfinite(float(sig))
+    except (TypeError, ValueError):
+        ok = False
+    return pm(rl['n'], float(sig)) if ok else k(rl['n'], nd)
+
+
 # sci / sci_pm 已统一到 pcal/sigfig.py（canonical = _core/sigfig.py），
 # 不要在本文件里再各写一份：历史上 6 个模块的本地副本对 None/NaN/inf
 # 分化出 6 种行为（有的抛 TypeError/ValueError/OverflowError、有的把
 # 破折号塞进科学记数法印成 (—)×10^{-5}），审计 B P1-3。
+class Num:
+    """表号 / 图号的顺序计数器。
+
+    为什么不用字面量：本报告的表数**随数据组数变化**——组数 ≤3 时 α–t
+    只占一张表，>3 时占两张。写死编号会在组数变化时断号（audit_docx 的
+    caption.gap 在 3 组数据下抓到「表2 → 表4」，因为表3 根本没出现）。
+    """
+
+    def __init__(self):
+        self._t = 0
+        self._f = 0
+
+    def t(self):
+        self._t += 1
+        return self._t
+
+    def f(self):
+        self._f += 1
+        return self._f
+
+    def t_next(self):
+        """下一个表号（不消耗），用于「先说表N、后出表N」的正文引用。"""
+        return self._t + 1
+
+    def f_next(self):
+        return self._f + 1
+
+
 def _row(g, key, sub=None):
     fit = g['fits'].get(key)
     if not fit:
@@ -74,6 +175,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             progress(msg)
 
     rb = ReportBuilder(template_path, cover_tail_blanks=cover_tail_blanks)
+    num = Num()          # 表号/图号计数器：编号必须跟着实际条目数走（§27）
     cal = analysis['calibration']
     groups = analysis['groups']
     order = analysis['order']
@@ -131,8 +233,8 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
                   groups[0] if groups else None)
     abs_segs = [
         {'text': '摘要 ', 'bold': True, 'cjk': '黑体'},
-        '本实验用基于机器学习的数智旋光仪监测蔗糖在盐酸催化下的水解动力学。'
-        '首先测量不同浓度蔗糖溶液的旋光度，验证旋光度与浓度呈良好线性关系；'
+        '本实验用基于机器学习的数智旋光仪监测蔗糖在盐酸催化下的水解动力学。',
+        _cal_claim(analysis),
         '随后在 ', str(len(groups)), ' 个不同盐酸浓度下记录 ',
         ('t', 'α_{t}–t', ITALIC),
         ' 曲线，用积分法（尝试法）判定蔗糖的反应级数，并求各组速率常数与半衰期；'
@@ -160,7 +262,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     if rl:
         abs_segs += [
             '非线性拟合得氢离子反应级数 ', ('t', 'n', ITALIC), ' = ',
-            pm(rl['n'], rl['sigma_n']), '。',
+            _rl_n(rl), '。',
         ]
     if np.isfinite(ainf['measured']) and np.isfinite(ainf['theory']):
         abs_segs += [
@@ -175,13 +277,15 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
     # ================================================================ 1 引言
     rb.heading('1 引言', page_break_before=True)
-    rb.para('该实验的实验目的、实验原理及实验方法如图1所示。')
+    fig_intro = num.f()
+    rb.para('该实验的实验目的、实验原理及实验方法如图%d所示。' % fig_intro)
     if os.path.exists(INTRO_IMG):
-        rb.figure(INTRO_IMG, caption='图1  实验目的、原理及方法', width_cm=11.0)
+        rb.figure(INTRO_IMG, caption='图%d  实验目的、原理及方法' % fig_intro,
+                  width_cm=11.0)
     else:
         for _ in range(INTRO_BLANK_LINES):
             rb.blank()
-        rb.caption('图1  实验目的、原理及方法')
+        rb.caption('图%d  实验目的、原理及方法' % fig_intro)
 
     # ================================================================ 2 实验部分
     rb.heading('2 实验部分^{[1]}', page_break_before=True)
@@ -218,13 +322,13 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     # ================================================================ 3 数据与结果
     rb.heading('3 数据与结果')
     log('写旋光度–浓度关系…')
-    _sec_calibration(rb, analysis, cal, png_cal)
+    _sec_calibration(rb, analysis, cal, png_cal, num)
     log('写级数判定…')
-    _sec_order(rb, analysis, groups, order, png_at, png_order)
+    _sec_order(rb, analysis, groups, order, png_at, png_order, num)
     log('写一级拟合…')
-    _sec_first_order(rb, analysis, groups, png_first)
+    _sec_first_order(rb, analysis, groups, png_first, num)
     log('写氢离子级数…')
-    _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log)
+    _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num)
 
     # ================================================================ 4 结果与讨论
     rb.heading('4 结果与讨论')
@@ -247,30 +351,51 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
 
 # ---------------------------------------------------------------- 3.1 标定
-def _sec_calibration(rb, analysis, cal, png):
+def _sec_calibration(rb, analysis, cal, png, num):
     rb.heading(['3.1 旋光度–浓度关系'], 2)
     rb.heading('3.1.1 原始数据', 3)
-    rb.para([
-        '不同浓度蔗糖溶液的旋光度列于表1。所有旋光度都是平行多次测量的平均值；'
-        '表中同时给出线性拟合时是否采用该点。',
-    ])
+    # 表 1 只示出**平均值与重复次数**（用户 2026-11-10 要求）：
+    # Polariputer 静态测量对同一份溶液连读 N 次，把 N 次原始读数全列出来
+    # 只会淹没线性关系，读者真正需要的是「这个平均值是几次测出来的」。
+    # 小组成员共享的数据每人只报一个最终平均值（n=1），照实写 1。
+    tbl = num.t()          # 编号必须跟着实际条目数走，不能写死（§27）
+    fig = num.f()
+    pts = cal['points']
+    multi = [p for p in pts if (p.get('n') or 1) > 1]
+    if multi:
+        ns = sorted({int(p.get('n') or 1) for p in pts if (p.get('n') or 1) > 1})
+        rb.para([
+            '不同浓度蔗糖溶液的旋光度列于表%d。表中只示出各浓度的' % tbl,
+            '旋光度平均值与平行测量次数（分别为 %s 次），'
+            % '、'.join(str(x) for x in ns),
+            '原始读数由 Polariputer 静态测量连续读出，此处不再逐条罗列；'
+            '表中同时给出线性拟合时是否采用该点。',
+        ])
+    else:
+        rb.para([
+            '不同浓度蔗糖溶液的旋光度列于表%d。所有旋光度都是平行多次测量'
+            '的平均值；表中同时给出线性拟合时是否采用该点。' % tbl,
+        ])
     rows = []
-    for p in cal['points']:
+    for p in pts:
         rows.append([str(p['index'] + 1), k(p['c'], 4), k(p['alpha'], 2),
+                     str(int(p.get('n') or 1)),
                      '否' if p['exclude'] else '是'])
-    rb.caption('表1  不同浓度蔗糖溶液的旋光度')
-    rb.table(['组别', 'c_{suc} / (g·mL^{-1})', 'α_{suc} / (°)', '参与拟合'],
-             rows, widths_cm=[2.0, 4.2, 4.0, 2.6], keep_together=True)
+    rb.caption('表%d  不同浓度蔗糖溶液的旋光度' % tbl)
+    rb.table(['组别', 'c_{suc} / (g·mL^{-1})', 'α_{suc} / (°)', '重复次数',
+              '参与拟合'],
+             rows, widths_cm=[1.6, 3.9, 3.5, 2.2, 2.2], keep_together=True)
     if cal['exclude']:
         rb.para([
             '其中第 %s 组数据在拟合残差中明显偏离趋势，作为离群点剔除；'
-            '是否剔除可结合图2的 95%% 置信带判断。'
-            % '、'.join(str(i + 1) for i in cal['exclude']),
+            '是否剔除可结合图%d的 95%% 置信带判断。' % (
+                '、'.join(str(i + 1) for i in cal['exclude']), fig),
         ])
 
     rb.heading('3.1.2 旋光度–浓度拟合', 3)
-    rb.para('以旋光度对浓度作图并作线性拟合，结果如图2所示，阴影为 95% 置信带。')
-    rb.figure(png, caption='图2  蔗糖的旋光度–浓度关系与 95% 置信带',
+    rb.para('以旋光度对浓度作图并作线性拟合，结果如图%d所示，'
+            '阴影为 95%% 置信带。' % fig)
+    rb.figure(png, caption='图%d  蔗糖的旋光度–浓度关系与 95%% 置信带' % fig,
               width_cm=11.5)
     if not cal['fit']:
         rb.para('可用于拟合的数据点少于 2 个，未能完成标定。')
@@ -280,32 +405,56 @@ def _sec_calibration(rb, analysis, cal, png):
     rb.equation(r'\alpha_{suc}=(%s\pm%s)c_{suc}+(%s\pm%s)'
                 % (k(fit['slope'], 2), k(fit['sigma_slope'], 2),
                    k(fit['intercept'], 3), k(fit['sigma_intercept'], 3)))
+    # 「呈良好的线性关系」必须由点数与 R² 支撑：只有 2 个点时直线必然过两点、
+    # R² 恒为 1，说「线性良好」是空话（SKILL §27「算不了要明确说清为什么」）。
+    n_fit = fit.get('n') or 0
+    r2_fit = fit.get('r2')
+    if n_fit < 3:
+        closing = ('本次可用的标定点只有 %d 个，直线由这 %d 点唯一确定，'
+                   '无法据此验证线性关系；该直线只用于给出 ' % (n_fit, n_fit))
+        closing += 'α_{0} 与 α_{∞} 的大致量级，后续结果的系统偏差需另行评估。'
+        tail = [closing]
+    elif r2_fit is not None and r2_fit >= 0.999:
+        tail = ['由图%d可见，除被剔除的点外，旋光度与浓度在实验范围内呈良好的'
+                '线性关系，因此可以用该直线估算反应体系的初始旋光度。' % fig]
+    else:
+        tail = ['由图%d可见，旋光度与浓度的线性关系一般（' % fig,
+                ('t', 'R^{2}', ITALIC), ' = %s），'
+                '用该直线估算初始/最终旋光度会引入额外偏差。' % k(r2_fit, 5)]
     rb.para([
         '其中 ', ('t', 'c_{suc}', ITALIC), ' 的单位为 g·mL^{-1}，线性相关系数 ',
         ('t', 'R^{2}', ITALIC), ' = %s。' % k(fit['r2'], 5),
-        '由图2可见，除被剔除的点外，旋光度与浓度在实验范围内呈良好的线性关系，'
-        '因此可以用该直线估算反应体系的初始旋光度。',
-    ])
+    ] + tail)
 
 
 # ---------------------------------------------------------------- 3.2 级数
-def _sec_order(rb, analysis, groups, order, png_at, png_order):
+def _sec_order(rb, analysis, groups, order, png_at, png_order, num):
     rb.heading('3.2 蔗糖水解反应级数的判定', 2)
     rb.heading(['3.2.1 ', ('t', 'α_{t}', ITALIC), '–', ('t', 't', ITALIC), ' 曲线'], 3)
+    labels = [g['label'] for g in groups]
+    # α–t 数据按组数分表：≤3 组一张、>3 组两张。表号必须跟着实际张数走
+    # （以前写死 表2/表3，3 组数据时下一张直接叫表4，audit 报 caption.gap）。
+    chunks = [labels[:3]] + ([labels[3:]] if labels[3:] else [])
+    chunks = [c for c in chunks if c]
+    first_tbl = num.t_next()
+    last_tbl = first_tbl + max(0, len(chunks) - 1)
+    tbl_desc = ('表%d' % first_tbl if len(chunks) <= 1
+                else '表%d、表%d' % (first_tbl, last_tbl))
+    fig = num.f()
     rb.para([
         '不同盐酸浓度下测得的 ', ('t', 'α_{t}', ITALIC), '–',
-        ('t', 't', ITALIC), ' 数据见表2、表3，曲线如图3所示。'
-        '表中只列出每组的一部分数据点；完整的 xlsx 原始数据保存在工具的数据文件中。',
+        ('t', 't', ITALIC), ' 数据见%s，曲线如图%d所示。'
+        '表中只列出每组的一部分数据点；完整的 xlsx 原始数据保存在工具的数据文件中。'
+        % (tbl_desc, fig),
     ])
-    labels = [g['label'] for g in groups]
-    _alpha_t_table(rb, groups, labels[:3], 2)
-    if labels[3:]:
-        _alpha_t_table(rb, groups, labels[3:], 3)
-    rb.figure(png_at, caption='图3  不同盐酸浓度下蔗糖水解的 α–t 曲线',
+    for chunk in chunks:
+        _alpha_t_table(rb, groups, chunk, num)
+    rb.figure(png_at, caption='图%d  不同盐酸浓度下蔗糖水解的 α–t 曲线' % fig,
               width_cm=13.5)
-    rb.para('由图3可见，盐酸浓度越高，达到相同反应进度所需的时间越短，'
+    rb.para('由图%d可见，盐酸浓度越高，达到相同反应进度所需的时间越短，'
             '说明该反应对氢离子为正级数；曲线本身不是直线，可以排除零级反应。'
-            '但仅凭 α–t 曲线不能判定蔗糖的级数，下面用积分法（尝试法）作定量判断。')
+            '但仅凭 α–t 曲线不能判定蔗糖的级数，下面用积分法（尝试法）作定量判断。'
+            % fig)
 
     rb.heading(['3.2.2 ', ('t', 'α_{0}', ITALIC), ' 与 ',
                 ('t', 'α_{∞}', ITALIC), ' 的确定'], 3)
@@ -338,6 +487,8 @@ def _sec_order(rb, analysis, groups, order, png_at, png_order):
         '估算得 ', ('t', 'α_{∞}', ITALIC), ' = ', k(ainf['theory'], 2), '°；'
         '实验测得的最终旋光度为 ', k(ainf['measured'], 2), '°，两者相差 ',
         pct(abs(ainf['relative'])), '%。',
+        ('（实验值是 %d 次静态读数的平均值。）' % ainf['n']
+         if (ainf.get('n') or 1) > 1 else ''),
     ])
     rb.para([
         '实验值与理论值接近，说明反应已进行完全，且比旋光度数据可靠。'
@@ -351,17 +502,21 @@ def _sec_order(rb, analysis, groups, order, png_at, png_order):
         rb.para('没有可用于级数判定的数据组。')
         return
     g = next((x for x in groups if x['label'] == order['group']), None)
+    fig = num.f()
+    tbl = num.t()
     rb.para([
         '取 ', order['group'], ' 组数据，分别按零级（', ('t', 'α', ITALIC),
         '–', ('t', 't', ITALIC), '）、一级（', ('t', 'ln(α−α_{∞})', ITALIC),
         '–', ('t', 't', ITALIC), '）和二级（',
         ('t', '1/(α−α_{∞})', ITALIC), '–', ('t', 't', ITALIC),
-        '）三种线性化关系作图，结果如图4所示，各直线的 ', ('t', 'R^{2}', ITALIC),
-        ' 列于表4。',
+        '）三种线性化关系作图，结果如图%d所示，各直线的 ' % fig,
+        ('t', 'R^{2}', ITALIC),
+        ' 列于表%d。' % tbl,
     ])
     if png_order:
-        rb.figure(png_order, caption='图4  %s 组的零级、一级与二级线性化尝试'
-                  % order['group'], width_cm=15.0)
+        rb.figure(png_order,
+                  caption='图%d  %s 组的零级、一级与二级线性化尝试'
+                  % (fig, order['group']), width_cm=15.0)
     rows = []
     names = {'0': '零级', '1': '一级', '2': '二级'}
     expr = {'0': 'α–t', '1': 'ln(α−α∞)–t', '2': '1/(α−α∞)–t'}
@@ -369,27 +524,27 @@ def _sec_order(rb, analysis, groups, order, png_at, png_order):
         concl = '最接近直线' if order['best'] == int(i) else '明显弯曲'
         rows.append([names[i], expr[i], k(order['r2'][i], 5)
                      if np.isfinite(order['r2'][i]) else '—', concl])
-    rb.caption('表4  三种级数线性化关系的比较')
+    rb.caption('表%d  三种级数线性化关系的比较' % tbl)
     rb.table(['级数', '线性化关系', 'R^{2}', '判断'], rows,
              widths_cm=[2.2, 4.6, 3.0, 3.6], keep_together=True)
     best_r2 = k(order['r2'][str(order['best'])], 5)
     if order['is_first']:
         rb.para([
-            '由表4可见，一级线性化的 ', ('t', 'R^{2}', ITALIC),
+            '由表%d可见，一级线性化的 ' % tbl, ('t', 'R^{2}', ITALIC),
             ' 最高（', best_r2, '），而零级和二级的 ',
             ('t', 'R^{2}', ITALIC), ' 明显偏低。'
             '因此蔗糖水解对蔗糖为一级反应。',
         ])
     else:
         rb.para([
-            '由表4可见，三种线性化中 ', names[str(order['best'])],
+            '由表%d可见，三种线性化中 ' % tbl, names[str(order['best'])],
             ' 级的线性最好（', best_r2, '），但 ',
             ('t', 'R^{2}', ITALIC),
             ' 仍未达到 0.99，需要结合实验条件进一步核对。',
         ])
 
 
-def _alpha_t_table(rb, groups, labels, no):
+def _alpha_t_table(rb, groups, labels, num):
     sel = [g for lab in labels for g in groups if g['label'] == lab]
     if not sel:
         return
@@ -408,21 +563,23 @@ def _alpha_t_table(rb, groups, labels, no):
                 row += ['', '']
         rows.append(row)
     rb.caption('表%d  %s 盐酸下动力学测量的旋光度–时间数据'
-               % (no, '、'.join(labels)))
+               % (num.t(), '、'.join(labels)))
     widths = [1.2] + [2.9, 2.9] * len(sel)
     rb.table(headers, rows, widths_cm=widths, keep_together=False)
 
 
 # ---------------------------------------------------------------- 3.3 一级拟合
-def _sec_first_order(rb, analysis, groups, png):
+def _sec_first_order(rb, analysis, groups, png, num):
     rb.heading('3.3 各酸浓度下的一级拟合', 2)
     rb.heading('3.3.1 拟合结果', 3)
+    fig = num.f()
+    tbl = num.t()
     rb.para([
         '已知蔗糖为一级反应后，对每组数据以 ',
         ('t', 'ln(α_{t}−α_{∞})', ITALIC), ' 对 ', ('t', 't', ITALIC),
-        ' 作线性拟合，结果如图5所示。',
+        ' 作线性拟合，结果如图%d所示。' % fig,
     ])
-    rb.figure(png, caption='图5  各盐酸浓度下的一级反应拟合', width_cm=12.5)
+    rb.figure(png, caption='图%d  各盐酸浓度下的一级反应拟合' % fig, width_cm=12.5)
     rows = []
     for i, g in enumerate(groups):
         fit = g['fits'].get('1')
@@ -434,7 +591,7 @@ def _sec_first_order(rb, analysis, groups, png):
             k(fit['r2'], 4) if fit else '—',
             str(g['n']),
         ])
-    rb.caption('表5  各盐酸浓度下的一级反应拟合结果')
+    rb.caption('表%d  各盐酸浓度下的一级反应拟合结果' % tbl)
     rb.table(['编号', 'c(H^{+}) / (mol·L^{-1})', 'k_{1} / (10^{-3} s^{-1})',
               't_{1/2} / s', 'R^{2}', 'n'], rows,
              widths_cm=[1.8, 3.4, 3.9, 3.3, 2.2, 1.2], keep_together=True)
@@ -451,7 +608,8 @@ def _sec_first_order(rb, analysis, groups, png):
         gmain = groups[0]
         rb.para([
             '各组 ', ('t', 'k_{1}', ITALIC), ' 与 ', ('t', 't_{1/2}', ITALIC),
-            ' 已列于表5。可以看到，随着盐酸浓度增大，', ('t', 'k_{1}', ITALIC),
+            ' 已列于表%d。可以看到，随着盐酸浓度增大，' % tbl,
+            ('t', 'k_{1}', ITALIC),
             ' 单调增大、', ('t', 't_{1/2}', ITALIC), ' 单调减小，'
             '符合酸催化反应的一般规律。',
         ])
@@ -460,10 +618,26 @@ def _sec_first_order(rb, analysis, groups, png):
     worst = (min(groups, key=lambda g: g['fits']['1']['r2']
                  if g['fits'].get('1') else 0) if groups else None)
     if worst and worst['fits'].get('1'):
+        r2s = {g['label']: g['fits']['1']['r2'] for g in groups
+               if g['fits'].get('1')}
+        worst_r2 = worst['fits']['1']['r2']
+        others = [v for kk, v in r2s.items() if kk != worst['label']]
+        # 「其余各组都在 0.999 以上」是结论，必须核对再写：只有 1 组时没有
+        # 「其余各组」，其余组也可能都低于 0.999（本人数据里 1M/2M 的确如此）。
+        if not others:
+            spread = ('本次只有这一组数据，无从横向比较。')
+        elif min(others) >= 0.999:
+            spread = '其余各组都在 0.999 以上。'
+        else:
+            low = [kk for kk, v in r2s.items() if kk != worst['label'] and v < 0.999]
+            spread = ('其余各组为 %s，其中 %s 也未达 0.999。'
+                      % ('、'.join('%s %.4f' % (kk, r2s[kk])
+                                  for kk in r2s if kk != worst['label']),
+                         '、'.join(low)))
         rb.para([
-            '由表5可见，%s 组的 ' % worst['label'],
-            ('t', 'R^{2}', ITALIC), ' 最低（%s），其余各组都在 0.999 以上。'
-            % k(worst['fits']['1']['r2'], 4),
+            '由表%d可见，%s 组的 ' % (tbl, worst['label']),
+            ('t', 'R^{2}', ITALIC), ' 最低（%s），%s'
+            % (k(worst_r2, 4), spread),
             '这可能与该组反应较快、初始读数偏低以及反应后期可能偏离一级有关；'
             '若该组某些数据点明显偏离，可在界面中把这些点的序号填入「剔除」框，'
             '重新拟合后再生成报告。',
@@ -477,19 +651,20 @@ def _sec_first_order(rb, analysis, groups, png):
 
 
 # ---------------------------------------------------------------- 3.4 氢离子级数
-def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log):
+def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num):
     rb.heading('3.4 氢离子反应级数', 2)
     rb.heading(['3.4.1 ', ('t', 'k_{1}', ITALIC), '–',
                 ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC),
                 ') 非线性拟合'], 3)
+    tbl = num.t()
     rb.para([
         '实验中所用的盐酸浓度是加入时的标称浓度，混合后又被蔗糖溶液稀释一倍，'
-        '因此参与动力学计算的氢离子浓度应取标称值的一半，列于表6。',
+        '因此参与动力学计算的氢离子浓度应取标称值的一半，列于表%d。' % tbl,
     ])
     rows = [[g['label'], k(g['acid_nominal'], 1) if g['acid_nominal'] is not None else '—',
              k(g['acid_true'], 3) if g['acid_true'] is not None else '—']
             for g in analysis['groups']]
-    rb.caption('表6  各盐酸标称浓度对应的真实氢离子浓度')
+    rb.caption('表%d  各盐酸标称浓度对应的真实氢离子浓度' % tbl)
     rb.table(['编号', 'c_{nom} / (mol·L^{-1})', 'c(H^{+}) / (mol·L^{-1})'],
              rows, widths_cm=[2.4, 4.2, 4.2], keep_together=True)
     if not rl:
@@ -499,27 +674,76 @@ def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log):
         '酸催化反应的表观速率常数与氢离子浓度之间满足：',
     ], keep_next=True)
     rb.equation(r'k_{1}=k_{0}+k_{H}c(H^{+})^{n}')
+    fig = num.f()
     rb.para([
         '其中 ', ('t', 'k_{0}', ITALIC), ' 为无酸存在时的速率常数，',
         ('t', 'n', ITALIC), ' 为氢离子的反应级数。用非线性最小二乘直接拟合，'
-        '结果如图6所示。',
+        '结果如图%d所示。' % fig,
     ])
     if png_rate:
-        rb.figure(png_rate, caption='图6  k₁–c(H⁺) 非线性拟合', width_cm=11.0)
+        rb.figure(png_rate, caption='图%d  k₁–c(H⁺) 非线性拟合' % fig,
+                  width_cm=11.0)
+    # sigma 可能为 None：恰好定解（数据点数 = 参数个数）时残差自由度为 0，
+    # 点估计成立但不确定度无定义。此时**只给值、不给 ±**，并在正文里说清原因——
+    # 绝不能把 None 塞进 k()/pm() 印成 "4.000" 让读者以为精确到毫位（SKILL §27）。
+    has_sig = bool(rl.get('sigma_ok'))
     rb.para('拟合参数为：', keep_next=True)
-    rb.equation(r'k_{1}=(%s\pm%s)\times10^{-4}+(%s\pm%s)\times10^{-4}'
-                r'\,c(H^{+})^{%s\pm%s}'
-                % (k(rl['k0'] * 1e4, 3), k(abs(rl['sigma_k0']) * 1e4, 1),
-                   k(rl['k_h'] * 1e4, 3), k(abs(rl['sigma_k_h']) * 1e4, 1),
-                   k(rl['n'], 2), k(abs(rl['sigma_n']), 2)))
-    rb.para([
-        '即 ', ('t', 'k_{0}', ITALIC), ' = ', sci_pm(rl['k0'], rl['sigma_k0'], -4),
+    if has_sig:
+        rb.equation(r'k_{1}=(%s\pm%s)\times10^{-4}+(%s\pm%s)\times10^{-4}'
+                    r'\,c(H^{+})^{%s\pm%s}'
+                    % (k(rl['k0'] * 1e4, 3), k(abs(rl['sigma_k0']) * 1e4, 1),
+                       k(rl['k_h'] * 1e4, 3), k(abs(rl['sigma_k_h']) * 1e4, 1),
+                       k(rl['n'], 2), k(abs(rl['sigma_n']), 2)))
+    else:
+        rb.equation(r'k_{1}=%s\times10^{-4}+%s\times10^{-4}'
+                    r'\,c(H^{+})^{%s}'
+                    % (k(rl['k0'] * 1e4, 3), k(rl['k_h'] * 1e4, 3),
+                       k(rl['n'], 2)))
+    segs = [
+        '即 ', ('t', 'k_{0}', ITALIC), ' = ',
+        (sci_pm(rl['k0'], rl['sigma_k0'], -4) if has_sig
+         else sci(rl['k0'], 3, -4)),
         ' s^{-1}，', ('t', 'n', ITALIC), ' = ',
-        pm(rl['n'], rl['sigma_n']), '，', ('t', 'R^{2}', ITALIC),
-        ' = %s。' % k(rl['r2'], 4),
-        '氢离子反应级数接近 2 级，说明蔗糖水解速率大致与 ',
-        ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC), ')^{2} 成正比。',
-    ])
+        (_rl_n(rl) if has_sig else k(rl['n'], 2)),
+        '，', ('t', 'R^{2}', ITALIC), ' = %s。' % k(rl['r2'], 4),
+    ]
+    if not has_sig:
+        segs += [
+            '本次只有 %d 组不同盐酸浓度的数据，却要拟合 ' % rl['n_points'],
+            '%d 个参数，残差自由度为 0，' % rl['n_params'],
+            '因此上面给出的是唯一解、但无法估计不确定度；'
+            '要给出误差棒，需要增加盐酸浓度档次（至少 %d 组以上）。'
+            % (rl['n_points'] + 1),
+        ]
+    if rl.get('at_bound'):
+        segs += [
+            '另外 ', ('t', 'n', ITALIC), ' 顶到了拟合上界 4，'
+            '说明真值可能更大，该结果只能作为下限看待。',
+        ]
+    else:
+        # ⚠ 不能无条件写「接近 2 级」：n=4.00、n=1.30 都出现过，
+        # 照抄那句话就是拿数据迁就预设结论。按 n 本身分支。
+        nval = float(rl['n'])
+        if abs(nval - 2.0) <= 0.3:
+            segs += [
+                '氢离子反应级数接近 2 级，说明蔗糖水解速率大致与 ',
+                ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC),
+                ')^{2} 成正比。',
+            ]
+        else:
+            segs += [
+                '本次拟合得到 ', ('t', 'n', ITALIC), ' = %s，' % k(nval, 2),
+                '与文献常引的二级关系（',
+                ('t', 'n', ITALIC), ' ≈ 2）有明显偏离。',
+                '该偏差更可能来自数据本身而非机理变化：本实验各组'
+                '由不同同学在不同时间完成，零点、计时起点与恒温程度'
+                '都不完全一致，而 ', ('t', 'n', ITALIC),
+                ' 由少数几个 ', ('t', 'k_{1}', ITALIC),
+                ' 值决定，对组间系统偏差非常敏感；'
+                '要定准级数，需要同一人、同一批酸在同一恒温槽中'
+                '测更多浓度档次。',
+            ]
+    rb.para(segs)
 
     rb.heading(['3.4.2 ', ('t', 'lg(k_{1}−k_{0})', ITALIC), '–',
                 ('t', 'lg c(H^{+})', ITALIC), ' 线性验证'], 3)
@@ -530,19 +754,24 @@ def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log):
             ('t', 'lg(k_{1}−k_{0}) = lg k_{H} + n lg c(H^{+})', ITALIC),
             '。以 ', ('t', 'lg(k_{1}−k_{0})', ITALIC), ' 对 ',
             ('t', 'lg c(H^{+})', ITALIC), ' 作图，直线斜率即为 ',
-            ('t', 'n', ITALIC), '，结果如图7所示。',
+            ('t', 'n', ITALIC), '，结果如图%d所示。' % num.f_next(),
         ])
         if png_log:
-            rb.figure(png_log, caption='图7  lg(k₁−k₀)–lg c(H⁺) 线性拟合',
+            rb.figure(png_log,
+                      caption='图%d  lg(k₁−k₀)–lg c(H⁺) 线性拟合' % num.f(),
                       width_cm=10.5)
         rb.para([
             '拟合得 ', ('t', 'n', ITALIC), ' = ',
             pm(ll['slope'], ll['sigma_slope']), '，', ('t', 'R^{2}', ITALIC),
             ' = %s。' % k(ll['r2'], 4),
             '这一结果与非线性拟合的 ', ('t', 'n', ITALIC), ' = ',
-            pm(rl['n'], rl['sigma_n']),
-            ' 在不确定度范围内一致，从另一个角度佐证了氢离子反应级数约为 2 级。',
-        ])
+            _rl_n(rl), ' 相比：',
+        ] + ([
+            '两者的差在各自不确定度范围内，可以互相印证。',
+        ] if _ll_agrees(ll, rl) else [
+            '两者相差较大，说明仅靠这 %d 组数据还不足以把 n 定准，'
+            '该值只能作为量级参考。' % len(analysis['groups']),
+        ]))
 
 
 # ---------------------------------------------------------------- 4 讨论
@@ -558,12 +787,27 @@ def _sec_results(rb, analysis):
             analysis['temperature'], len(groups)),
         ('t', 'α_{t}', ITALIC), '–', ('t', 't', ITALIC), ' 曲线。',
     ]
-    if analysis['calibration']['fit']:
-        segs += [
-            '旋光度与蔗糖浓度的标定直线为 ',
-            ('t', 'R^{2}', ITALIC), ' = %s，线性良好；'
-            % k(analysis['calibration']['fit']['r2'], 5),
-        ]
+    cal_fit = analysis['calibration']['fit']
+    if cal_fit:
+        # 「线性良好」是结论、不是装饰：按 R² 和参与拟合的点数如实说。
+        # 只有 2 个点时直线必然过两点，R²≈1 但毫无说服力，不能说「线性良好」。
+        n_cal = cal_fit.get('n') or 0
+        r2_cal = cal_fit.get('r2')
+        if n_cal < 3:
+            segs += [
+                '旋光度–浓度只测得 %d 个浓度点，不足以验证线性关系，'
+                '标定直线仅作参考；' % n_cal,
+            ]
+        elif r2_cal is not None and r2_cal >= 0.999:
+            segs += [
+                '旋光度与蔗糖浓度的标定直线 ', ('t', 'R^{2}', ITALIC),
+                ' = %s，线性良好；' % k(r2_cal, 5),
+            ]
+        else:
+            segs += [
+                '旋光度与蔗糖浓度的标定直线 ', ('t', 'R^{2}', ITALIC),
+                ' = %s，线性一般；' % k(r2_cal, 5),
+            ]
     if order:
         segs += [
             '以 %s 组作积分法判定，蔗糖为 %d 级反应；' %
@@ -574,19 +818,21 @@ def _sec_results(rb, analysis):
             '各组 ', ('t', 'k_{1}', ITALIC), ' 随 ',
             ('t', 'c', ITALIC), '(', ('t', 'H^{+}', ITALIC),
             ') 增大而增大，非线性拟合得 ', ('t', 'n', ITALIC), ' = ',
-            pm(rl['n'], rl['sigma_n']), '。',
+            _rl_n(rl), '。',
         ]
     if ll:
         segs += [
             'lg–lg 线性拟合得 ', ('t', 'n', ITALIC), ' = ',
-            pm(ll['slope'], ll['sigma_slope']), '，两者一致。',
+            pm(ll['slope'], ll['sigma_slope']),
+            ('，两者一致。' if _ll_agrees(ll, rl)
+             else '，与非线性结果有差距，级数只能算初步结论。'),
         ]
     if np.isfinite(ainf['measured']) and np.isfinite(ainf['theory']):
         segs += [
             '实验测得的 ', ('t', 'α_{∞}', ITALIC), ' = ',
             k(ainf['measured'], 2), '°，理论值 ',
-            k(ainf['theory'], 2), '°，相差 %s%%，说明反应进行完全，'
-            '旋光度与浓度的线性关系可用于动力学分析。' % pct(abs(ainf['relative'])),
+            k(ainf['theory'], 2), '°，相差 %s%%，说明反应已进行完全。'
+            % pct(abs(ainf['relative'])),
         ]
     rb.para(segs)
     worst = (min(groups, key=lambda g: g['fits']['1']['r2']
@@ -657,22 +903,35 @@ def _sec_conclusion(rb, analysis):
     ainf = analysis['alpha_inf']
     order = analysis['order']
     rb.heading('4.3 实验结论', 2)
-    segs = [
-        '本实验用数智旋光仪监测了蔗糖在盐酸催化下的水解过程。'
-        '旋光度与蔗糖浓度呈良好的线性关系；',
-    ]
+    # 开头这句「旋光度与浓度呈良好的线性关系」必须按标定实际质量分支：
+    # 本次只有 1 个浓度点，凭什么都验证不了线性（§27 不允许把「没测」写成「测得好」）。
+    cal_fit = analysis['calibration']['fit']
+    n_cal = (cal_fit or {}).get('n') or 0
+    if cal_fit and n_cal >= 3 and (cal_fit.get('r2') or 0) >= 0.999:
+        head = ('本实验用数智旋光仪监测了蔗糖在盐酸催化下的水解过程。'
+                '旋光度与蔗糖浓度呈良好的线性关系；')
+    elif cal_fit and n_cal >= 3:
+        head = ('本实验用数智旋光仪监测了蔗糖在盐酸催化下的水解过程。'
+                '旋光度与蔗糖浓度的线性关系一般；')
+    else:
+        head = ('本实验用数智旋光仪监测了蔗糖在盐酸催化下的水解过程。'
+                '本次标定只测得 %d 个浓度点，尚不足以独立验证旋光度与浓度的'
+                '线性关系；' % n_cal)
+    segs = [head]
     if order:
         segs += ['用积分法判定蔗糖为 %d 级反应；' % order['best']]
     if rl:
         segs += [
             '由 ', ('t', 'k_{1}', ITALIC), '–', ('t', 'c', ITALIC),
             '(', ('t', 'H^{+}', ITALIC), ') 非线性拟合得氢离子反应级数 ',
-            ('t', 'n', ITALIC), ' = ', pm(rl['n'], rl['sigma_n']), '，',
+            ('t', 'n', ITALIC), ' = ', _rl_n(rl), '，',
         ]
     if ll:
         segs += [
             'lg–lg 线性拟合得 ', ('t', 'n', ITALIC), ' = ',
-            pm(ll['slope'], ll['sigma_slope']), '，两者接近 2 级；',
+            pm(ll['slope'], ll['sigma_slope']),
+            ('，两者一致；' if _ll_agrees(ll, rl)
+             else '，与非线性结果有差距；'),
         ]
     order_label = order['group'] if order else None
     main_g = next((g for g in groups if g['label'] == order_label),

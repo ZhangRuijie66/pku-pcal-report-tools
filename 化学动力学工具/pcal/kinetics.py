@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings as warnings_
 
 import numpy as np
 from scipy.optimize import curve_fit
@@ -116,11 +117,314 @@ def parse_numeric_rows(text):
     return rows
 
 
+# ---------------------------------------------------------------- 读数文件识别
+#
+# Polariputer 导出两种 xlsx，**列结构完全不同**，必须按列名区分：
+#
+#   动态测量：index, time,  steps, angle, …, 实验参数 → 时间序列 [[t, α], …]
+#   静态测量：index, steps, angle             → 同一份样品的重复读数
+#
+# 2026-11-10 用户报过一个静默错数：把静态文件（无穷.xlsx 等）导入标定表时，
+# 旧的 `parse_calibration_xlsx` 走「找不到 c/alpha 表头就取前两列数字」的兜底，
+# 于是 **index 被当成浓度 c、steps 被当成角度 α**（steps=−3292 印成 α=−3292°）；
+# `parse_polariputer_xlsx` 也把静态文件按 `[r[1], r[-1]]` 解析成 [steps, angle]。
+# 两份报告都"正常"生成，数字全错而不报错——正是本项目最难发现的那类缺陷。
+#
+# 现在的口径：**先认列名，再决定语义**；认不出来就明确报错，绝不按列序号猜。
+
+#: 动态测量（有时间列）
+KIND_DYNAMIC = 'dynamic'
+#: 静态测量（同一份样品重复读 angle，没有时间列）
+KIND_STATIC = 'static'
+#: c–α 标定表（同时有浓度列与角度列）
+KIND_CALIB = 'calibration'
+#: 认不出列名（或缺列）
+KIND_UNKNOWN = 'unknown'
+
+KIND_LABEL = {KIND_DYNAMIC: '动态测量（α–t 时间序列）',
+              KIND_STATIC: '静态测量（重复读数）',
+              KIND_CALIB: '旋光度–浓度标定表',
+              KIND_UNKNOWN: '无法识别的读数文件'}
+
+#: 表头词元 → 字段。一律先 _norm_head() 归一化再比（去单位、去空格、小写）。
+_HEAD_TOKENS = {
+    'time': ('time', 't', '时间', 'time/s', 't/s', '秒', 'elapsed'),
+    'angle': ('angle', 'alpha', 'α', '旋光度', '旋光角', 'angle/°',
+              'alpha/°', '角度'),
+    'steps': ('steps', 'step', '步数', '步进', '步进数', '步进角数'),
+    'index': ('index', '序号', '#', 'no', 'no.', '编号', 'i'),
+    'c': ('c', 'c_suc', 'csuc', '浓度', '蔗糖浓度', 'c/g·ml-1'),
+}
+
+
+def _norm_head(value):
+    """表头单元格归一化：``α/(°)`` → ``α``、``Time / s`` → ``time``。
+
+    去掉括号里的单位（不同软件版本写法不一致），去空格，转小写。
+    """
+    s = str(value if value is not None else '').strip().lower()
+    s = s.replace('（', '(').replace('）', ')')
+    s = re.sub(r'\([^)]*\)', '', s)          # 去掉单位括号
+    s = s.replace(' ', '').replace('\u00a0', '')
+    # ``c / (g·mL⁻¹)`` 去掉括号后残留 ``c/``，要再剥一层尾部分隔符才对得上词元表
+    return s.rstrip(':：/-·')
+
+
+def _header_fields(row):
+    """一行表头 → ``{字段: 列号}``；认不出任何字段时返回 ``{}``。"""
+    out = {}
+    for j, cell in enumerate(row or ()):
+        key = _norm_head(cell)
+        if not key:
+            continue
+        for field, tokens in _HEAD_TOKENS.items():
+            if field in out:
+                continue
+            if key in tokens:
+                out[field] = j
+                break
+    return out
+
+
+def _read_xlsx_rows(source):
+    """打开 xlsx（路径 / 字节流 / 文件对象）并返回第一个 sheet 的全部行。"""
+    import io
+
+    import openpyxl
+
+    if isinstance(source, (bytes, bytearray)):
+        source = io.BytesIO(source)
+    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
+    try:
+        rows = list(wb.worksheets[0].iter_rows(values_only=True))
+    finally:
+        wb.close()
+    return rows
+
+
+def _stats(values):
+    """重复读数的统计量。n=1 时 sd/sem 为 0（不编造离散度）。"""
+    vals = [float(v) for v in (values or []) if v is not None]
+    n = len(vals)
+    if not n:
+        return {'mean': None, 'sd': None, 'sem': None, 'n': 0, 'values': []}
+    mean = sum(vals) / n
+    if n > 1:
+        var = sum((v - mean) ** 2 for v in vals) / (n - 1)
+        sd = math.sqrt(var)
+        sem = sd / math.sqrt(n)
+    else:
+        sd = sem = 0.0
+    return {'mean': mean, 'sd': sd, 'sem': sem, 'n': n, 'values': vals}
+
+
+#: 文件名里出现这些词说明它**不是**一份带浓度的样品文件，别猜浓度
+_NO_C_WORDS = ('无穷', 'alpha∞', '完全反应', '去离子水', '水', '零点',
+               '空白', 'water', 'blank', 'inf')
+
+#: 名字里的单位片段——先剥掉再数数字，否则 ``蔗糖0.05g L-1`` 会被
+#: 当成「0.05 和 1 两个数字」而拒绝猜浓度（那正是最典型的样品文件名）。
+#: 长的写在前面，``g·ml-1`` 必须先于 ``ml`` 被剥掉。
+_UNIT_TOKENS = (
+    'g·ml⁻¹', 'g·ml-1', 'g ml-1', 'g/ml', 'g·l⁻¹', 'g·l-1', 'g l-1',
+    'gl-1', 'g/l', 'mol·dm⁻³', 'mol·dm-3', 'mol dm-3', 'mol/l', 'mol·l⁻¹',
+    'mol·l-1', 'mol l-1',
+    'g', 'ml', 'l⁻¹', 'l-1', 'm',
+)
+
+
+def concentration_hint(stem):
+    """从文件名猜浓度（g·mL⁻¹）——**只在唯一且明确时**返回，否则 None。
+
+    静态测量文件里没有浓度列，浓度只写在文件名上（``0.0412.xlsx``、
+    ``蔗糖0.05g L-1.xlsx``）。猜错会静默改掉整条标定直线，所以判据很严格：
+
+      · 先剥掉单位片段（``g L-1``、``g·mL⁻¹``、``mL`` …），再数剩下几个数字；
+      · 文件名里必须**恰好只有一个**数字（``0.15-2``、``1.4927-50ml`` 有两个 → 不猜）；
+      · 该数字落在 (0, 0.5] g·mL⁻¹ 的合理区间；
+      · 文件名不含「无穷 / 完全反应 / 去离子水 / 零点」这类**非样品**词。
+    """
+    text = str(stem or '')
+    low = text.lower()
+    if any(w.lower() in low for w in _NO_C_WORDS):
+        return None
+    for tok in _UNIT_TOKENS:
+        low = low.replace(tok, ' ')
+    nums = re.findall(r'\d+(?:\.\d+)?', low)
+    if len(nums) != 1:
+        return None
+    try:
+        val = float(nums[0])
+    except ValueError:
+        return None
+    if not (0.0 < val <= 0.5):
+        return None
+    return val
+
+
+def _meta_from_rows(rows):
+    """从「实验参数」侧栏取温度/浓度等元信息（与列位置无关）。"""
+    meta = {'temperature': None, 'sucrose': None, 'acid': None,
+            'zero': None, 'step_angle': None, 'n_points': None}
+    names = {'temperature': ('实验温度', '温度'), 'sucrose': ('蔗糖浓度',),
+             'acid': ('盐酸浓度', '酸浓度'), 'zero': ('初始旋光角',),
+             'step_angle': ('步进角',), 'n_points': ('采样点数',)}
+    for row in rows:
+        for j, cell in enumerate(row or ()):
+            if not isinstance(cell, str):
+                continue
+            key = cell.strip()
+            for field, wanted in names.items():
+                if meta[field] is not None:
+                    continue
+                if not any(w == key or w in key for w in wanted):
+                    continue
+                for x in row[j + 1:]:
+                    val = _to_float(x)
+                    if val is not None:
+                        meta[field] = val
+                        break
+    return meta
+
+
+def parse_measurement_xlsx(source, stem=None):
+    """xlsx 统一解析入口：按**列名**判定是动态、静态还是标定表。
+
+    返回 dict：
+
+    ============ ==========================================================
+    ``kind``     KIND_DYNAMIC / KIND_STATIC / KIND_CALIB / KIND_UNKNOWN
+    ``points``   动态测量的 [[t, α], …]（其它类型为空）
+    ``alpha``    静态测量的 ``{mean, sd, sem, n, values}``（其它类型为 None）
+    ``rows``     标定表的 ``[{c, alpha, n}]``（其它类型为空）
+    ``steps``    静态测量的步数统计（诊断用，不参与计算）
+    ``c_hint``   文件名里唯一明确的浓度候选，否则 None
+    ``stem``     文件名（不含扩展名），报错/界面提示用
+    ``warnings`` 解析过程中的可读提示
+    ============ ==========================================================
+
+    ⚠ **没有任何按列序号的兜底**：认不出含 angle 的表头就返回 KIND_UNKNOWN。
+    宁可让用户看到「这个文件的表头认不出来」，也不要按 ``r[1], r[-1]``
+    猜成 [steps, angle] 把步数当角度。
+    """
+    rows = _read_xlsx_rows(source)
+    out = {'kind': KIND_UNKNOWN, 'points': [], 'alpha': None, 'rows': [],
+           'steps': None, 'c_hint': None, 'stem': stem or '',
+           'warnings': []}
+    out.update(_meta_from_rows(rows))
+    if stem:
+        out['c_hint'] = concentration_hint(stem)
+    if not rows:
+        out['warnings'].append('文件里没有任何行')
+        return out
+
+    hi, fields = None, {}
+    for i, row in enumerate(rows[:12]):
+        f = _header_fields(row)
+        if 'angle' in f or 'time' in f:
+            hi, fields = i, f
+            break
+    if hi is None:
+        out['warnings'].append(
+            '找不到含 time / angle 的表头行，无法判断这是动态测量还是静态读数')
+        return out
+
+    body = rows[hi + 1:]
+
+    # ---- 1) 有时间列 → 动态测量
+    if 'time' in fields and 'angle' in fields:
+        ti, ai = fields['time'], fields['angle']
+        bad = 0
+        for row in body:
+            if len(row) <= max(ti, ai):
+                bad += 1
+                continue
+            t, a = _to_float(row[ti]), _to_float(row[ai])
+            if t is None or a is None:
+                bad += 1
+                continue
+            out['points'].append([t, a])
+        if out['points']:
+            out['kind'] = KIND_DYNAMIC
+            if bad:
+                out['warnings'].append('%d 行的 time/angle 不是数字，已跳过' % bad)
+        else:
+            out['warnings'].append('表头含 time / angle，但没有解析出任何数据点')
+        return out
+
+    # ---- 2) 同时有浓度列与角度列 → 标定表
+    if 'c' in fields and 'angle' in fields:
+        ci, ai = fields['c'], fields['angle']
+        for row in body:
+            c = _to_float(row[ci]) if len(row) > ci else None
+            a = _to_float(row[ai]) if len(row) > ai else None
+            if c is not None and a is not None:
+                out['rows'].append({'c': c, 'alpha': a, 'n': 1, 'sd': None})
+        out['kind'] = KIND_CALIB if out['rows'] else KIND_UNKNOWN
+        if not out['rows']:
+            out['warnings'].append('表头含 c / angle，但没有解析出任何成对数据')
+        return out
+
+    # ---- 3) 只有角度列（可能带 steps / index）→ 静态重复读数
+    if 'angle' in fields:
+        ai = fields['angle']
+        vals = []
+        for row in body:
+            if len(row) <= ai:
+                continue
+            a = _to_float(row[ai])
+            if a is not None:
+                vals.append(a)
+        if not vals:
+            out['warnings'].append('表头含 angle，但角度列没有数字')
+            return out
+        out['kind'] = KIND_STATIC
+        out['alpha'] = _stats(vals)
+        if 'steps' in fields:
+            si = fields['steps']
+            steps = [v for v in ((_to_float(row[si]) if len(row) > si else None)
+                                 for row in body) if v is not None]
+            if steps:
+                out['steps'] = _stats(steps)
+        return out
+
+    out['warnings'].append('表头只有 time 列、没有 angle 列，无法读取旋光度')
+    return out
+
+
+def parse_static_text(text):
+    """纯文本的静态重复读数：每行一个角度（或 ``序号 角度``）。
+
+    返回与 ``parse_measurement_xlsx`` 的 ``alpha`` 同结构的 dict；
+    没有任何数字时返回 ``None``。
+    """
+    vals = []
+    for line in str(text or '').replace('\r', '').split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = [p for p in re.split(r'[,;\t ]+', line) if p]
+        nums = [_to_float(p) for p in parts]
+        nums = [v for v in nums if v is not None]
+        if not nums:
+            continue
+        # 两列且第一列是 1,2,3… 的序号 → 取第二列；否则取最后一个数
+        if len(nums) >= 2 and float(nums[0]).is_integer() and 0 < nums[0] < 1e4:
+            vals.append(nums[-1])
+        else:
+            vals.append(nums[-1])
+    return _stats(vals) if vals else None
+
+
 def parse_points(text):
     """把文本解析成 [[t, α], ...]。
 
     支持：两列 t/α；三列 index,t,α；四列 index,t,steps,angle；
     也支持带表头的文件（表头含 time / angle / alpha）。
+
+    ⚠ 只有**明确含 time 列**的表头才按列名取；没有 time 列时按列数推断，
+    但会先检查表头里有没有 steps——有 steps 而没有 time 说明这是**静态读数**，
+    按 ``r[1], r[-1]`` 取会把步数当成时间，直接返回空让上层报错。
     """
     lines = [ln.strip() for ln in str(text or '').replace('\r', '').split('\n')
              if ln.strip() and not ln.strip().startswith('#')]
@@ -128,11 +432,17 @@ def parse_points(text):
         return []
     header = [p.lower() for p in re.split(r'[,;\t ]+', lines[0]) if p]
     ti = ai = None
+    has_steps = False
     for i, h in enumerate(header):
-        if h in ('time', 't', '时间', 'time/s'):
+        if h in _HEAD_TOKENS['time']:
             ti = i
-        if h in ('angle', 'alpha', 'α', '旋光度', 'angle/°'):
+        if h in _HEAD_TOKENS['angle']:
             ai = i
+        if h in _HEAD_TOKENS['steps']:
+            has_steps = True
+    if ai is not None and ti is None and has_steps:
+        # 静态读数（index, steps, angle）：不能当时间序列
+        return []
     data_lines = lines[1:] if (ti is not None or ai is not None) else lines
     rows = parse_numeric_rows('\n'.join(data_lines))
     out = []
@@ -150,109 +460,37 @@ def parse_points(text):
 
 def parse_calibration(text):
     rows = parse_numeric_rows(text)
-    return [{'c': r[0], 'alpha': r[1]} for r in rows if len(r) >= 2]
+    return [{'c': r[0], 'alpha': r[1], 'n': 1, 'sd': None}
+            for r in rows if len(r) >= 2]
 
 
 def parse_calibration_xlsx(source):
-    """读取静态测量 xlsx：找 c/浓度 与 alpha/旋光 列；找不到就取前两列数字。"""
-    import io
+    """读 c–α 标定表 xlsx；**只认 c/浓度 + angle 表头**。
 
-    import openpyxl
-
-    if isinstance(source, (bytes, bytearray)):
-        source = io.BytesIO(source)
-    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
-    ws = wb.worksheets[0]
-    rows = list(ws.iter_rows(values_only=True))
-    wb.close()
-    if not rows:
-        return []
-    hi = ci = ai = None
-    for i, r in enumerate(rows[:10]):
-        vals = [str(v).strip().lower() if v is not None else '' for v in r]
-        for j, h in enumerate(vals):
-            if h in ('c', 'c_suc', '浓度', 'c/(g/ml)', 'c / (g·ml-1)'):
-                ci = j
-            if h in ('alpha', 'α', '旋光', '旋光度', 'angle'):
-                ai = j
-        if ci is not None and ai is not None:
-            hi = i
-            break
-    out = []
-    if hi is not None:
-        for r in rows[hi + 1:]:
-            c = _to_float(r[ci]) if len(r) > ci else None
-            a = _to_float(r[ai]) if len(r) > ai else None
-            if c is not None and a is not None:
-                out.append({'c': c, 'alpha': a})
-        return out
-    for r in rows:
-        vals = [_to_float(v) for v in r]
-        nums = [v for v in vals if v is not None]
-        if len(nums) >= 2:
-            out.append({'c': nums[0], 'alpha': nums[1]})
-    return out
+    认不出来时返回 ``[]``（上层会明确报错），不再按「前两列数字」兜底——
+    那个兜底把静态文件的 index 当浓度、steps 当角度，是 2026-11-10 那个
+    静默错数的直接原因。静态读数请走 :func:`parse_measurement_xlsx`。
+    """
+    res = parse_measurement_xlsx(source)
+    return res['rows'] if res['kind'] == KIND_CALIB else []
 
 
 def parse_polariputer_xlsx(source):
     """读取 Polariputer 动态测量 xlsx。
 
     source 可以是路径或文件对象/字节流。返回
-    {'points': [[t, α], ...], 'temperature': float|None, 'sucrose': float|None}。
+    ``{'points': [[t, α], ...], 'temperature': float|None,
+       'sucrose': float|None, 'kind': ..., 'alpha': ..., 'warnings': [...]}``。
+
+    ⚠ 静态测量文件（只有 steps/angle，没有 time）**不再**被当成时间序列：
+    此时 ``points`` 为空、``kind == KIND_STATIC``、``alpha`` 带重复读数统计，
+    调用方必须按类型分流（见 server._import）。
     """
-    import io
-
-    import openpyxl
-
-    if isinstance(source, (bytes, bytearray)):
-        source = io.BytesIO(source)
-    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
-    ws = wb.worksheets[0]
-    rows = list(ws.iter_rows(values_only=True))
-    wb.close()
-    if not rows:
-        return {'points': [], 'temperature': None, 'sucrose': None}
-
-    header = None
-    for i, r in enumerate(rows[:10]):
-        vals = [str(v).strip().lower() if v is not None else '' for v in r]
-        if 'time' in vals and 'angle' in vals:
-            header = (i, vals.index('time'), vals.index('angle'))
-            break
-    if header is None:
-        # 退化成普通的两列/多列解析
-        flat = '\n'.join(','.join('' if v is None else str(v) for v in r)
-                         for r in rows)
-        return {'points': parse_points(flat), 'temperature': None, 'sucrose': None}
-
-    hi, ti, ai = header
-    points = []
-    for r in rows[hi + 1:]:
-        if len(r) <= max(ti, ai):
-            continue
-        t, a = _to_float(r[ti]), _to_float(r[ai])
-        if t is not None and a is not None:
-            points.append([t, a])
-
-    temperature = sucrose = None
-    for r in rows:
-        for j, v in enumerate(r):
-            if not isinstance(v, str):
-                continue
-            s = v.strip()
-            if '实验温度' in s or '温度' == s:
-                for x in r[j + 1:]:
-                    val = _to_float(x)
-                    if val is not None:
-                        temperature = val
-                        break
-            if '蔗糖浓度' in s:
-                for x in r[j + 1:]:
-                    val = _to_float(x)
-                    if val is not None:
-                        sucrose = val
-                        break
-    return {'points': points, 'temperature': temperature, 'sucrose': sucrose}
+    res = parse_measurement_xlsx(source)
+    return {'points': res['points'], 'temperature': res['temperature'],
+            'sucrose': res['sucrose'], 'acid': res['acid'],
+            'kind': res['kind'], 'alpha': res['alpha'], 'rows': res['rows'],
+            'c_hint': res['c_hint'], 'warnings': res['warnings']}
 
 
 # ---------------------------------------------------------------- 拟合
@@ -359,22 +597,50 @@ def _rate_law(cH, k):
 
     kmin, kmax = float(k.min()), float(k.max())
     p0 = [max(kmin * 0.1, 1e-7), max((kmax - kmin) / (cH.max() ** 2), 1e-8), 2.0]
-    try:
-        popt, pcov = curve_fit(model, cH, k, p0=p0,
-                               bounds=([0.0, 0.0, 0.05], [np.inf, np.inf, 4.0]),
-                               maxfev=40000)
-        perr = np.sqrt(np.diag(pcov))
-    except Exception:                                     # noqa: BLE001
-        return None
+    with warnings_.catch_warnings():
+        # 3 组数据拟 3 个参数时协方差必然是奇异的（残差自由度为 0），
+        # scipy 会刷 Covariance could not be estimated —— 那不是错误，见下。
+        warnings_.simplefilter('ignore')
+        try:
+            popt, pcov = curve_fit(model, cH, k, p0=p0,
+                                   bounds=([0.0, 0.0, 0.05], [np.inf, np.inf, 4.0]),
+                                   maxfev=40000)
+            perr = np.sqrt(np.diag(pcov))
+        except Exception:                                 # noqa: BLE001
+            return None
     yhat = model(cH, *popt)
     ss_res = float(np.sum((k - yhat) ** 2))
     ss_tot = float(np.sum((k - k.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot else float('nan')
+
+    # ⚠ 自由度 = 数据点数 − 参数个数。**恰好定解**（3 点 3 参数）时
+    # 点估计仍然成立（n 是唯一解），但残差自由度 0 → 不确定度无定义，
+    # scipy 给的是 inf 或 nan。不能把这个 inf 一路传进报告：
+    # `pm(4.0, inf)` 会印成 "4.000"，静默丢掉不确定度，读者以为 n 精确到毫位。
+    # 按 SKILL §27「点估计与不确定度分开」：n 照给，sigma 明确置 None，
+    # 并让上层告警说清「几组数据拟几个参数，无自由度」。
+    dof = int(cH.size) - 3
+    sigma_ok = bool(dof > 0) and all(np.isfinite(perr))
+    if sigma_ok:
+        sig = dict(sigma_k0=float(perr[0]), sigma_k_h=float(perr[1]),
+                   sigma_n=float(perr[2]))
+    else:
+        sig = dict(sigma_k0=None, sigma_k_h=None, sigma_n=None)
+    sigma_note = ('' if sigma_ok else
+                  '只有 %d 组数据却要拟合 3 个参数（残差自由度 0），'
+                  '参数的不确定度无法估计；'
+                  % cH.size)
+    # n 顶到上界 4.0 说明真解在边界外，n 只能当「≥4」读，不能当等号
+    at_bound = bool(abs(float(popt[2]) - 4.0) < 1e-6)
+    if at_bound:
+        sigma_note += ('氢离子级数 n 顶到拟合上界 4，真值可能更大，'
+                       '该值只能作下限看待（增加盐酸浓度档次才能定准）；')
     return dict(cH=list(map(float, cH)), k=list(map(float, k)),
-                k0=float(popt[0]), sigma_k0=float(perr[0]),
-                k_h=float(popt[1]), sigma_k_h=float(perr[1]),
-                n=float(popt[2]), sigma_n=float(perr[2]), r2=float(r2),
-                model='k1 = k0 + k_H c(H+)^n')
+                k0=float(popt[0]), k_h=float(popt[1]),
+                n=float(popt[2]), r2=float(r2),
+                dof=dof, n_points=int(cH.size), n_params=3,
+                sigma_ok=sigma_ok, at_bound=at_bound, note=sigma_note,
+                model='k1 = k0 + k_H c(H+)^n', **sig)
 
 
 def _loglog(cH, k, k0):
@@ -407,16 +673,44 @@ def analyze(data, cfg=None):
         alpha_inf_measured = float(alpha_inf_measured)
     except (TypeError, ValueError):
         alpha_inf_measured = float('nan')
+    # α∞ 也是平行重复读数得来的（Polariputer 静态测量连读 N 次），
+    # 与标定点同样只报「平均值 + 重复次数」。
+    try:
+        alpha_inf_n = max(1, int(data.get('alpha_inf_n') or 1))
+    except (TypeError, ValueError):
+        alpha_inf_n = 1
+    try:
+        alpha_inf_sd = float(data.get('alpha_inf_sd'))
+        if not np.isfinite(alpha_inf_sd) or alpha_inf_sd < 0:
+            alpha_inf_sd = float('nan')
+    except (TypeError, ValueError):
+        alpha_inf_sd = float('nan')
 
     # ---- 1) α–c 标定
+    #
+    # 标定点带可选的 ``n``（该浓度下平行测量了几次）与 ``sd``（读数的标准差）。
+    # 数据来源不同，n 的含义也不同：
+    #   · 小组成员共享数据 → 每人只给一个最终平均值，n=1；
+    #   · 自己的静态重复读数（Polariputer 静态测量） → n 是仪器连续读出几次。
+    # 报告表 1 要把 n>1 的点标出来（用户 2026-11-10 要求「只示出平均值和重复次数」），
+    # 所以 n/sd 必须一路传到 report.py，不能在 analyze 里丢掉。
     cal_pts = []
     for i, p in enumerate(data.get('calibration') or []):
         try:
-            cal_pts.append((i, float(p['c']), float(p['alpha'])))
+            c, a = float(p['c']), float(p['alpha'])
         except (KeyError, TypeError, ValueError):
             continue
+        try:
+            n = int(p.get('n') or 1)
+        except (TypeError, ValueError):
+            n = 1
+        try:
+            sd = float(p['sd']) if p.get('sd') not in (None, '') else None
+        except (TypeError, ValueError):
+            sd = None
+        cal_pts.append((i, c, a, max(1, n), sd))
     cal_ex = set(int(i) for i in (data.get('calibration_exclude') or []))
-    use = [(c, a) for i, c, a in cal_pts if i not in cal_ex]
+    use = [(p[1], p[2]) for p in cal_pts if p[0] not in cal_ex]
     cal_fit = _line_fit([p[0] for p in use], [p[1] for p in use])
     alpha0 = (cal_fit['slope'] * c0 + cal_fit['intercept']
               if cal_fit and np.isfinite(c0) else float('nan'))
@@ -460,7 +754,24 @@ def analyze(data, cfg=None):
 
     # ---- 4) 级数判定
     #
-    # ⚠ 不能拿 R² 横向比：三种线性化的因变量是 α、ln(α−α∞)、1/(α−α∞)，
+    # ⚠ 报告里「k₁ 随 c(H⁺) 单调增大」这类论断的前提是**按氢离子浓度排序**。
+    # 以前的组顺序完全按数据录入顺序（用户实际是 3M、1M、2M 三次测量），
+    # 于是报告表 4 的 k₁ 一列是 4.67 → 0.84 → 1.47（先降后升），
+    # 正文却印「单调增大」——数字与措辞对不上，读者一眼觉得算错了。
+    # 这里按 c(H⁺) 从小到大稳定排序（浓度缺失/相同的保持原顺序），
+    # 使表、图和正文论断三者一致。
+    # 注意：只用 acid_true 排，不动 acid_nominal 的语义，也不改数据本体。
+    def _acid_key(g):
+        v = g.get('acid_true')
+        try:
+            v = float(v)
+            return (0, v) if np.isfinite(v) else (1, 0.0)
+        except (TypeError, ValueError):
+            return (1, 0.0)
+
+    groups.sort(key=_acid_key)
+    #
+    # ⚠ 级数判定不能拿 R² 横向比：三种线性化的因变量是 α、ln(α−α∞)、1/(α−α∞)，
     # 量级差几个数量级，R² 被「因变量自身的方差」掩盖，判据不可比。
     # 示例数据上 0 级 R²=0.9266 与 1 级 0.9996 只差 0.073，但残差标准差相差
     # 22 倍；一旦 α∞ 输错或时间窗被截短，R² 排序就会翻转，报告会静默印出
@@ -543,9 +854,13 @@ def analyze(data, cfg=None):
             loglog['n_nonlinear'] = rate_law['n']
     if rate_law is None:
         warnings.append('k1–c(H+) 数据不足或非线性拟合失败（至少需要 3 组有效数据）')
-    elif rate_law['r2'] < 0.95:
-        warnings.append('k1–c(H+) 拟合 R² = %.4f，偏低；检查各组是否同一温度/同一蔗糖浓度'
-                        % rate_law['r2'])
+    else:
+        if rate_law['r2'] < 0.95:
+            warnings.append('k1–c(H+) 拟合 R² = %.4f，偏低；'
+                            '检查各组是否同一温度/同一蔗糖浓度'
+                            % rate_law['r2'])
+        if rate_law['note']:
+            warnings.append('k1–c(H+) 拟合：' + rate_law['note'].rstrip('；') + '。')
 
     if cal_fit is None:
         warnings.append('旋光度–浓度标定点少于 2 个，无法求 α0 与 α∞ 理论值')
@@ -556,11 +871,12 @@ def analyze(data, cfg=None):
     return dict(
         temperature=T, c0=c0, alpha0=alpha0,
         calibration=dict(points=[{'index': i, 'c': c, 'alpha': a,
-                                  'exclude': i in cal_ex}
-                                 for i, c, a in cal_pts],
+                                  'n': n, 'sd': sd, 'exclude': i in cal_ex}
+                                 for i, c, a, n, sd in cal_pts],
                          fit=cal_fit, exclude=sorted(cal_ex), n=len(use)),
         alpha_inf=dict(measured=alpha_inf_measured, theory=alpha_inf_theory,
-                       used=alpha_inf_global, mode=mode, relative=rel_ainf),
+                       used=alpha_inf_global, mode=mode, relative=rel_ainf,
+                       n=alpha_inf_n, sd=alpha_inf_sd),
         groups=groups, order=order, rate_law=rate_law, loglog=loglog,
         warnings=warnings, constants=dict(M_SUC=M_SUC, M_GLU=M_GLU,
                                           A_SUC=A_SUC, A_GLU=A_GLU, A_FRU=A_FRU))
