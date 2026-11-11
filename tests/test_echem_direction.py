@@ -30,6 +30,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+
+import numpy as np
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -313,6 +315,269 @@ class PlotAxisTests(unittest.TestCase):
                                 % (tag, y_red, y_mid))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class EsaCrossCheckTests(unittest.TestCase):
+    """ESA 的吸附/脱附双支交叉校验（用户 2026-11-11：「算电化学活性面积可以
+    比较一下如果用还原区算会有多大偏差」）。
+
+    物理上氢的吸附与脱附对应等量满单层氢，两支都应给出同一个 ESA；实际差
+    十几到几十个百分点。本组测试守住三件事：
+
+    1. 主结果**不受**交叉校验影响（仍取脱附峰，与参考报告一致）；
+    2. 偏差被如实算出来、报告里能拿到（不是 nan、不是 0）；
+    3. 「基线必须取自该支自己所在段」——套用另一支的基线会差到 100%+，
+       这条在文档里写成最强的注意事项。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.analysis = support.load_module(TOOL, 'analysis')
+        cls.cfg = cls.analysis.default_config()
+        cls.cfg['data_dir'] = str(FIXTURES)
+        cls.an = cls.analysis.Analysis(cls.cfg)
+        cls.an.run()
+
+    def test_main_result_unchanged_by_cross_check(self):
+        """交叉校验只能是诊断，不许改变主结果（ESA 仍 = 1.316 mm²）。"""
+        self.assertAlmostEqual(self.an.esa['area_mm2'], BASE_2025['esa_mm2'],
+                               places=3)
+        self.assertEqual(self.an.esa['seg'], 6, '主结果应取脱附峰（S6）')
+
+    def test_cross_fields_present_and_finite(self):
+        c = self.an.esa.get('cross') or {}
+        for key in ('area_mm2', 'delta_pct', 'A', 'baseline', 'seg'):
+            self.assertIn(key, c, '缺字段 %s' % key)
+            self.assertIsNotNone(c[key], '字段 %s 是 None' % key)
+        self.assertTrue(c['A'] > 0)
+        self.assertTrue(c['area_mm2'] > 0)
+        self.assertEqual(c['seg'], 5, '还原支应是 S5')
+
+    def test_cross_differs_from_main(self):
+        """两支不该给出同一个数——若相同，说明基线/段根本没区分，校验是假的。"""
+        c = self.an.esa['cross']
+        self.assertGreater(abs(c['delta_pct']), 5.0,
+                           '两支结果几乎相同（%.2f%%），交叉校验可能没生效'
+                           % c['delta_pct'])
+
+    def test_wrong_baseline_is_much_worse(self):
+        """套用另一支的基线，偏差必须明显大于「正确取该支基线」。
+
+        这是报告里那条最强注意事项的依据：基线错位比选错支严重得多。
+        """
+        c = self.an.esa['cross']
+        self.assertIsNotNone(c.get('wrong_delta_pct'))
+        self.assertGreater(abs(c['wrong_delta_pct']), abs(c['delta_pct']),
+                           '基线错位的偏差（%.1f%%）没有比换支（%.1f%%）更大，'
+                           '这条注意事项的前提不成立'
+                           % (c['wrong_delta_pct'], c['delta_pct']))
+        self.assertGreater(abs(c['wrong_delta_pct']), 50.0)
+
+    def test_survives_missing_blank(self):
+        """没有空白 CV 时不崩、相关字段给 None（报告据此跳过这段）。
+
+        ⚠️ 不能靠「把 file_n2_blank 改成不存在的名字」来制造缺失——模糊匹配
+        会把它自动对到目录里真实的 N₂ 文件上（这正是 2026-11-11 加的能力）。
+        必须给一个**真的没有 N₂ 数据**的目录。
+        """
+        tmp = Path(tempfile.mkdtemp(prefix='pcal_echem_noblank_'))
+        try:
+            shutil.copyfile(FIXTURES / 'O2_slow.txt', tmp / 'O2_slow.txt')
+            cfg = self.analysis.default_config()
+            cfg['data_dir'] = str(tmp)
+            an = self.analysis.Analysis(cfg)
+            an.run()                     # 不应抛异常
+            self.assertFalse(an.files.get('n2_blank'))
+            self.assertIsNone(an.esa.get('cross', {}).get('area_mm2')
+                              if an.esa.get('cross') else None)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class EsaWindowTests(unittest.TestCase):
+    """ESA 积分下限必须跟着**数据实际左端**走（用户 2026-11-11 报）。
+
+    用户原话：「为什么算 Pt 面积的时候阴影区没取完左边所有点？」
+
+    根因：``ESA_LO = -0.26`` 是 2025 那批数据的 Low E，当年数据恰好从
+    −0.259 V 开始，所以窗口下限正好压在数据起点上、一点没漏。用户那批
+    Low E 是 −0.310，写死的 −0.26 把 −0.305~−0.26 V 之间已经明显抬升的
+    氢脱附峰前沿整段切掉了（实测少算 5%）。
+
+    与 SKILL §27「数量/范围写死」是同一类：数据的电位范围会变，窗口不能写死。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.analysis = support.load_module(TOOL, 'analysis')
+
+    def test_window_follows_data_start(self):
+        """数据起点比设定下限更负时，窗口下限应取数据起点。"""
+        lo, note = self.analysis._effective_lo(-0.26, [-0.305, -0.2, 0.0, 0.1])
+        self.assertAlmostEqual(lo, -0.305)
+        self.assertTrue(note, '改了窗口却没给出说明')
+
+    def test_window_kept_when_data_is_wider(self):
+        """数据比设定下限更靠左（2025 那种情况）→ 保持设定值、不提示。"""
+        lo, note = self.analysis._effective_lo(-0.26, [-0.259, 0.0, 1.1])
+        self.assertAlmostEqual(lo, -0.26)
+        self.assertEqual(note, '')
+
+    def test_window_kept_when_equal(self):
+        lo, note = self.analysis._effective_lo(-0.26, [-0.26, 0.0, 1.1])
+        self.assertAlmostEqual(lo, -0.26)
+        self.assertEqual(note, '')
+
+    def test_empty_data_is_safe(self):
+        lo, _ = self.analysis._effective_lo(-0.26, [])
+        self.assertAlmostEqual(lo, -0.26)
+
+    def test_2025_window_unchanged(self):
+        """2025 基准：窗口仍 −0.26，ESA 仍是 1.316 mm²（不能被改动带偏）。"""
+        cfg = self.analysis.default_config()
+        cfg['data_dir'] = str(FIXTURES)
+        an = self.analysis.Analysis(cfg)
+        an.run()
+        self.assertAlmostEqual(an.esa['lo'], -0.26, places=6)
+        self.assertEqual(an.esa['lo_note'], '')
+        self.assertAlmostEqual(an.esa['area_mm2'], BASE_2025['esa_mm2'], places=3)
+
+    def test_narrower_window_loses_area(self):
+        """反证：强行把下限写死到 −0.26 确实会少算——这正是被报的缺陷。"""
+        echem = support.load_module(TOOL, 'echem')
+        cfg = self.analysis.default_config()
+        cfg['data_dir'] = str(FIXTURES)
+        an = self.analysis.Analysis(cfg)
+        an.run()
+        f = an.file('n2_blank')
+        seg = f.oxidative_seg()
+        base = an.esa['baseline']
+        a_wide = echem.integrate_peak(seg[:, 0], seg[:, 1],
+                                      an.esa['lo'], an.esa['hi'], base)
+        a_narrow = echem.integrate_peak(seg[:, 0], seg[:, 1], 0.0, 0.15, base)
+        self.assertGreater(a_wide, a_narrow,
+                           '窗口放宽后面积反而变小，说明积分逻辑有问题')
+
+
+class DmfcGridTests(unittest.TestCase):
+    """DMFC 电流网格起点：只用实测数据，不外推、不钳位。
+
+    用户 2026-11-11 问：「为什么 DMFC 电池的极化曲线不从更接近 0 的地方开始画？」
+
+    这里有一个真实的取舍，选了「只用实测数据」：
+
+    * 从 3×10⁻⁸ A（写死的 i_min）起：两支实测起点都 ≥ 6×10⁻⁷ A，整段靠钳位/
+      外推，P–E 图左上会出现假平台（参考报告正是这样，它自己也写了「顶端处
+      曲线不光滑」）；
+    * 从**两支实测起点中较大者**起：每个电流点都有实测数据支撑，代价是看不到
+      接近开路的那一小段。
+
+    本组测试钉住后者，并守住「E_cell 起点要合理」——若只取较小起点，另一支
+    会被钳位成常数，E_cell 会被系统性压低（实测从 0.88 V 掉到 0.41 V）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.analysis = support.load_module(TOOL, 'analysis')
+
+    def _an(self):
+        cfg = self.analysis.default_config()
+        cfg['data_dir'] = str(FIXTURES)
+        an = self.analysis.Analysis(cfg)
+        an.run()
+        return an
+
+    def test_grid_starts_at_measured_current(self):
+        """网格起点 = 两支实测起点的较大者，不是写死的 3×10⁻⁸。"""
+        an = self._an()
+        d = an.dmfc
+        self.assertIsNotNone(d)
+        Eo, io = d['E_orr_raw']
+        Em, im = d['E_mor_raw']
+        want = max(float(io.min()), float(im.min()))
+        self.assertAlmostEqual(float(d['i_grid'][0]), want, places=12,
+                               msg='网格起点 %.3e ≠ 两支实测起点较大者 %.3e'
+                                   % (d['i_grid'][0], want))
+        self.assertGreater(want, 3e-8, '夹具的实测起点不该低于 i_min')
+
+    def test_no_duplicate_e_cell(self):
+        """不许出现重复 E_cell（那是钳位造成的竖直假线特征）。"""
+        an = self._an()
+        E = an.dmfc['E_cell']
+        self.assertEqual(int((np.diff(E) == 0).sum()), 0,
+                         'E_cell 有重复值，说明区间外被钳位了')
+
+    def test_ecell_start_not_suppressed(self):
+        """起点处的 E_cell 不能明显低于工作区中段——否则说明有一支被钳位。
+
+        只取「较小起点」时，另一支在那一小段是常数，E_cell 会被压低。
+        这里要求起点 E_cell 不低于最大值的 60%。
+        """
+        an = self._an()
+        d = an.dmfc
+        E = d['E_cell']
+        self.assertGreater(E[0], 0.6 * E.max(),
+                           '起点 E_cell=%.3f 远低于最大值 %.3f，可能有一支被钳位'
+                           % (E[0], E.max()))
+
+    def test_ecell_monotone_decreasing(self):
+        """E_cell 应随电流单调下降（电池极化行为），允许极小噪声。"""
+        E = self._an().dmfc['E_cell']
+        bad = int((np.diff(E) > 1e-9).sum())
+        self.assertLessEqual(bad, 0, 'E_cell 出现了 %d 处上升' % bad)
+
+    def test_baseline_2025_intersection(self):
+        """2025 基准：交点与 P_max 仍在原值上（网格口径调整不能带偏它们）。"""
+        d = self._an().dmfc
+        self.assertAlmostEqual(d['E_intersect'], BASE_2025['e_intersect'],
+                               places=3)
+        self.assertAlmostEqual(d['P_max'] / BASE_2025['p_max'], 1.0, places=2)
+
+
+class PolarizationAxisTests(unittest.TestCase):
+    """图9 极化曲线的**横轴电流必须是正值、向右增大**。
+
+    用户 2026-11-11 报「DMFC 横轴电流是负数」。
+
+    原实现 ``ax.plot(-i, ...)`` + ``set_xlim(0, -max)`` 把电流轴整个镜像到
+    负半轴（0 在左、−8 在右）。这是从 2025 参考报告抄的，而参考报告自己也没
+    说明理由——``analysis`` 里 ``d5/d6`` 早就取了 ``np.abs()``，进绘图的
+    已经是正的电流量值，那个负号纯属多余。燃料电池放电曲线横轴本就该从左到右
+    增大（0 → I_max）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.analysis = support.load_module(TOOL, 'analysis')
+        cls.plotting = support.load_module(TOOL, 'plotting')
+
+    def _fig(self):
+        cfg = self.analysis.default_config()
+        cfg['data_dir'] = str(FIXTURES)
+        an = self.analysis.Analysis(cfg)
+        an.run()
+        return self.plotting.make_dmfc_polarization_figure(an)
+
+    def test_horizontal_axis_is_positive(self):
+        """x 轴范围与数据点都必须非负。"""
+        ax = self._fig().axes[0]
+        lo, hi = ax.get_xlim()
+        self.assertGreaterEqual(lo, 0.0, 'x 轴左端是负的：%.3f' % lo)
+        self.assertGreater(hi, 0.0)
+        for line in ax.lines:
+            x = np.asarray(line.get_xdata(), float)
+            self.assertGreaterEqual(x.min(), 0.0,
+                                    '有曲线画在负电流区：min=%.3e' % x.min())
+
+    def test_horizontal_axis_increases_rightward(self):
+        """0 在左、I_max 在右（不是镜像的 0 在左、−I_max 在右）。"""
+        ax = self._fig().axes[0]
+        lo, hi = ax.get_xlim()
+        self.assertLess(lo, hi, 'x 轴方向反了（左端 > 右端）')
+
+    def test_axis_label_unchanged(self):
+        ax = self._fig().axes[0]
+        self.assertIn('A', ax.get_xlabel())
 
 
 class ReversedDataTests(unittest.TestCase):

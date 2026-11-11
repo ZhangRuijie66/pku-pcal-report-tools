@@ -408,6 +408,42 @@ def find_monotone_branch(E, i, e_lo, e_hi, rising_with='falling_E'):
     return Ew[order], iw[order]
 
 
+def _extrap_branch(E, i, grid, max_span_ratio=0.05):
+    """把一支（E 关于 i 单调）曲线在 ``grid`` 上取值。
+
+    网格下限现在由调用方取「两支真实数据的较小起点电流」，所以大多数网格点
+    都落在实测范围内。只有**另一支**的起点略低于本支时，本支才有一小段落在
+    实测范围之外——这段用对数外推（电极动力学在低电流区更接近对数关系，
+    比线性稳），且**外推幅度超过该支量程的 5% 就退回钳位**。
+
+    为什么不上来就外推：``np.interp`` 对区间外会钳位（返回端点值），钳位会让
+    一小段网格得到同一个 E，在 P–E 图上就是竖直假线；但反过来，如果网格下限
+    远低于实测起点，外推会「编造」占主导的低电流区数据，那是更糟的错误
+    （参考报告从 3×10⁻⁸ A 起、用线性插值，P–E 图左上角就有一段假平台）。
+    所以这里只允许很小的外推幅度。
+    """
+    E = np.asarray(E, float)
+    i = np.asarray(i, float)
+    out = np.interp(grid, i, E)
+    lo = float(np.min(i))
+    below = grid < lo
+    if not below.any() or lo <= 0:
+        return out
+    span = float(np.max(i) - lo)
+    if span <= 0:
+        return out
+    ok = (lo - grid[below]) <= max_span_ratio * span
+    if not ok.any():
+        return out
+    near = (i <= lo + 0.2 * span) & (i > 0) & np.isfinite(i) & np.isfinite(E)
+    if near.sum() >= 3:
+        k = np.polyfit(np.log(i[near]), E[near], 1)
+        seg = out[below].copy()
+        seg[ok] = np.polyval(k, np.log(np.maximum(grid[below][ok], 1e-15)))
+        out[below] = seg
+    return out
+
+
 def dmfc_curves(orr_E, orr_i, mor_E, mor_i, i_min=3e-8, i_step=5e-8,
                 i_max_cap=float('inf')):
     """由 ORR / MOR 两条扣空白曲线（电流量值）插值出 DMFC 极化与功率曲线。
@@ -417,6 +453,10 @@ def dmfc_curves(orr_E, orr_i, mor_E, mor_i, i_min=3e-8, i_step=5e-8,
     即到两支曲线的交点为止。返回 dict：
         i_grid, E_orr, E_mor, E_cell, P, P_max, E_at_Pmax, I_max,
         I_intersect, E_intersect
+
+    ⚠️ ``i_min`` 应由调用方设成**两支真实数据的较小起点电流**（见
+    ``analysis.Analysis.run``），不要用 3×10⁻⁸ 这种远小于实测起点的值——
+    那样曲线左边一截全是钳位/外推出来的假数据（参考报告因此吃了亏）。
     """
     io_E, io_i = find_monotone_branch(orr_E, orr_i, -1e9, 1e9)
     mo_E, mo_i = find_monotone_branch(mor_E, mor_i, -1e9, 1e9)
@@ -428,8 +468,8 @@ def dmfc_curves(orr_E, orr_i, mor_E, mor_i, i_min=3e-8, i_step=5e-8,
     grid = np.arange(i_min, i_top, i_step)
     if len(grid) < 3:
         return None
-    E_orr = np.interp(grid, io_i, io_E)
-    E_mor = np.interp(grid, mo_i, mo_E)
+    E_orr = _extrap_branch(io_E, io_i, grid)
+    E_mor = _extrap_branch(mo_E, mo_i, grid)
     E_cell = E_orr - E_mor
     # 工作区：到交点为止（交点之后 E_ORR < E_MOR，电池不能工作）
     neg = np.nonzero(E_cell <= 0)[0]

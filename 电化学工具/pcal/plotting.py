@@ -255,21 +255,34 @@ def make_orr_mor_figure(an):
 
 # ---------------------------------------------------------------- 图9 极化曲线
 def make_dmfc_polarization_figure(an):
-    """DMFC 极化曲线（图9）：横轴电流画成负值，纵轴电势。"""
+    """DMFC 极化曲线（图9）：横轴电流量值（正值向右增大），纵轴电极电势。
+
+    ⚠️ 横轴**不再画成负值**（用户 2026-11-11 报「DMFC 横轴电流是负数」）。
+
+    原来的写法是 ``ax.plot(-i, ...)`` + ``set_xlim(0, -max)``，把电流轴整个
+    镜像到负半轴（0 在左、−8 在右）。那是从 2025 参考报告抄来的，而参考报告
+    自己也没写为什么——``d5``/``d6`` 在 ``analysis`` 里早就取了 ``np.abs()``，
+    进到绘图的已经是**正的电流量值**，这个负号纯属多余。
+
+    燃料电池的极化曲线本来就应该横轴电流从左到右增大：0 → I_max。
+    硬加一个负号只会让读者以为电流是负的（物理上说不通：这是电池放电，
+    两支的电流方向相反，用同一个带符号的轴画本来就需要统一取量值）。
+    """
     d = an.dmfc
     if not d:
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, 'no DMFC data', ha='center', va='center')
         return fig
     fig, ax = plt.subplots(figsize=(6.4, 4.4), dpi=DPI_PREVIEW)
-    i = d['i_grid'] * 1e6
-    ax.plot(-i, d['E_orr'], color=C_ORR, linewidth=1.1, label='ORR')
-    ax.plot(-i, d['E_mor'], color=C_MOR, linewidth=1.1, label='MOR')
+    i = np.abs(d['i_grid']) * 1e6          # μA，正值
+    ax.plot(i, d['E_orr'], color=C_ORR, linewidth=1.1, label='ORR')
+    ax.plot(i, d['E_mor'], color=C_MOR, linewidth=1.1, label='MOR')
     ax.set_xlabel(r'$i$ / $10^{-6}$A')
     ax.set_ylabel(r'$E$(vs. SCE) / V')
-    ax.set_xlim(0, -float(np.max(i)) * 1.06)
+    ax.set_xlim(0, float(np.max(i)) * 1.08)
     ax.set_ylim(0, 0.7)
-    ax.legend(frameon=False, fontsize=10, loc='center right')
+    # 图例放左下：曲线在右端收拢到交点，右下角会被压住
+    ax.legend(frameon=False, fontsize=10, loc='lower left')
     _style_axes(ax)
     return fig
 

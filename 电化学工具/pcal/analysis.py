@@ -629,6 +629,31 @@ def _num(v, default=0.0):
         return default
 
 
+def _effective_lo(want_lo, E):
+    """积分下限取「设定值」与「数据实际左端」中更靠左的那个。
+
+    返回 ``(实际下限, 说明)``；说明为空表示设定值落在数据范围内、无需提示。
+
+    为什么要这样：``ESA_LO = -0.26`` 是**2025 那批数据的 Low E**，当年数据
+    恰好从 −0.259 V 开始，于是「窗口下限 = 数据起点」，一点没漏。换一批数据
+    （Low E = −0.310）后，写死的 −0.26 会把 −0.305~−0.26 V 那段已经明显
+    抬升的氢脱附峰前沿**整段漏掉**——不是截掉个尾巴，而是少了 5% 的面积。
+
+    这与 SKILL §27 的「数量/范围写死」是同一类缺陷：数据范围会变，窗口不能。
+    """
+    E = np.asarray(E, float)
+    if E.size == 0 or not np.isfinite(E).any():
+        return want_lo, ''
+    data_lo = float(np.nanmin(E))
+    # 设定下限已经落在数据范围内（数据的左端更靠左）→ 按设定值，一切照旧
+    if want_lo is not None and np.isfinite(want_lo) and want_lo <= data_lo:
+        return want_lo, ''
+    # 设定下限比数据起点还靠右 → 会把左侧已抬升的峰前沿切掉，改用数据起点
+    return data_lo, ('设定的积分下限 %.2f V 比数据起点 %.3f V 更靠右，'
+                     '已按数据实际起点积分（否则会漏掉左侧峰前沿）'
+                     % (want_lo, data_lo))
+
+
 class Analysis:
     """一次完整的实验数据处理。"""
 
@@ -717,12 +742,25 @@ class Analysis:
         base_cfg = cfg.get('esa_baseline_uA')
         baseline = (_num(base_cfg, None) * 1e-6 if base_cfg not in (None, '')
                     else echem.auto_dl_baseline(s6, dl_lo, dl_hi))
+        # 积分下限要跟着**数据实际左端**走，不能写死 −0.26 V：
+        # 那个值是 2025 那批数据的 Low E，用户 2026-11-11 的数据 Low E 是
+        # −0.310，写死 −0.26 会把 −0.305~−0.26 V 那段已经明显抬升的氢脱附
+        # 峰前沿整段漏掉（实测少算 5%）。数据比窗口更短时按数据起点积分，
+        # 并把实际用的窗口写进结果，报告据此说明。
+        esa_lo, lo_note = _effective_lo(esa_lo, s6[:, 0])
         A = echem.integrate_peak(s6[:, 0], s6[:, 1], esa_lo, esa_hi, baseline)
         Q = A / v_blank if v_blank else float('nan')
         area_cm2 = Q / echem.Q_H_MLAYER if np.isfinite(Q) else float('nan')
         self.esa = dict(A=A, Q=Q, baseline=baseline, lo=esa_lo, hi=esa_hi,
+                        lo_note=lo_note, data_lo=float(np.nanmin(s6[:, 0])),
                         area_cm2=area_cm2, area_mm2=area_cm2 * 1e2,
                         v=v_blank, seg=blank.pos_seg)
+        # 3b) 交叉校验：若改用**还原支（氢吸附峰）**算面积会差多少。
+        #     只做诊断、不改主结果——报告 3.1.2 末尾要把这个偏差写进误差分析。
+        #     氢的吸/脱附本应给出等量电荷，但两者峰形、基线与积分边界并不对称，
+        #     实测偏差可达几十个百分点，这正是「ESA 只作相对量级参考」的理由。
+        self.esa['cross'] = self._esa_cross_check(blank, esa_lo, esa_hi,
+                                                  dl_lo, dl_hi, area_cm2)
 
         # 4) O₂ 系列：还原支叠加 + ORR 起始电位
         b5 = blank.reductive_seg()
@@ -789,9 +827,26 @@ class Analysis:
                                                 tol=0.05e-6)
             mor_E, mor_i = echem.rising_segment(mor_E[mor_m], mor_i[mor_m],
                                                 tol=0.05e-6)
-            # 电流网格下限取两支路的最小电流（低于它插值会钳位，
-            # 在 P–E 图上画出一段竖直假线）
-            i_lo = max(i_min, float(np.min(orr_i)), float(np.min(mor_i)))
+            # 电流网格下限取**两支实测起点中的较大者**。
+            #
+            # 为什么不是更小：两支曲线各有一段低电流端，低于某支起点的电流
+            # 该支没有实测数据，只能钳位或外推。E_cell = E_ORR − E_MOR，
+            # 若其中一支是钳位出来的常数，E_cell 整段被系统性地压低
+            # （实测：从 6.4×10⁻⁷ 起画时 E_cell 起点只有 0.41 V，而真实
+            # 开路附近应在 0.88 V）。
+            #
+            # 为什么不是 i_min=3×10⁻⁸：那是写死的常数，远小于任一实测起点，
+            # 会让整段看起来「从 0 开始画」，实则全是编造值——参考报告正是
+            # 这么做的（3×10⁻⁸ ~ 5.88×10⁻⁶，线性插值钳位），它的 P–E 图
+            # 左上角因此有一段假平台，报告自己也写了「顶端处曲线不光滑」。
+            #
+            # 用户 2026-11-11 问「为什么不从更接近 0 的地方开始画」，原代码
+            # 取的是 max(i_min, 两支最小) = 8.4×10⁻⁷，**已经是这个口径**，
+            # 只是当时起始电位判据受极性 bug 影响，曲线整体失真。现在极性
+            # 修好后这个口径就是对的：起点 = 实测起点，不编造、不钳位。
+            i_lo = max(float(np.min(orr_i)), float(np.min(mor_i)))
+            if not np.isfinite(i_lo) or i_lo <= 0:
+                i_lo = i_min
             res = echem.dmfc_curves(orr_E, orr_i, mor_E, mor_i,
                                     i_min=i_lo, i_step=i_step)
             if res is None:
@@ -804,6 +859,55 @@ class Analysis:
         return self
 
     # ------------------------------------------------------------ 辅助
+    def _esa_cross_check(self, blank, lo, hi, dl_lo, dl_hi, area_cm2_main):
+        """用**还原支（氢吸附峰）**再算一次 ESA，返回对比用的诊断数据。
+
+        物理上氢的吸附与脱附给出等量电荷（都对应满单层氢），所以两支算出的
+        ESA 应当接近。实际却常差二三十个百分点，原因有三，报告里要写清：
+
+        1. **峰形与基线不对称**：脱附峰（氧化支）基线取它自己那一段的双电层
+           电流，吸附峰（还原支）的基线位置不同，两者不是镜像；
+        2. **积分窗口固定为 −0.26~0.15 V**：两支的峰顶位置略有差别，一端被
+           窗口截掉多少不一样；
+        3. **首圈效应**：取的是最后两段（稳定圈），但吸附过程更依赖表面清洁度。
+
+        另外附带算了「还原支套用氧化支基线」这种**错误做法**的后果——
+        基线错位的偏差比换一支大得多，这是真正要避免的坑。
+
+        纯诊断，**不改变主结果**（主结果一律取脱附峰，与参考报告一致）。
+        """
+        out = {'area_mm2': None, 'delta_pct': None, 'seg': blank.neg_seg,
+               'baseline': None, 'A': None,
+               'wrong_baseline_mm2': None, 'wrong_delta_pct': None}
+        try:
+            neg = blank.reductive_seg()
+        except (IndexError, AttributeError):
+            return out
+        if neg is None or len(neg) < 3 or not blank.v:
+            return out
+
+        base_neg = echem.auto_dl_baseline(neg, dl_lo, dl_hi)
+        A_neg = echem.integrate_peak(neg[:, 0], neg[:, 1], lo, hi, base_neg)
+        if not np.isfinite(A_neg):
+            return out
+        cm2 = (A_neg / blank.v) / echem.Q_H_MLAYER
+        out['area_mm2'] = cm2 * 1e2
+        out['baseline'] = base_neg
+        out['A'] = A_neg
+        if area_cm2_main and np.isfinite(area_cm2_main) and area_cm2_main != 0:
+            out['delta_pct'] = (cm2 / area_cm2_main - 1.0) * 100.0
+
+        # 对照：同一段数据却沿用脱附峰的基线（典型的错位做法）
+        base_pos = self.esa.get('baseline')
+        if base_pos is not None:
+            A_wrong = echem.integrate_peak(neg[:, 0], neg[:, 1], lo, hi, base_pos)
+            if np.isfinite(A_wrong):
+                cm2_w = (A_wrong / blank.v) / echem.Q_H_MLAYER
+                out['wrong_baseline_mm2'] = cm2_w * 1e2
+                if area_cm2_main and np.isfinite(area_cm2_main) and area_cm2_main != 0:
+                    out['wrong_delta_pct'] = (cm2_w / area_cm2_main - 1.0) * 100.0
+        return out
+
     def _oxide_peak(self, f):
         """负扫段上含氧物种还原峰：取 CHI 峰分析里 Ep 最接近 0.45 V 的那个。
 
