@@ -54,6 +54,51 @@ _HDR_PAT = {
 }
 
 
+def peek_params(path, head_bytes=8192):
+    """只读文件头，取 CHI 的测量参数（扫速等），**不解析数据区**。
+
+    用途：数据文件映射的**交叉验证**。CHI 导出的文件名是用户自己起的
+    （``氮气1.txt`` / ``N2_1.txt`` / ``氧气-低速.txt``…），名字本身不足以
+    判断「哪份是 0.2 V·s⁻¹」。而文件头里 ``Scan Rate (V/s) = 0.2`` 是仪器
+    写下的硬证据，用它核对扫速系列不会选错文件。
+
+    读不出来（文件不存在/截断/不是 CHI 格式）时返回空 dict，调用方退回
+    纯文件名匹配 —— 绝不让交叉验证变成"读不到就不给匹配"。
+
+    返回 ``{'scan_rate': float, 'init_e': …, 'high_e': …, 'low_e': …,
+    'segments': int, 'date': str}``，键与 :class:`CvFile` 的 ``params`` 同名。
+    """
+    if not path:
+        return {}
+    try:
+        with open(path, 'rb') as fh:
+            raw = fh.read(head_bytes)
+    except OSError:
+        return {}
+    txt = None
+    for enc in ('gbk', 'utf-8', 'latin-1'):
+        try:
+            txt = raw.decode(enc, 'ignore')
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    if not txt:
+        return {}
+    out = {}
+    for key, pat in _HDR_PAT.items():
+        m = re.search(pat, txt)
+        if not m:
+            continue
+        try:
+            out[key] = float(m.group(1))
+        except ValueError:
+            continue
+    m = re.search(r'^([A-Z][a-z]{2}\. \d+, \d{4})', txt, re.MULTILINE)
+    if m:
+        out['date'] = m.group(1)
+    return out
+
+
 class CvFile:
     """一份 CHI 导出的 CV 数据：头部参数 + 峰分析表 + 各段数据。"""
 
@@ -121,11 +166,116 @@ class CvFile:
         """1-based 段号（与 CHI 界面一致）。"""
         return self.segments[no - 1]
 
-    def cycle(self, neg_seg=5, pos_seg=6):
-        """负扫段在前、正扫段在后拼成完整一圈（图上从 High E 出发）。"""
+    # ------------------------------------------------------------ 段方向
+    #: 负扫（还原支）与正扫（氧化支）的段号——**按实际电位方向判定**。
+    #:
+    #: ⚠️ 不能写死 S5=负扫、S6=正扫。CHI 的 ``Init P/N`` 决定段序：
+    #:
+    #:     Init P/N = N（负向起扫）：S1 负扫 → S2 正 → S3 负 → S4 正 → S5 负 → S6 正
+    #:     Init P/N = P（正向起扫）：S1 正扫 → S2 负 → S3 正 → S4 负 → S5 正 → S6 负
+    #:
+    #: 2025 参照数据是 N（所以历史上一直按 S5/S6 取），用户 2026-11-11 那批
+    #: 数据是 P，段序整个反过来：表 1 的含氧物种峰从 S5 读成 nan、氢脱附面积
+    #: 在 S6 上取到的是还原支、ORR/MOR 的起始电位也取错支。数字全错而界面上
+    #: 没有任何异常提示——这类「段号假设」是最难发现的错。
+    #:
+    #: 判据用每段首末电位的符号，比读 ``Init P/N`` 可靠：软件设置与导出内容
+    #: 不一致时，数据本身不会骗人。
+
+    def seg_direction(self, no):
+        """``no`` 段是正扫（``+1``）还是负扫（``-1``）；空段返回 0。"""
+        try:
+            s = self.seg(no)
+        except IndexError:
+            return 0
+        if s is None or len(s) < 2:
+            return 0
+        d = float(s[-1, 0]) - float(s[0, 0])
+        if abs(d) < 1e-9:
+            return 0
+        return 1 if d > 0 else -1
+
+    def the_cycle(self):
+        """完整一圈的最后两段 ``(负扫段, 正扫段)``，**按方向自动判定**。
+
+        默认仍优先 5/6（两段都测过方向时就用它们）；只有方向与预期相反时
+        互换——这样 2025 数据走的分支与历史完全一致（回归基准逐位不变），
+        而 ``Init P/N = P`` 的数据会自动纠正。
+        """
+        s5, s6 = self.seg_direction(5), self.seg_direction(6)
+        neg, pos = 5, 6
+        if s5 > 0 and s6 < 0:          # Init P/N = P：段序反转
+            neg, pos = 6, 5
+        elif s5 == 0 and s6 < 0:       # 5 段空/异常，退回看 3/4
+            neg, pos = 6, 5 if self.seg_direction(4) > 0 else pos
+        return neg, pos
+
+    @property
+    def neg_seg(self):
+        """负扫（还原支）的段号。"""
+        return self.the_cycle()[0]
+
+    @property
+    def pos_seg(self):
+        """正扫（氧化支）的段号。"""
+        return self.the_cycle()[1]
+
+    # ------------------------------------------------------------ 电流符号
+    #: 阴极（还原）电流的符号：``+1``（CHI 默认的美国约定）或 ``-1``。
+    #:
+    #: ⚠️ 不能假设"还原电流为正"。CHI 有 Polarity 开关（仪器与电解池接线极性
+    #: 互换），打开后整条曲线的电流符号翻转。2025 参照数据是还原为正；
+    #: 用户 2026-11-11 那批是**还原为负**，而当前内核在好几处写死了
+    #: 「取 max 得氧化物还原峰」「ESA 积分取绝对值」——符号一反，峰高取的
+    #: 是另一个峰（甚至基线），数字全错却不报错。
+    @property
+    def cathodic_sign(self):
+        """阴极电流的符号（``+1`` / ``-1``）。
+
+        判据：**负扫段（还原支）里峰分析表给出的峰高符号**。CHI 的 ip 是相对
+        基线的峰高，还原峰自然带阴极符号，比"看整段均值"稳（整段还混着氧化
+        过程）。峰表缺失时退回"负扫段与正扫段的电流均值谁更偏阴极"的粗判据。
+        """
+        cached = getattr(self, '_cath_cache', None)
+        if cached is not None:
+            return cached
+        sign = 0
+        for pk in (self.peaks.get(self.neg_seg) or []):
+            ip = pk.get('ip')
+            if ip and ip == ip and abs(ip) > 0:
+                sign = 1 if ip > 0 else -1
+                break
+        if not sign:
+            # 峰表没有（数据太差或不是 CHI 格式）：比较两支的电流均值偏移。
+            # 还原支整体更偏向阴极，与正扫支一对比就能定符号。
+            neg, pos = self.reductive_seg(), self.oxidative_seg()
+            if len(neg) > 4 and len(pos) > 4:
+                diff = float(np.mean(neg[:, 1]) - np.mean(pos[:, 1]))
+                sign = 1 if diff > 0 else -1
+        self._cath_cache = sign or 1
+        return self._cath_cache
+
+    def cycle(self, neg_seg=None, pos_seg=None):
+        """负扫段在前、正扫段在后拼成完整一圈（图上从 High E 出发）。
+
+        ``neg_seg`` / ``pos_seg`` 为 ``None`` 时按电位方向自动判定
+        （见 :meth:`the_cycle`），不再假设 S5/S6。
+        """
+        if neg_seg is None:
+            neg_seg = self.neg_seg
+        if pos_seg is None:
+            pos_seg = self.pos_seg
         a = self.seg(neg_seg)
         b = self.seg(pos_seg)
         return np.vstack([a, b])
+
+    def reductive_seg(self):
+        """还原支所在段（O₂ 还原、含氧物种脱附、甲醇氧化负扫峰都取这里）。"""
+        return self.seg(self.neg_seg)
+
+    def oxidative_seg(self):
+        """氧化支所在段（氢脱附峰取这里）。"""
+        return self.seg(self.pos_seg)
 
 
 def load_cv(path):
@@ -180,14 +330,22 @@ def first_crossing(E, d_smooth, threshold, direction='below', e_lo=None, e_hi=No
     return float(E[idx]), idx
 
 
-def last_crossing(E, d_smooth, threshold, e_lo=None, e_hi=None):
-    """找信号仍 > +threshold 的最高电势（正扫还原支的「合拢点」）。"""
+def last_crossing(E, d_smooth, threshold, e_lo=None, e_hi=None, direction='above'):
+    """找信号仍在阈值那一侧的最高电势（正扫还原支的「合拢点」）。
+
+    ``direction`` 与 :func:`first_crossing` 同义：``'above'`` 看
+    ``> +threshold``（还原电流为正，CHI 默认极性），``'below'`` 看
+    ``< −threshold``（Polarity 反了，还原电流为负）。
+    """
     m = np.ones(len(E), bool)
     if e_lo is not None:
         m &= (E >= e_lo)
     if e_hi is not None:
         m &= (E <= e_hi)
-    m &= (d_smooth > threshold)
+    if direction == 'above':
+        m &= (d_smooth > threshold)
+    else:
+        m &= (d_smooth < -threshold)
     if not m.any():
         return float('nan'), -1
     idx = int(np.max(np.nonzero(m)[0]))

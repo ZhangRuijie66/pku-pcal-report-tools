@@ -218,6 +218,51 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
 
 # ---------------------------------------------------------------- 3.1 N₂ 系列
+def _seg_txt(an, *keys):
+    """把「取哪些段」写成正文能用的中文：``Segment 5 和 6``。
+
+    ⚠️ 段号**不能写死**。CHI 的 ``Init P/N`` 决定段序：2025 参照数据是 N
+    起扫（还原支在 S5、氧化支在 S6），用户 2026-11-11 那批是 P 起扫
+    （正好反过来）。写死「Segment 5 和 6」会让 P 起扫的报告里所有段号都错，
+    而读者据此回查原始文件会对不上。
+    """
+    seen = []
+    for k in keys:
+        f = an.file(k) if k else None
+        if f is None:
+            continue
+        for no in (f.neg_seg, f.pos_seg):
+            if no not in seen:
+                seen.append(no)
+    if not seen:
+        return 'Segment 5 和 6'
+    nums = sorted(seen)
+    if len(nums) == 1:
+        return 'Segment %d' % nums[0]
+    return 'Segment %d 和 %s' % (nums[0], '、'.join(str(n) for n in nums[1:]))
+
+
+def _seg_desc(an, key):
+    """描述「本次数据里哪个段是还原支/氧化支」，只在与常见顺序不同时才说。
+
+    段号本身不写死（见 :func:`_seg_txt`），但读者手里的原始文件用的是
+    CHI 的段号，所以当 ``Init P/N = P`` 导致还原支落在 S6 时，正文要**明确
+    说明**——否则他按「S5 是负扫」去核对峰表会对不上，而报告里没有任何线索。
+    """
+    f = an.file(key) if key else None
+    if f is None:
+        return ''
+    init = getattr(f, 'init_scan', '') or ''
+    if not init:
+        return ''
+    # N 起扫时 S5 负 / S6 正，与仪器默认一致，不必赘述
+    if init.upper() == 'N':
+        return ''
+    return ('（本次数据由 CHI 以 Init P/N = %s 起扫，段序与默认的 N 起扫相反：'
+            'S%d 为负扫的还原支，S%d 为正扫的氧化支）'
+            % (init.upper(), f.neg_seg, f.pos_seg))
+
+
 def _sec_n2(rb, an, fig_n2, fig_esa):
     esa = an.esa
     rb.heading('3.1 N₂氛围下硫酸循环伏安曲线分析', 2)
@@ -225,7 +270,8 @@ def _sec_n2(rb, an, fig_n2, fig_esa):
     rb.para('观察 −0.35~1.4 V 的扫描曲线，可发现 −0.26 V 正好是氢析出峰的开端，'
             '故将低电位设为 −0.26 V。将 N₂ 饱和下扫速分别为 0.5、0.2、'
             '0.1 V·s⁻¹ 的 0.05 mol·L⁻¹ 硫酸溶液的 CV 曲线叠加，如图2所示，'
-            '数据点取自 Segment 5 和 6。')
+            '数据点取自 %s%s。' % (_seg_txt(an, 'n2_blank'),
+                                  _seg_desc(an, 'n2_blank')))
     rb.figure(fig_n2, caption='图2  不同扫速下N₂饱和硫酸溶液CV曲线', width_cm=12.5)
     rb.para('首先对曲线形状作定性分析。在 −0.3~0.0 V，曲线的还原支有氢吸附双峰'
             '（在铂电极表面进行），氧化支有氢脱附的双峰。存在双峰是由于不同'
@@ -242,8 +288,8 @@ def _sec_n2(rb, an, fig_n2, fig_esa):
             '电极反应（氢），峰电位与扫描速率无关；对不可逆电极反应（含氧物种），'
             '峰电位随扫描速率增加向阴极方向移动。')
     rb.para('峰电流随扫描速率的增大而增大。仅看含氧物种的脱附峰，不同扫描速率'
-            '下的峰电流如表1所示（取 CHI 峰分析中 Segment 5 的读数，'
-            '为相对基线的峰高）。')
+            '下的峰电流如表1所示（取 CHI 峰分析中 %s 的读数，'
+            '为相对基线的峰高）。' % _seg_txt(an, 'n2_blank'))
     rows = []
     for r in an.table1:
         rows.append([fv(r['v'], 1), sci(r['ip'], 3)])
@@ -262,7 +308,8 @@ def _sec_n2(rb, an, fig_n2, fig_esa):
     rb.heading('3.1.2 铂电极的电化学活性面积', 3)
     rb.para('扫速为 0.1 V·s⁻¹ 时 CV 曲线最稳定，因此通过该曲线计算铂的'
             '电化学活性面积（后续实验扫速均固定在 0.1 V·s⁻¹，且均用该曲线'
-            '作为空白）。将曲线单独绘制在图3中，数据点同样取自 Segment 5 和 6。')
+            '作为空白）。将曲线单独绘制在图3中，数据点同样取自 %s。'
+            % _seg_txt(an, 'n2_blank'))
     rb.figure(fig_esa, caption='图3  铂的电化学活性面积的计算', width_cm=12.5)
     rb.para('铂的电化学活性面积通过氢脱附峰求得。以下对峰电量的公式作简单推导。'
             '已知扫描速率是电位随时间的变化率（对于单向扫描）：')
@@ -299,7 +346,8 @@ def _sec_o2(rb, an, fig_o2, fig_orr):
     rb.heading('3.2 O₂氛围下硫酸循环伏安曲线分析', 2)
     rb.heading('3.2.1 不同搅拌速度的循环伏安曲线', 3)
     rb.para('O₂ 饱和下，将不同搅拌速度下各 CV 曲线的还原支与 N₂ 饱和下的空白'
-            '曲线合并，结果如图4所示，其中数据点均取自 Segment 5。')
+            '曲线合并，结果如图4所示，其中数据点均取自 %s。'
+            % _seg_txt(an, 'n2_blank'))
     rb.figure(fig_o2, caption='图4  不同搅速下O₂饱和硫酸溶液的CV曲线', width_cm=12.5)
     rb.para('从图4可看出，在高电位区域，不同搅拌速度的 CV 曲线几乎重合。'
             '高电位区域可分成两个部分：在 0.7 V 以上，O₂ 还未开始还原，'
@@ -321,7 +369,7 @@ def _sec_o2(rb, an, fig_o2, fig_orr):
 
     rb.heading('3.2.2 ORR的起始还原电位', 3)
     rb.para('将 O₂ 饱和低速搅拌的 CV 曲线与 N₂ 饱和的 CV 曲线叠加，'
-            '结果如图5所示，其中数据点均取自 Segment 5 和 6。')
+            '结果如图5所示，其中数据点均取自 %s。' % _seg_txt(an, 'o2_slow'))
     rb.figure(fig_orr, caption='图5  低速搅拌下N₂/O₂饱和硫酸溶液的CV曲线',
               width_cm=12.5)
     thr = orr.get('threshold', 1e-6)
@@ -346,7 +394,7 @@ def _sec_meoh(rb, an, fig_meoh, fig_mor):
     rb.heading('3.3 N₂氛围下甲醇循环伏安曲线分析', 2)
     rb.heading('3.3.1 甲醇的循环伏安曲线', 3)
     rb.para('N₂ 饱和下，甲醇+硫酸等体积混合溶液的 CV 曲线如图6所示，'
-            '其中数据点取自 Segment 5 和 6。')
+            '其中数据点取自 %s。' % _seg_txt(an, 'meoh'))
     rb.figure(fig_meoh, caption='图6  N₂饱和下甲醇+硫酸溶液的CV曲线',
               width_cm=12.5)
     rb.para('对该曲线的形状作定性分析。正向扫描时的主氧化峰很好理解，而逆向扫描'

@@ -198,7 +198,12 @@ function slotControl(info, cur) {
   // 候选里最接近的、但不是当前值的那一个，给一句提示
   let hint = '';
   const top = (info.suggestions || [])[0];
-  if (st === 'fuzzy') {
+  if (info.mismatch) {
+    // 名字命中了，但 CHI 文件头与该槽位的要求不符（例如扫速不对）。
+    // 不阻止使用（用户明确登记的文件优先），但必须让他看见——否则表 1 里
+    // 会混进一条扫速完全错位的点，界面上毫无异常。
+    hint = '<span class="warn">⚠ ' + esc(info.mismatch) + '，请核对。</span>';
+  } else if (st === 'fuzzy') {
     hint = '原文件名 <code>' + esc(shortName(info.requested || '')) + '</code> 不在了，' +
       '按文件名自动改用 <code>' + esc(shortName(info.rel || '')) + '</code>' +
       (info.reason ? '（' + esc(info.reason) + '）' : '');

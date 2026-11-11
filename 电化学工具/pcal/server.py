@@ -237,6 +237,8 @@ def _files(query):
             'score': entry.get('score'),
             'status': entry.get('status') or 'missing',
             'reason': entry.get('why') or '',
+            # 名字命中但 CHI 文件头对不上（如扫速不符）时，前端标黄提醒核对
+            'mismatch': entry.get('mismatch') or '',
             'suggestions': entry.get('suggestions') or [],
         })
     payload = filepick.index_payload(data_dir, files)

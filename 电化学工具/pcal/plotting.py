@@ -48,8 +48,22 @@ def _style_axes(ax):
     ax.yaxis.label.set_size(11)
 
 
-def _cv_axes(ax, y_ua=None, invert=True, xlim=XLIM):
-    """CV 图的公共轴样式：倒置纵轴、电势窗口。"""
+def _cv_axes(ax, y_ua=None, cathodic_sign=1, xlim=XLIM):
+    """CV 图的公共轴样式：**让阴极电流朝下**、电势窗口。
+
+    ⚠️ 不能无条件 ``invert_yaxis()``。纵轴该怎么倒取决于电流极性：
+
+    * 阴极电流为**正**（CHI 默认约定，2025 参照数据）：默认坐标是「正向上」，
+      必须倒置才能让还原峰朝下 → 轴标签自上而下 −5 … 15；
+    * 阴极电流为**负**（Polarity 反了，用户 2026-11-11 那批）：负值本来就在
+      下方，**不能倒置** → 轴标签自上而下 40 … −30。
+
+    2026-11-11 用户的原话是「图像 y 轴还是需要上面大下面小」。当时正是因为他
+    那批数据阴极电流为负、却照样倒置，于是还原峰被画到上方去了
+    （轴成了上面 −30、下面 40），既和 CV 惯例相反，也和参考报告看起来不一样。
+
+    判据统一用 ``CvFile.cathodic_sign``（负扫段的峰高符号），不再猜。
+    """
     ax.set_xlabel(E_LABEL)
     ax.set_ylabel(I_LABEL)
     ax.set_xlim(*xlim)
@@ -57,9 +71,15 @@ def _cv_axes(ax, y_ua=None, invert=True, xlim=XLIM):
         lo, hi = float(np.min(y_ua)), float(np.max(y_ua))
         pad = max(0.08 * (hi - lo), 0.3)
         ax.set_ylim(lo - pad, hi + pad)
-    if invert:
+    if cathodic_sign > 0:
         ax.invert_yaxis()
     _style_axes(ax)
+
+
+def _cath(an):
+    """整份数据的阴极电流符号（取空白 CV 的判定；没有就按 CHI 默认 +1）。"""
+    f = an.file('n2_blank') if an is not None else None
+    return int(getattr(f, 'cathodic_sign', 1) or 1) if f is not None else 1
 
 
 def _smooth(y, w):
@@ -93,7 +113,7 @@ def make_n2_series_figure(an):
                 label='%s V·s⁻¹' % rate_label)
         ys.append(I)
     ax.legend(frameon=False, fontsize=10, loc='lower right')
-    _cv_axes(ax, np.concatenate(ys) if ys else None)
+    _cv_axes(ax, np.concatenate(ys) if ys else None, cathodic_sign=_cath(an))
     return fig
 
 
@@ -111,25 +131,26 @@ def make_esa_figure(an):
     fig, ax = plt.subplots(figsize=(6.2, 4.6), dpi=DPI_PREVIEW)
     ax.plot(E, Is, color='black', linewidth=1.0)
     ax.axhline(base, color='gray', linewidth=0.8, linestyle='--')
-    # 阴影只取 S6 正扫段的氢区（脱附峰为阳极、电流为负），
-    # 不能用整圈数组——S5 负扫段的尾巴（氢吸附峰）也落在同一电势窗口里
-    s6 = f.seg(6)
+    # 阴影只取**氧化支**（氢脱附峰）那一段，不能用整圈数组——负扫段的尾巴
+    # （氢吸附峰）也落在同一电势窗口里。段号按电位方向自动判定：CHI 的
+    # Init P/N 决定段序，写死 S6 时 P 起扫的数据会取到还原支，阴影整个错位。
+    s6 = f.oxidative_seg()
     E6, I6 = s6[:, 0], _smooth(s6[:, 1], w) * 1e6
     m = (E6 >= esa['lo']) & (E6 <= esa['hi'])
     ax.fill_between(E6[m], base, I6[m],
                     color='gray', alpha=0.25, linewidth=0)
-    _cv_axes(ax, I)
+    _cv_axes(ax, I, cathodic_sign=_cath(an))
     return fig
 
 
 # ---------------------------------------------------------------- 图4 O₂ 搅拌系列
 def make_o2_series_figure(an):
-    """不同搅拌条件还原支（S5）与 N₂ 空白叠加（图4）。"""
+    """不同搅拌条件还原支与 N₂ 空白叠加（图4）。"""
     fig, ax = plt.subplots(figsize=(6.2, 4.6), dpi=DPI_PREVIEW)
     ys = []
     b = an.file('n2_blank')
     if b is not None:
-        s5 = b.seg(5)
+        s5 = b.reductive_seg()
         E, I = s5[:, 0], _smooth(s5[:, 1], an.cfg.get('smooth_window', 9)) * 1e6
         ax.plot(E, I, color=C_N2, linewidth=1.0, label='N₂')
         ys.append(I)
@@ -138,12 +159,12 @@ def make_o2_series_figure(an):
         if not it:
             continue
         f = an.file('o2_' + cond)
-        s5 = f.seg(5)
+        s5 = f.reductive_seg()
         E, I = s5[:, 0], _smooth(s5[:, 1], an.cfg.get('smooth_window', 9)) * 1e6
         ax.plot(E, I, color=color, linewidth=1.0, label='O₂-' + it['label'])
         ys.append(I)
     ax.legend(frameon=False, fontsize=10, loc='lower right')
-    _cv_axes(ax, np.concatenate(ys) if ys else None)
+    _cv_axes(ax, np.concatenate(ys) if ys else None, cathodic_sign=_cath(an))
     return fig
 
 
@@ -165,7 +186,7 @@ def make_orr_overlay_figure(an):
         ax.plot(E, I, color=C_MAIN, linewidth=1.1, label='O₂饱和')
         ys.append(I)
     ax.legend(frameon=False, fontsize=10, loc='lower right')
-    _cv_axes(ax, np.concatenate(ys) if ys else None)
+    _cv_axes(ax, np.concatenate(ys) if ys else None, cathodic_sign=_cath(an))
     return fig
 
 
@@ -181,7 +202,7 @@ def make_meoh_figure(an):
     E, I = cyc[:, 0], _smooth(cyc[:, 1], an.cfg.get('smooth_window', 9)) * 1e6
     fig, ax = plt.subplots(figsize=(6.2, 4.6), dpi=DPI_PREVIEW)
     ax.plot(E, I, color=C_MAIN, linewidth=1.1)
-    _cv_axes(ax, I)
+    _cv_axes(ax, I, cathodic_sign=_cath(an))
     return fig
 
 
@@ -203,7 +224,7 @@ def make_mor_overlay_figure(an):
         ax.plot(E, I, color=C_MAIN, linewidth=1.1, label='甲醇')
         ys.append(I)
     ax.legend(frameon=False, fontsize=10, loc='upper right')
-    _cv_axes(ax, np.concatenate(ys) if ys else None)
+    _cv_axes(ax, np.concatenate(ys) if ys else None, cathodic_sign=_cath(an))
     return fig
 
 
