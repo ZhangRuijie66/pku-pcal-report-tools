@@ -22,6 +22,11 @@ if not defined PY (
   exit /b 1
 )
 
+rem  Force UTF-8 mode for pip: a requirements file is decoded with the
+rem  locale encoding unless it is ASCII, so cp936 machines choke on
+rem  non-ASCII comments (UnicodeDecodeError: gbk codec ...).
+set "PYTHONUTF8=1"
+
 echo  Installing / refreshing dependencies (Tsinghua mirror) ...
 "%PY%" -m pip install -r "%~dp0requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (

@@ -1,4 +1,8 @@
-# 11 个物化实验报告工具 + 统一入口共用的依赖
+# Shared dependencies for the 11 lab report tools and the portal.
+# Keep this file PURE ASCII. pip decodes a requirements file with the
+# locale's preferred encoding (cp936 on Chinese Windows) unless it has a
+# UTF-8 BOM or a PEP 263 line, so non-ASCII comments here break the install
+# with "UnicodeDecodeError: 'gbk' codec can't decode byte ...".
 python-docx>=1.1
 numpy
 scipy

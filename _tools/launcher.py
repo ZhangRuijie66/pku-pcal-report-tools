@@ -86,6 +86,9 @@ DEPS = {
 }
 DEFAULT_DEPS = ['numpy', 'scipy', 'matplotlib', 'docx']
 
+#: pip 用的国内镜像（清华源，见 README「安装依赖」）
+PIP_MIRROR = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+
 # 入口页没登记、但同样在后台常驻端口上的工具
 EXTRA_PORTS = {'高斯计算工具': 8795}
 
@@ -334,6 +337,25 @@ def _spawn_console(extra):
         ' '.join('"%s"' % a for a in extra)), shell=True)
 
 
+def _pip_env():
+    """pip 子进程的环境：强制 Python 的 UTF-8 模式。
+
+    pip 解析 requirements 文件时，只有文件带 UTF-8 BOM 或头两行有 PEP 263
+    声明才按 UTF-8 解码，否则退回 ``locale.getpreferredencoding()``。中文
+    Windows 上是 cp936，于是清单里**任何一行中文注释**都会让 pip 抛
+    ``UnicodeDecodeError: 'gbk' codec can't decode byte 0xaa in position 7``；
+    而我们这层只会报「依赖安装失败，请检查网络」——看着像网络问题，其实是
+    编码问题（2026-11-14 在别人的电脑上实际踩到，排查了很久）。
+
+    requirements.txt 现在已是纯 ASCII（tests/test_portable.py 会守住），
+    这里是第二道防线：以后谁再往清单里写中文、或者用户手上是旧包，都不会
+    因此装不上。注意只给 pip 子进程设，父进程往控制台打印中文的行为不变。
+    """
+    env = dict(os.environ)
+    env['PYTHONUTF8'] = '1'
+    return env
+
+
 def install_and_start(tool_dir):
     """在可见的命令行窗口里装依赖，装好后转后台启动。"""
     exe = sys.executable or 'python'
@@ -346,10 +368,14 @@ def install_and_start(tool_dir):
         cmd = [exe, '-m', 'pip', 'install', '-r', req]
     else:
         cmd = [exe, '-m', 'pip', 'install'] + DEPS.get(name, DEFAULT_DEPS)
-    cmd += ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple']
-    rc = subprocess.call(cmd)
+    cmd += ['-i', PIP_MIRROR]
+    rc = subprocess.call(cmd, env=_pip_env())
     if rc:
         print('\n[ERROR] 依赖安装失败（返回码 %s），请检查网络后重试。' % rc)
+        print('        若上面的报错里有 UnicodeDecodeError，说明 pip 用本机默认')
+        print('        编码解码依赖清单失败（本版本已强制 UTF-8，并改用纯 ASCII')
+        print('        清单，旧包请换成新版本）。也可以手动装一次：')
+        print('          "%s" -m pip install -r "%s" -i %s' % (exe, req, PIP_MIRROR))
     else:
         print('\n依赖已就绪，正在后台启动 %s …' % name)
         start(tool_dir)

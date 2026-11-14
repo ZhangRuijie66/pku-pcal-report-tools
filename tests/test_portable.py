@@ -124,6 +124,81 @@ class LauncherEncodingTests(unittest.TestCase):
         self.assertGreater(checked, 0, '一个 .vbs 都没找到，检查路径不对')
 
 
+class RequirementsEncodingTests(unittest.TestCase):
+    """依赖清单必须是纯 ASCII，且 pip 子进程强制 UTF-8 模式。
+
+    2026-11-14 用户拷到别人电脑上，首次运行就炸在 pip 上：
+
+        UnicodeDecodeError: 'gbk' codec can't decode byte 0xaa in position 7
+
+    根因不是网络也不是缺包：pip 解析 requirements 文件时，**只有**文件带
+    UTF-8 BOM、或头两行有 PEP 263 声明，才按 UTF-8 解码；否则退回
+    ``locale.getpreferredencoding()``。中文 Windows 是 cp936，于是清单里
+    第一行那句中文注释就让 pip 直接抛异常，而那层只报「依赖安装失败，请检查
+    网络」——看着像网络问题，其实是编码问题。
+
+    两道防线各测一条：清单本身纯 ASCII（治本）+ 启动器给 pip 设
+    PYTHONUTF8=1（治标，防旧包或以后又写进中文）。
+    """
+
+    #: 明确要检查的清单（高斯计算工具在 SKIP_DIRS 里，单独点名）
+    KNOWN = ('requirements.txt', '高斯计算工具/requirements.txt')
+
+    def _requirements_files(self):
+        found = {p for p in self.KNOWN
+                 if (REPO_ROOT / p).is_file()}
+        # 兜底：以后再冒出别的依赖清单也别漏掉
+        for path in _iter_files({'.txt'}):
+            if path.name.lower().startswith('requirement'):
+                found.add(_rel(path))
+        return sorted(found)
+
+    def test_requirements_files_are_pure_ascii(self):
+        files = self._requirements_files()
+        self.assertIn('requirements.txt', files,
+                      '没找到根目录的 requirements.txt，检查路径不对')
+        bad = []
+        for rel in files:
+            data = (REPO_ROOT / rel).read_bytes()
+            offenders = [(i, b) for i, b in enumerate(data) if b > 127]
+            if offenders:
+                line = data[:offenders[0][0]].count(b'\n') + 1
+                bad.append('%s：%d 个非 ASCII 字节（首个在第 %d 行偏移 %d）'
+                           % (rel, len(offenders), line, offenders[0][0]))
+        self.assertEqual(
+            bad, [],
+            '依赖清单里有非 ASCII 字节。pip 在 cp936 环境下会用 GBK 解码这个'
+            '文件，遇到 UTF-8 中文注释直接抛 UnicodeDecodeError，'
+            '首次运行就装不上依赖。注释请写成英文：\n' + '\n'.join(bad))
+
+    def test_requirements_files_parse_as_ascii(self):
+        """再解一遍：确认真的能按 ASCII 读出来（而不是只有字节全 <=127）。"""
+        for rel in self._requirements_files():
+            with self.subTest(file=rel):
+                (REPO_ROOT / rel).read_bytes().decode('ascii')
+
+    def test_launcher_forces_utf8_for_pip(self):
+        """启动器跑 pip 时要带 PYTHONUTF8=1，且确实传给了 pip 子进程。"""
+        src = (REPO_ROOT / '_tools' / 'launcher.py').read_text(encoding='utf-8')
+        self.assertIn('def _pip_env(', src,
+                      'launcher.py 应有 _pip_env()，给 pip 子进程强制 UTF-8 模式')
+        self.assertIn("env['PYTHONUTF8'] = '1'", src,
+                      '_pip_env() 里要设 PYTHONUTF8=1')
+        pip_calls = [ln for ln in src.splitlines()
+                     if 'subprocess.call(' in ln or 'subprocess.run(' in ln]
+        self.assertTrue(any('env=_pip_env()' in ln for ln in pip_calls),
+                        '调用 pip 的 subprocess 必须传 env=_pip_env()，'
+                        '否则 UTF-8 兜底根本没生效；当前调用：%s' % pip_calls)
+
+    def test_install_cmd_forces_utf8(self):
+        """双击安装依赖.cmd 的路径同样要设 PYTHONUTF8。"""
+        data = (REPO_ROOT / '安装依赖.cmd').read_bytes()
+        text = data.decode('ascii')          # 顺便再验一次纯 ASCII
+        self.assertIn('PYTHONUTF8', text.upper(),
+                      '安装依赖.cmd 里要 set "PYTHONUTF8=1"，'
+                      '否则双击安装的路径仍会用 cp936 解码依赖清单')
+
+
 class LauncherStopTests(unittest.TestCase):
     """launcher.py 的 --stop 自动化路径必须不弹框、且要秒回。"""
 
