@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 
 APP_NAME = '物化实验报告工具'
-APP_VERSION = '1.3.4'
+APP_VERSION = '1.3.5'
 RELEASE_DATE = '2026-11-14'
 
 # 更新源（用户 2026-11-06 确认：认 git tag，不看 main 的最新提交）
