@@ -1,0 +1,642 @@
+{
+ "ok": true,
+ "config": {
+  "student_name": "某某",
+  "student_id": "000000000",
+  "group": "1",
+  "group_no": "1",
+  "date": "2026/10/28",
+  "room_temp": 17.1,
+  "pressure": 102,
+  "conc_axis": "lg",
+  "zero_correction": true,
+  "height_mode": "left",
+  "height_sum": 42.35,
+  "repeat_n_bubble": 3,
+  "repeat_n_plate": 1,
+  "data_dir": null,
+  "report_title": "溶液表面吸附的测定"
+ },
+ "defaults": {
+  "student_name": "",
+  "student_id": "",
+  "group": "",
+  "group_no": "",
+  "date": "",
+  "room_temp": null,
+  "pressure": null,
+  "conc_axis": "lg",
+  "zero_correction": true,
+  "height_mode": "both",
+  "height_sum": 0,
+  "repeat_n_bubble": 3,
+  "repeat_n_plate": 3,
+  "data_dir": null,
+  "report_title": "溶液表面吸附的测定"
+ },
+ "has_saved": true,
+ "settings_file": "C:\\\\pcal_test",
+ "data_file": "C:\\\\pcal_test",
+ "data_dir": "C:\\\\pcal_test",
+ "data": {
+  "temperature_bubble": 30,
+  "temperature_plate": 18,
+  "gamma_water": 71.19,
+  "sigma_read": 0.02,
+  "sigma_plate": 0.01,
+  "zero": {
+   "left": [
+    21.15,
+    21.15,
+    21.15
+   ],
+   "right": []
+  },
+  "water_bubble": {
+   "left": [
+    16.98,
+    17,
+    16.97
+   ],
+   "right": []
+  },
+  "bubble": [
+   {
+    "c": 0.0218,
+    "left": [
+     17.18,
+     17.2,
+     17.18
+    ],
+    "right": [],
+    "fit": false
+   },
+   {
+    "c": 0.0547,
+    "left": [
+     17.62,
+     17.65,
+     17.63
+    ],
+    "right": [],
+    "fit": false
+   },
+   {
+    "c": 0.111,
+    "left": [
+     18.07,
+     18.05,
+     18.05
+    ],
+    "right": [],
+    "fit": false
+   },
+   {
+    "c": 0.22,
+    "left": [
+     18.53,
+     18.52,
+     18.53
+    ],
+    "right": [],
+    "fit": true
+   },
+   {
+    "c": 0.329,
+    "left": [
+     18.88,
+     18.9,
+     18.88
+    ],
+    "right": [],
+    "fit": true
+   },
+   {
+    "c": 0.439,
+    "left": [
+     19.15,
+     19.13,
+     19.13
+    ],
+    "right": [],
+    "fit": true
+   },
+   {
+    "c": 0.55,
+    "left": [
+     19.32,
+     19.3,
+     19.32
+    ],
+    "right": [],
+    "fit": true
+   },
+   {
+    "c": 0.74,
+    "left": [
+     19.55,
+     19.54,
+     19.55
+    ],
+    "right": [],
+    "fit": true
+   }
+  ],
+  "water_plate": [
+   72.5,
+   72.5,
+   72.5
+  ],
+  "plate": [
+   {
+    "c": 0.0218,
+    "gamma": [
+     66.7
+    ],
+    "fit": false
+   },
+   {
+    "c": 0.0547,
+    "gamma": [
+     61.13
+    ],
+    "fit": false
+   },
+   {
+    "c": 0.111,
+    "gamma": [
+     55.34
+    ],
+    "fit": false
+   },
+   {
+    "c": 0.22,
+    "gamma": [
+     47.09
+    ],
+    "fit": true
+   },
+   {
+    "c": 0.329,
+    "gamma": [
+     41.8
+    ],
+    "fit": true
+   },
+   {
+    "c": 0.439,
+    "gamma": [
+     38.43
+    ],
+    "fit": true
+   },
+   {
+    "c": 0.55,
+    "gamma": [
+     36.2
+    ],
+    "fit": true
+   },
+   {
+    "c": 0.74,
+    "gamma": [
+     31.75
+    ],
+    "fit": true
+   }
+  ]
+ },
+ "bubble": {
+  "method": "bubble",
+  "label": "最大气泡压力法",
+  "axis": "lg",
+  "temperature": 30,
+  "gamma_water": 71.19,
+  "repeat_n": 3,
+  "zero_correction": true,
+  "sigma_read": 0.02,
+  "sigma_inst": null,
+  "zero": {
+   "dh": 0.05000000000000426,
+   "sigma_dh": 0.044721359549995794,
+   "left": 21.15,
+   "right": 21.00000000000003
+  },
+  "water": {
+   "dh": 8.333333333333325,
+   "sigma_dh": 0.06565905201197417,
+   "left": 16.983333333333334,
+   "right": 25.366666666666664,
+   "mean": null,
+   "sigma": null
+  },
+  "rows": [
+   {
+    "c": 0.0218,
+    "left_mean": 17.186666666666664,
+    "left_sigma": 0.02108185106778915,
+    "right_mean": 25.163333333333338,
+    "right_sigma": 0.02108185106778915,
+    "dh": 7.926666666666669,
+    "sigma_dh": 0.06463573143221765,
+    "gamma": 67.71592800000009,
+    "sigma_gamma": 0.5584659794181156,
+    "derived": true,
+    "fit": false
+   },
+   {
+    "c": 0.0547,
+    "left_mean": 17.63333333333333,
+    "left_sigma": 0.021858128414339748,
+    "right_mean": 24.71666666666667,
+    "right_sigma": 0.021858128414339748,
+    "dh": 7.033333333333335,
+    "sigma_dh": 0.0656590520119737,
+    "gamma": 60.08436000000007,
+    "sigma_gamma": 0.5407039556460471,
+    "derived": true,
+    "fit": false
+   },
+   {
+    "c": 0.111,
+    "left_mean": 18.05666666666667,
+    "left_sigma": 0.02108185106778915,
+    "right_mean": 24.293333333333333,
+    "right_sigma": 0.02108185106778915,
+    "dh": 6.18666666666666,
+    "sigma_dh": 0.06463573143221765,
+    "gamma": 52.85145599999999,
+    "sigma_gamma": 0.5114476774586802,
+    "derived": true,
+    "fit": false
+   },
+   {
+    "c": 0.22,
+    "left_mean": 18.526666666666667,
+    "left_sigma": 0.020275875100994153,
+    "right_mean": 23.823333333333334,
+    "right_sigma": 0.020275875100994153,
+    "dh": 5.246666666666663,
+    "sigma_dh": 0.06359594676112981,
+    "gamma": 44.82122400000001,
+    "sigma_gamma": 0.48588577194750365,
+    "derived": true,
+    "fit": true
+   },
+   {
+    "c": 0.329,
+    "left_mean": 18.886666666666667,
+    "left_sigma": 0.02108185106778915,
+    "right_mean": 23.463333333333335,
+    "right_sigma": 0.02108185106778915,
+    "dh": 4.526666666666664,
+    "sigma_dh": 0.06463573143221765,
+    "gamma": 38.67040800000001,
+    "sigma_gamma": 0.48903639876127825,
+    "derived": true,
+    "fit": true
+   },
+   {
+    "c": 0.439,
+    "left_mean": 19.136666666666667,
+    "left_sigma": 0.02108185106778915,
+    "right_mean": 23.213333333333335,
+    "right_sigma": 0.02108185106778915,
+    "dh": 4.026666666666664,
+    "sigma_dh": 0.06463573143221765,
+    "gamma": 34.39900800000001,
+    "sigma_gamma": 0.4871303261362106,
+    "derived": true,
+    "fit": true
+   },
+   {
+    "c": 0.55,
+    "left_mean": 19.313333333333336,
+    "left_sigma": 0.02108185106778915,
+    "right_mean": 23.036666666666665,
+    "right_sigma": 0.02108185106778915,
+    "dh": 3.673333333333325,
+    "sigma_dh": 0.06463573143221765,
+    "gamma": 31.380551999999962,
+    "sigma_gamma": 0.487182834463972,
+    "derived": true,
+    "fit": true
+   },
+   {
+    "c": 0.74,
+    "left_mean": 19.546666666666667,
+    "left_sigma": 0.020275875100994153,
+    "right_mean": 22.80333333333333,
+    "right_sigma": 0.020275875100994153,
+    "dh": 3.20666666666666,
+    "sigma_dh": 0.06359594676112981,
+    "gamma": 27.39391199999997,
+    "sigma_gamma": 0.4789757697401811,
+    "derived": true,
+    "fit": true
+   }
+  ],
+  "height": {
+   "mode": "left",
+   "sum": 42.35,
+   "source": "manual",
+   "filled": 30,
+   "keys": {
+    "zero": "left",
+    "water_bubble": "left",
+    "bubble": [
+     "left",
+     "left",
+     "left",
+     "left",
+     "left",
+     "left",
+     "left",
+     "left"
+    ]
+   },
+   "side": "right",
+   "fallback": false
+  },
+  "fit": {
+   "slope": -0.03310403453776815,
+   "intercept": 0.022830802202863335,
+   "sigma_slope": 0.0006334829847951817,
+   "sigma_intercept": 0.00026543635957355303,
+   "r2": 0.9989026315551374,
+   "n": 5,
+   "x": [
+    -0.6575773191777937,
+    -0.48280410205002566,
+    -0.35753547975787864,
+    -0.2596373105057561,
+    -0.13076828026902382
+   ],
+   "y": [
+    0.04482122400000001,
+    0.03867040800000001,
+    0.03439900800000001,
+    0.031380551999999964,
+    0.027393911999999968
+   ]
+  },
+  "gamma_inf": 5.703920714285676e-06,
+  "sigma_gamma_inf": 1.0915094699403864e-07,
+  "q": 0.291122396392181,
+  "sigma_q": 0.00557095493592602,
+  "qc_rows": [
+   {
+    "c": 0.22,
+    "qc": 0.2706457330190839,
+    "sigma": 0.004814828019889636,
+    "rel": -7.033695664387254
+   },
+   {
+    "c": 0.329,
+    "qc": 0.26491191615044396,
+    "sigma": 0.004612978158776514,
+    "rel": -9.003251060913916
+   },
+   {
+    "c": 0.439,
+    "qc": 0.2599496455154992,
+    "sigma": 0.004441778212109619,
+    "rel": -10.70778176567629
+   },
+   {
+    "c": 0.55,
+    "qc": 0.25551301911219737,
+    "sigma": 0.0042914541564397215,
+    "rel": -12.231754657588427
+   },
+   {
+    "c": 0.74,
+    "qc": 0.2488545918060272,
+    "sigma": 0.00407070590983884,
+    "rel": -14.518912014317648
+   }
+  ]
+ },
+ "plate": {
+  "method": "plate",
+  "label": "吊片法",
+  "axis": "lg",
+  "temperature": 18,
+  "gamma_water": null,
+  "repeat_n": 1,
+  "zero_correction": null,
+  "sigma_read": null,
+  "sigma_inst": 0.01,
+  "zero": null,
+  "water": {
+   "dh": null,
+   "sigma_dh": null,
+   "left": null,
+   "right": null,
+   "mean": 72.5,
+   "sigma": 0.01
+  },
+  "rows": [
+   {
+    "c": 0.0218,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 66.7,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": false
+   },
+   {
+    "c": 0.0547,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 61.13,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": false
+   },
+   {
+    "c": 0.111,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 55.34,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": false
+   },
+   {
+    "c": 0.22,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 47.09,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": true
+   },
+   {
+    "c": 0.329,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 41.8,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": true
+   },
+   {
+    "c": 0.439,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 38.43,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": true
+   },
+   {
+    "c": 0.55,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 36.2,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": true
+   },
+   {
+    "c": 0.74,
+    "left_mean": null,
+    "left_sigma": null,
+    "right_mean": null,
+    "right_sigma": null,
+    "dh": null,
+    "sigma_dh": null,
+    "gamma": 31.75,
+    "sigma_gamma": 0.01,
+    "derived": null,
+    "fit": true
+   }
+  ],
+  "height": null,
+  "fit": {
+   "slope": -0.02848127087507482,
+   "intercept": 0.028297635122534713,
+   "sigma_slope": 0.0008997981457324254,
+   "sigma_intercept": 0.0003770253501464921,
+   "r2": 0.9970146568603966,
+   "n": 5,
+   "x": [
+    -0.6575773191777937,
+    -0.48280410205002566,
+    -0.35753547975787864,
+    -0.2596373105057561,
+    -0.13076828026902382
+   ],
+   "y": [
+    0.04709000000000001,
+    0.0418,
+    0.03843,
+    0.0362,
+    0.03175
+   ]
+  },
+  "gamma_inf": 5.1096681554764875e-06,
+  "sigma_gamma_inf": 1.614278362707959e-07,
+  "q": 0.32497982582178037,
+  "sigma_q": 0.010266966174279482,
+  "qc_rows": [
+   {
+    "c": 0.22,
+    "qc": 0.2996703814490882,
+    "sigma": 0.008730054790121518,
+    "rel": -7.788004781125067
+   },
+   {
+    "c": 0.329,
+    "qc": 0.29265674109403156,
+    "sigma": 0.00832619144345697,
+    "rel": -9.946181934836428
+   },
+   {
+    "c": 0.439,
+    "qc": 0.28661247815012586,
+    "sigma": 0.007985819990015573,
+    "rel": -11.80607059980863
+   },
+   {
+    "c": 0.55,
+    "qc": 0.281228478928095,
+    "sigma": 0.007688611623705586,
+    "rel": -13.462788584814708
+   },
+   {
+    "c": 0.74,
+    "qc": 0.2731834672085935,
+    "sigma": 0.007255012307387782,
+    "rel": -15.938330473963672
+   }
+  ]
+ },
+ "height": {
+  "mode": "left",
+  "sum": 42.35,
+  "source": "manual",
+  "filled": 30,
+  "keys": {
+   "zero": "left",
+   "water_bubble": "left",
+   "bubble": [
+    "left",
+    "left",
+    "left",
+    "left",
+    "left",
+    "left",
+    "left",
+    "left"
+   ]
+  },
+  "side": "right",
+  "fallback": false,
+  "estimate": null
+ },
+ "comparison": {
+  "d_gamma": -5.942525588091888e-07,
+  "rel_gamma": -10.418317304461503,
+  "d_q": 0.03385742942959935,
+  "rel_q": 11.629963839672728
+ },
+ "warnings": [
+  "液柱只读左侧：右侧 30 个读数由 S = 42.35 cm 换算（手填）。报告中已注明换算关系。"
+ ],
+ "q_literature": 0.3,
+ "axis": "lg",
+ "out_dir": "C:\\\\pcal_test",
+ "template": "C:\\\\pcal_test",
+ "report_name": "000000000-某某-表面吸附.docx"
+}

@@ -1,0 +1,313 @@
+{
+ "ok": true,
+ "config": {
+  "student_name": "某某",
+  "student_id": "000000000",
+  "group": "1",
+  "group_no": "1",
+  "date": "",
+  "room_temp": null,
+  "pressure": null,
+  "data_dir": "C:\\\\pcal_test",
+  "file_n2_blank": "N2_1.txt",
+  "file_n2_02": "N2_2.txt",
+  "file_n2_05": "N2_5.txt",
+  "file_o2_fast": "O2_fast.txt",
+  "file_o2_slow": "O2_slow.txt",
+  "file_o2_still": "O2_still.txt",
+  "file_meoh": "MeOH.txt",
+  "smooth_window": 9,
+  "onset_threshold_uA": 1,
+  "esa_lo": -0.26,
+  "esa_hi": 0.15,
+  "esa_baseline_uA": null,
+  "dl_lo": 0.1,
+  "dl_hi": 0.2,
+  "i_min_uA": 0.03,
+  "i_step_uA": 0.049999999999999996
+ },
+ "defaults": {
+  "student_name": "",
+  "student_id": "",
+  "group": "",
+  "group_no": "",
+  "date": "",
+  "room_temp": null,
+  "pressure": null,
+  "data_dir": "C:\\\\pcal_test",
+  "file_n2_blank": "N2_1.txt",
+  "file_n2_02": "N2_2.txt",
+  "file_n2_05": "N2_5.txt",
+  "file_o2_fast": "O2_fast.txt",
+  "file_o2_slow": "O2_slow.txt",
+  "file_o2_still": "O2_still.txt",
+  "file_meoh": "MeOH.txt",
+  "smooth_window": 9,
+  "onset_threshold_uA": 1,
+  "esa_lo": -0.26,
+  "esa_hi": 0.15,
+  "esa_baseline_uA": null,
+  "dl_lo": 0.1,
+  "dl_hi": 0.2,
+  "i_min_uA": 0.03,
+  "i_step_uA": 0.049999999999999996
+ },
+ "has_saved": true,
+ "settings_file": "C:\\\\pcal_test",
+ "table1": [
+  {
+   "v": 0.1,
+   "label": "0.1",
+   "Ep": 0.385,
+   "ip": 3.886e-06,
+   "seg": 6
+  },
+  {
+   "v": 0.2,
+   "label": "0.2",
+   "Ep": 0.38,
+   "ip": 6.113e-06,
+   "seg": 6
+  },
+  {
+   "v": 0.5,
+   "label": "0.5",
+   "Ep": 0.365,
+   "ip": 9.794e-06,
+   "seg": 6
+  }
+ ],
+ "esa": {
+  "A": 5.148886370000001e-07,
+  "Q": 5.148886370000001e-06,
+  "baseline": 4.620857142857143e-07,
+  "lo": -0.305,
+  "hi": 0.15,
+  "area_cm2": 0.02451850652380953,
+  "area_mm2": 2.451850652380953,
+  "v": 0.1
+ },
+ "orr": {
+  "onset_red": 0.485,
+  "onset_ox": 0.575,
+  "threshold": 1e-06
+ },
+ "mor": {
+  "onset": 0.155,
+  "threshold": 1e-06
+ },
+ "dmfc": {
+  "E_intersect": 0.40058037094281307,
+  "I_intersect": 9.041755555555546e-06,
+  "P_max": 4.863200462763177e-07,
+  "E_at_Pmax": 0.17113366606271802,
+  "I_at_Pmax": 2.841755555555553e-06,
+  "I_max": 9.041755555555546e-06
+ },
+ "warnings": [
+  "「n2_blank」的数据文件 N2_1.txt 不在，已自动改用 000000000/氮气1.txt（匹配度 95%，依据：文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.1 V·s⁻¹）。如不对，请在「数据文件映射」里改。",
+  "「n2_02」的数据文件 N2_2.txt 不在，已自动改用 000000000/氮气2.txt（匹配度 95%，依据：文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.2 V·s⁻¹）。如不对，请在「数据文件映射」里改。",
+  "「n2_05」的数据文件 N2_5.txt 不在，已自动改用 000000000/氮气5.txt（匹配度 95%，依据：文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.5 V·s⁻¹）。如不对，请在「数据文件映射」里改。",
+  "「o2_fast」的数据文件 O2_fast.txt 不在，已自动改用 000000000/快速搅拌.txt（匹配度 95%，依据：文件名为「快速」，搅拌条件「快速搅拌」）。如不对，请在「数据文件映射」里改。",
+  "「o2_slow」的数据文件 O2_slow.txt 不在，已自动改用 000000000/低速搅拌.txt（匹配度 95%，依据：文件名为「低速」，搅拌条件「低速搅拌」）。如不对，请在「数据文件映射」里改。",
+  "「o2_still」的数据文件 O2_still.txt 不在，已自动改用 000000000/不搅拌.txt（匹配度 95%，依据：文件名为「不搅」，搅拌条件「不搅拌/静止」）。如不对，请在「数据文件映射」里改。",
+  "「meoh」的数据文件 MeOH.txt 不在，已自动改用 000000000/CH3OH.txt（匹配度 95%，依据：文件名含「ch3oh」）。如不对，请在「数据文件映射」里改。"
+ ],
+ "out_dir": "C:\\\\pcal_test",
+ "data_dir": "C:\\\\pcal_test",
+ "template": "C:\\\\pcal_test",
+ "report_name": "000000000-某某-电化学.docx",
+ "files_found": [
+  "meoh",
+  "n2_02",
+  "n2_05",
+  "n2_blank",
+  "o2_fast",
+  "o2_slow",
+  "o2_still"
+ ],
+ "txt_files": [
+  "000000000/CH3OH.txt",
+  "000000000/不搅拌.txt",
+  "000000000/低速搅拌.txt",
+  "000000000/快速搅拌.txt",
+  "000000000/氮气1.txt",
+  "000000000/氮气2.txt",
+  "000000000/氮气5.txt"
+ ],
+ "file_slots": [
+  {
+   "key": "file_n2_blank",
+   "label": "N₂ 空白（0.1 V·s⁻¹，也作扣空白基准）",
+   "why": "0.1 V·s⁻¹ 的 N₂ 饱和硫酸 CV，既是扫速系列的一员，也是所有扣空白的基准",
+   "requested": "N2_1.txt",
+   "default": "N2_1.txt",
+   "rel": "000000000/氮气1.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.1 V·s⁻¹",
+   "suggestions": [
+    {
+     "rel": "000000000/氮气1.txt",
+     "score": 0.95,
+     "why": "文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.1 V·s⁻¹"
+    },
+    {
+     "rel": "000000000/氮气2.txt",
+     "score": 0.19,
+     "why": "扫速 0.2 V·s⁻¹ ≠ 本槽位要求的 0.1"
+    }
+   ],
+   "found": true
+  },
+  {
+   "key": "file_n2_02",
+   "label": "N₂ 0.2 V·s⁻¹",
+   "why": "扫速系列：用于表 1 的峰电流-扫速关系",
+   "requested": "N2_2.txt",
+   "default": "N2_2.txt",
+   "rel": "000000000/氮气2.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.2 V·s⁻¹",
+   "suggestions": [
+    {
+     "rel": "000000000/氮气2.txt",
+     "score": 0.95,
+     "why": "文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.2 V·s⁻¹"
+    }
+   ],
+   "found": true
+  },
+  {
+   "key": "file_n2_05",
+   "label": "N₂ 0.5 V·s⁻¹",
+   "why": "扫速系列：用于表 1 的峰电流-扫速关系",
+   "requested": "N2_5.txt",
+   "default": "N2_5.txt",
+   "rel": "000000000/氮气5.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.5 V·s⁻¹",
+   "suggestions": [
+    {
+     "rel": "000000000/氮气5.txt",
+     "score": 0.95,
+     "why": "文件名含「氮气」，按CHI 文件头 Scan Rate判为扫速 0.5 V·s⁻¹"
+    },
+    {
+     "rel": "000000000/氮气2.txt",
+     "score": 0.19,
+     "why": "扫速 0.2 V·s⁻¹ ≠ 本槽位要求的 0.5"
+    }
+   ],
+   "found": true
+  },
+  {
+   "key": "file_o2_fast",
+   "label": "O₂ 快速搅拌",
+   "why": "通气 + 搅拌，还原电流最大",
+   "requested": "O2_fast.txt",
+   "default": "O2_fast.txt",
+   "rel": "000000000/快速搅拌.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名为「快速」，搅拌条件「快速搅拌」",
+   "suggestions": [
+    {
+     "rel": "000000000/快速搅拌.txt",
+     "score": 0.95,
+     "why": "文件名为「快速」，搅拌条件「快速搅拌」"
+    },
+    {
+     "rel": "000000000/氮气2.txt",
+     "score": 0.1267,
+     "why": "是「N₂ 饱和」组的数据，不是这一组"
+    },
+    {
+     "rel": "000000000/CH3OH.txt",
+     "score": 0.1036,
+     "why": "是「甲醇氧化」组的数据，不是这一组"
+    }
+   ],
+   "found": true
+  },
+  {
+   "key": "file_o2_slow",
+   "label": "O₂ 低速搅拌（ORR/DMFC 用）",
+   "why": "仅通气；ORR 起始还原电位与 DMFC 的阴极支都取自这里",
+   "requested": "O2_slow.txt",
+   "default": "O2_slow.txt",
+   "rel": "000000000/低速搅拌.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名为「低速」，搅拌条件「低速搅拌」",
+   "suggestions": [
+    {
+     "rel": "000000000/低速搅拌.txt",
+     "score": 0.95,
+     "why": "文件名为「低速」，搅拌条件「低速搅拌」"
+    },
+    {
+     "rel": "000000000/氮气2.txt",
+     "score": 0.1267,
+     "why": "是「N₂ 饱和」组的数据，不是这一组"
+    },
+    {
+     "rel": "000000000/CH3OH.txt",
+     "score": 0.1036,
+     "why": "是「甲醇氧化」组的数据，不是这一组"
+    }
+   ],
+   "found": true
+  },
+  {
+   "key": "file_o2_still",
+   "label": "O₂ 电解质静止",
+   "why": "不通气不搅拌，用来看溶液内 O₂ 耗尽后的极限",
+   "requested": "O2_still.txt",
+   "default": "O2_still.txt",
+   "rel": "000000000/不搅拌.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名为「不搅」，搅拌条件「不搅拌/静止」",
+   "suggestions": [
+    {
+     "rel": "000000000/不搅拌.txt",
+     "score": 0.95,
+     "why": "文件名为「不搅」，搅拌条件「不搅拌/静止」"
+    },
+    {
+     "rel": "000000000/氮气2.txt",
+     "score": 0.114,
+     "why": "是「N₂ 饱和」组的数据，不是这一组"
+    },
+    {
+     "rel": "000000000/CH3OH.txt",
+     "score": 0.095,
+     "why": "是「甲醇氧化」组的数据，不是这一组"
+    }
+   ],
+   "found": true
+  },
+  {
+   "key": "file_meoh",
+   "label": "甲醇 + 硫酸",
+   "why": "MOR 起始氧化电位与 DMFC 的阳极支",
+   "requested": "MeOH.txt",
+   "default": "MeOH.txt",
+   "rel": "000000000/CH3OH.txt",
+   "score": 0.95,
+   "status": "fuzzy",
+   "reason": "文件名含「ch3oh」",
+   "suggestions": [
+    {
+     "rel": "000000000/CH3OH.txt",
+     "score": 0.95,
+     "why": "文件名含「ch3oh」"
+    }
+   ],
+   "found": true
+  }
+ ]
+}

@@ -1,0 +1,1423 @@
+{
+ "ok": true,
+ "config": {
+  "student_name": "某某",
+  "student_id": "000000000",
+  "group": "1",
+  "group_no": "1",
+  "partner_name": "",
+  "date": "2026/10/14 & 10/21",
+  "room_temp_1": 22,
+  "room_temp_2": 19.1,
+  "pressure_1": 101.5,
+  "pressure_2": 101.8,
+  "data_dir": "C:\\\\pcal_test",
+  "file_map": {},
+  "smooth_window": 9,
+  "stray_mode": "off",
+  "stray": 0,
+  "stray_a3": 0.33,
+  "path_cm": 1,
+  "anchor_pad": 80,
+  "voigt_peaks": "auto",
+  "molecule_default": {
+   "A1": "A1",
+   "A2": "A2b",
+   "A3": "A3c5b",
+   "A4": "A4",
+   "B1": "B1c",
+   "B2": "B2"
+  },
+  "conc_pick": {
+   "1": "A3c1",
+   "5": "A3c5b",
+   "10": "A3c10",
+   "20": "A3c20b",
+   "50": "A3c50b",
+   "0.5": "A3c0.5"
+  },
+  "beer_concs": [
+   0.5,
+   1,
+   5,
+   10
+  ],
+  "box_a": 6,
+  "box_n_B1": 22,
+  "box_n_B2": 6,
+  "calibrations": [],
+  "curve_cal": {
+   "A3c0.5": "d2_long",
+   "A3c1": "d2_long",
+   "A3c5": "d2_long",
+   "A3c5b": "d2_long",
+   "A3c10": "d2_long",
+   "A3c20": "d2_long",
+   "A3c20b": "d2_long",
+   "A3c50": "d2_long",
+   "A3c50b": "d2_long",
+   "A4": "d1_long",
+   "A2": "d2_long",
+   "A2b": "d2_long",
+   "A1": "d2_short",
+   "B1": "d2_short",
+   "B1b": "d2_short",
+   "B1c": "d2_short",
+   "B2": "d2_short",
+   "A3_DW": "d2_long"
+  },
+  "gcalc": {},
+  "gcalc_dir": "",
+  "gcalc_logs_dir": ""
+ },
+ "defaults": {
+  "student_name": "",
+  "student_id": "",
+  "group": "",
+  "group_no": "",
+  "partner_name": "",
+  "date": "2026/10/14 & 10/21",
+  "room_temp_1": 22,
+  "room_temp_2": 19.1,
+  "pressure_1": 101.5,
+  "pressure_2": 101.8,
+  "data_dir": "C:\\\\pcal_test",
+  "file_map": {},
+  "smooth_window": 1,
+  "stray_mode": "off",
+  "stray": 0,
+  "stray_a3": 0.33,
+  "path_cm": 1,
+  "anchor_pad": 80,
+  "voigt_peaks": "auto",
+  "molecule_default": {
+   "A1": "A1",
+   "A2": "A2b",
+   "A3": "A3c5b",
+   "A4": "A4",
+   "B1": "B1c",
+   "B2": "B2"
+  },
+  "conc_pick": {
+   "1": "A3c1",
+   "5": "A3c5b",
+   "10": "A3c10",
+   "20": "A3c20b",
+   "50": "A3c50b",
+   "0.5": "A3c0.5"
+  },
+  "beer_concs": [
+   0.5,
+   1,
+   5,
+   10
+  ],
+  "box_a": 6,
+  "box_n_B1": 22,
+  "box_n_B2": 6,
+  "calibrations": [],
+  "curve_cal": {},
+  "gcalc": {},
+  "gcalc_dir": "",
+  "gcalc_logs_dir": ""
+ },
+ "has_saved": true,
+ "settings_file": "C:\\\\pcal_test",
+ "cals": [
+  {
+   "key": "d1_long",
+   "label": "长波范围（第一周 10-14）",
+   "short": "第一周长波",
+   "a": 0.12604580109506316,
+   "sigma_a": 0.0010964014979822291,
+   "b": 422.1005316908214,
+   "sigma_b": 1.4569924572732116,
+   "r2": 0.9999243429129343,
+   "lam_lo": 422.2265774919165,
+   "lam_hi": 881.9156140856119,
+   "points": [
+    [
+     508.5543426295181,
+     485.82
+    ],
+    [
+     1256.9562141494116,
+     581.39
+    ],
+    [
+     1859.904974380994,
+     656.06
+    ]
+   ],
+   "fallback": false,
+   "file_name": "2026-10-14 & 17-01-51-氘灯.txt",
+   "path": "C:\\pcal_test"
+  },
+  {
+   "key": "d2_long",
+   "label": "长波范围（第二周 10-21）",
+   "short": "第二周长波",
+   "a": 0.12572074407821276,
+   "sigma_a": 0.0014983474763052467,
+   "b": 422.43322401094423,
+   "sigma_b": 1.9926643943450284,
+   "r2": 0.9998579799984487,
+   "lam_lo": 422.5589447550224,
+   "lam_hi": 881.0624984082644,
+   "points": [
+    [
+     508.37340655810686,
+     485.82
+    ],
+    [
+     1255.0398936172205,
+     581.39
+    ],
+    [
+     1863.437076111827,
+     656.06
+    ]
+   ],
+   "fallback": false,
+   "file_name": "2026-10-21 & 13-36-23-1到3的校准.txt",
+   "path": "C:\\pcal_test"
+  },
+  {
+   "key": "d2_short",
+   "label": "短波范围（第二周 10-21）",
+   "short": "第二周短波",
+   "a": 0.1275780658871788,
+   "sigma_a": 0.001296858606875437,
+   "b": 258.16282685685167,
+   "sigma_b": 3.2919413098538306,
+   "r2": 0.9998966790583568,
+   "lam_lo": 258.29040492273884,
+   "lam_hi": 723.5676112132799,
+   "points": [
+    [
+     1787.9602648986338,
+     485.82
+    ],
+    [
+     2525.727557125818,
+     581.39
+    ],
+    [
+     3123.1824019565397,
+     656.06
+    ]
+   ],
+   "fallback": false,
+   "file_name": "2026-10-21 & 13-44-43-4的校准.txt",
+   "path": "C:\\pcal_test"
+  }
+ ],
+ "samples": [
+  {
+   "key": "A4",
+   "mol": "A4",
+   "kind": "molecule",
+   "day": 1,
+   "conc": 3,
+   "source": "卤钨灯",
+   "band": [
+    620,
+    860
+   ],
+   "stray": 0,
+   "lmax_obs": 770.1877346683355,
+   "A_obs": 0.4091012776285307,
+   "lmax": 770.1877346683355,
+   "A": 0.4091012776285307,
+   "eps": 136367.09254284357,
+   "cal": "第一周长波",
+   "sample_file": "2026-10-14 & 17-05-15-A4-3.txt",
+   "blank_file": "2026-10-14 & 17-11-53-A4-乙醇.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c0.5",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 0.5,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 655.1439299123905,
+   "A_obs": 0.06600879360649888,
+   "lmax": 655.1439299123905,
+   "A": 0.06600879360649888,
+   "eps": 132017.58721299775,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 12-29-42-A3-0.5.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c1",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 1,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 657.3967459324156,
+   "A_obs": 0.08514785248692096,
+   "lmax": 657.3967459324156,
+   "A": 0.08514785248692096,
+   "eps": 85147.85248692097,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 12-33-43-A3-1.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c5",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 5,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 657.3967459324156,
+   "A_obs": 0.37315486080262755,
+   "lmax": 657.3967459324156,
+   "A": 0.37315486080262755,
+   "eps": 74630.97216052552,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 12-36-40-A3-5.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c10",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 10,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 656.6458072590739,
+   "A_obs": 0.4774718417262448,
+   "lmax": 656.6458072590739,
+   "A": 0.4774718417262448,
+   "eps": 47747.18417262448,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 12-40-17-A3-10.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c20b",
+   "mol": "A3",
+   "kind": "conc_rep",
+   "day": 2,
+   "conc": 20,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 661.9023779724656,
+   "A_obs": 0.5790811384411374,
+   "lmax": 661.9023779724656,
+   "A": 0.5790811384411374,
+   "eps": 28954.056922056872,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 12-45-38-A3-20-2.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c50b",
+   "mol": "A3",
+   "kind": "conc_rep",
+   "day": 2,
+   "conc": 50,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 618.5982478097623,
+   "A_obs": 0.7124899521237171,
+   "lmax": 618.5982478097623,
+   "A": 0.7124899521237171,
+   "eps": 14249.799042474344,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 12-51-12-A3-50-2.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3c5b",
+   "mol": "A3",
+   "kind": "conc_rep",
+   "day": 2,
+   "conc": 5,
+   "source": "卤钨灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 656.1451814768461,
+   "A_obs": 0.2468279143922903,
+   "lmax": 656.1451814768461,
+   "A": 0.2468279143922903,
+   "eps": 49365.582878458066,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 13-02-28-A3-5-2.txt",
+   "blank_file": "2026-10-21 & 12-56-02-A3-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A3_DW",
+   "mol": "A3",
+   "kind": "source",
+   "day": 2,
+   "conc": 5,
+   "source": "卤钨灯+氘灯",
+   "band": [
+    540,
+    740
+   ],
+   "stray": 0,
+   "lmax_obs": 657.1464330413016,
+   "A_obs": 0.42510212671607805,
+   "lmax": 657.1464330413016,
+   "A": 0.42510212671607805,
+   "eps": 85020.42534321563,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 13-06-53-A3-5-D+W.txt",
+   "blank_file": "2026-10-21 & 13-11-41-A3-0-D+W.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A2b",
+   "mol": "A2",
+   "kind": "molecule_rep",
+   "day": 2,
+   "conc": 5,
+   "source": "卤钨灯",
+   "band": [
+    480,
+    650
+   ],
+   "stray": 0,
+   "lmax_obs": 560.8510638297872,
+   "A_obs": 0.38401919107365134,
+   "lmax": 560.8510638297872,
+   "A": 0.38401919107365134,
+   "eps": 76803.83821473028,
+   "cal": "第二周长波",
+   "sample_file": "2026-10-21 & 13-31-52-A2-5-2.txt",
+   "blank_file": "2026-10-21 & 13-23-50-A2-0.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "A1",
+   "mol": "A1",
+   "kind": "molecule",
+   "day": 2,
+   "conc": 10,
+   "source": "氘灯",
+   "band": [
+    380,
+    520
+   ],
+   "stray": 0,
+   "lmax_obs": 428.5356695869837,
+   "A_obs": 0.6893933323921827,
+   "lmax": 428.5356695869837,
+   "A": 0.6893933323921827,
+   "eps": 68939.33323921828,
+   "cal": "第二周短波",
+   "sample_file": "2026-10-21 & 13-49-27-A1.txt",
+   "blank_file": "2026-10-21 & 14-03-45-乙醇.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "B1c",
+   "mol": "B1",
+   "kind": "molecule_rep",
+   "day": 2,
+   "conc": 10,
+   "source": "氘灯",
+   "band": [
+    380,
+    540
+   ],
+   "stray": 0,
+   "lmax_obs": 449.88735919899875,
+   "A_obs": 0.4594001869516179,
+   "lmax": 449.88735919899875,
+   "A": 0.4594001869516179,
+   "eps": 45940.018695161794,
+   "cal": "第二周短波",
+   "sample_file": "2026-10-21 & 14-14-51-B1-3.txt",
+   "blank_file": "2026-10-21 & 14-03-45-乙醇.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  },
+  {
+   "key": "B2",
+   "mol": "B2",
+   "kind": "molecule",
+   "day": 2,
+   "conc": 30,
+   "source": "氘灯",
+   "band": [
+    250,
+    360
+   ],
+   "stray": 0,
+   "lmax_obs": 296.2578222778473,
+   "A_obs": 0.7519775206005521,
+   "lmax": 296.2578222778473,
+   "A": 0.7519775206005521,
+   "eps": 25065.91735335174,
+   "cal": "第二周短波",
+   "sample_file": "2026-10-21 & 14-01-40-B2.txt",
+   "blank_file": "2026-10-21 & 14-03-45-乙醇.txt",
+   "sample_path": "C:\\pcal_test",
+   "blank_path": "C:\\pcal_test"
+  }
+ ],
+ "molecules": [
+  {
+   "code": "A1",
+   "name": "3,3′-二乙基硫菁碘盐",
+   "key": "A1",
+   "conc": 10,
+   "lam": 428.5356695869837,
+   "A": 0.6893933323921827,
+   "eps": 68939.33323921828,
+   "source": "氘灯",
+   "group": "1"
+  },
+  {
+   "code": "A2",
+   "name": "3,3′-二乙基噻碳菁碘化物",
+   "key": "A2b",
+   "conc": 5,
+   "lam": 560.8510638297872,
+   "A": 0.38401919107365134,
+   "eps": 76803.83821473028,
+   "source": "卤钨灯",
+   "group": "1"
+  },
+  {
+   "code": "A3",
+   "name": "3,3′-二乙基硫二羰花青碘",
+   "key": "A3c5b",
+   "conc": 5,
+   "lam": 656.1451814768461,
+   "A": 0.2468279143922903,
+   "eps": 49365.582878458066,
+   "source": "卤钨灯",
+   "group": "1"
+  },
+  {
+   "code": "A4",
+   "name": "3,3′-二乙基硫杂三羰花青碘化物",
+   "key": "A4",
+   "conc": 3,
+   "lam": 770.1877346683355,
+   "A": 0.4091012776285307,
+   "eps": 136367.09254284357,
+   "source": "卤钨灯",
+   "group": "1"
+  },
+  {
+   "code": "B1",
+   "name": "β-胡萝卜素",
+   "key": "B1c",
+   "conc": 10,
+   "lam": 449.88735919899875,
+   "A": 0.4594001869516179,
+   "eps": 45940.018695161794,
+   "source": "氘灯",
+   "group": "1"
+  },
+  {
+   "code": "B2",
+   "name": "2,6-二甲基-2,4,6-辛三烯",
+   "key": "B2",
+   "conc": 30,
+   "lam": 296.2578222778473,
+   "A": 0.7519775206005521,
+   "eps": 25065.91735335174,
+   "source": "氘灯",
+   "group": "1"
+  }
+ ],
+ "beer": {
+  "points": [
+   {
+    "key": "A3c0.5",
+    "conc": 0.5,
+    "lam": 655.1439299123905,
+    "A": 0.06600879360649888
+   },
+   {
+    "key": "A3c1",
+    "conc": 1,
+    "lam": 657.3967459324156,
+    "A": 0.08514785248692096
+   },
+   {
+    "key": "A3c5b",
+    "conc": 5,
+    "lam": 656.1451814768461,
+    "A": 0.2468279143922903
+   },
+   {
+    "key": "A3c10",
+    "conc": 10,
+    "lam": 656.6458072590739,
+    "A": 0.4774718417262448
+   }
+  ],
+  "all": [
+   {
+    "key": "A3c0.5",
+    "conc": 0.5,
+    "lam_obs": 655.1439299123905,
+    "A_obs": 0.06600879360649888,
+    "lam_corr": 655.1439299123905,
+    "A_corr": 0.06600879360649888,
+    "is_fit": true
+   },
+   {
+    "key": "A3c1",
+    "conc": 1,
+    "lam_obs": 657.3967459324156,
+    "A_obs": 0.08514785248692096,
+    "lam_corr": 657.3967459324156,
+    "A_corr": 0.08514785248692096,
+    "is_fit": true
+   },
+   {
+    "key": "A3c5b",
+    "conc": 5,
+    "lam_obs": 656.1451814768461,
+    "A_obs": 0.2468279143922903,
+    "lam_corr": 656.1451814768461,
+    "A_corr": 0.2468279143922903,
+    "is_fit": true
+   },
+   {
+    "key": "A3c10",
+    "conc": 10,
+    "lam_obs": 656.6458072590739,
+    "A_obs": 0.4774718417262448,
+    "lam_corr": 656.6458072590739,
+    "A_corr": 0.4774718417262448,
+    "is_fit": true
+   },
+   {
+    "key": "A3c20b",
+    "conc": 20,
+    "lam_obs": 661.9023779724656,
+    "A_obs": 0.5790811384411374,
+    "lam_corr": 661.9023779724656,
+    "A_corr": 0.5790811384411374,
+    "is_fit": false
+   },
+   {
+    "key": "A3c50b",
+    "conc": 50,
+    "lam_obs": 618.5982478097623,
+    "A_obs": 0.7124899521237171,
+    "lam_corr": 618.5982478097623,
+    "A_corr": 0.7124899521237171,
+    "is_fit": false
+   }
+  ],
+  "fit": {
+   "k": 0.0432352752634115,
+   "b": 0.04051859009141632,
+   "sigma_k": 0.0010788993603596732,
+   "sigma_b": 0.00606131191472388,
+   "r2": 0.9987561303586289,
+   "n": 4,
+   "eps": 43235.2752634115
+  },
+  "x_linear": [
+   0,
+   10
+  ]
+ },
+ "box": {
+  "a_rows": [
+   {
+    "a": 0,
+    "x": 0.27514258911301026,
+    "y": 0.17461365595023115,
+    "lam2": 533.6649811329871,
+    "lam3": 650.0503485832799
+   },
+   {
+    "a": 2,
+    "x": 0.2628997221385292,
+    "y": 0.3454205277717892,
+    "lam2": 542.3833420133112,
+    "lam3": 656.2739726648146
+   },
+   {
+    "a": 4,
+    "x": 0.26565965682299253,
+    "y": 0.4649588400859439,
+    "lam2": 541.654404009356,
+    "lam3": 655.6404640059948
+   },
+   {
+    "a": 6,
+    "x": 0.2728229924758901,
+    "y": 0.5616552746475246,
+    "lam2": 540.3379175628278,
+    "lam3": 654.4410733321843
+   },
+   {
+    "a": 8,
+    "x": 0.28167766252715687,
+    "y": 0.6448093985727723,
+    "lam2": 539.1923568131008,
+    "lam3": 653.3570162866818
+   },
+   {
+    "a": 10,
+    "x": 0.29122149578125045,
+    "y": 0.7187902386170926,
+    "lam2": 538.2662319689252,
+    "lam3": 652.4579173154381
+   }
+  ],
+  "lambdas": {
+   "A1": 428.5356695869837,
+   "A2": 560.8510638297872,
+   "A3": 656.1451814768461,
+   "A4": 770.1877346683355,
+   "B1": 449.88735919899875,
+   "B2": 296.2578222778473
+  },
+  "a_used": 6,
+  "x_used": 0.2728229924758901,
+  "lam2_exp": 560.8510638297872,
+  "lam3_exp": 656.1451814768461,
+  "span_lam2": 8.718360880324099,
+  "span_lam3": 6.223624081534695,
+  "best_a": 2,
+  "best_pen": 18.596513004444432,
+  "worst_a": 0,
+  "worst_pen": 33.28091559036636,
+  "b_rows": [
+   {
+    "code": "B1",
+    "units": [
+     10,
+     11
+    ],
+    "units_lo": 10,
+    "units_hi": 11,
+    "L_lo": 2.728229924758901,
+    "L_hi": 3.001052917234791,
+    "n": 22,
+    "n_lo": 20,
+    "n_hi": 22,
+    "n_cfg": 22,
+    "lam_lo": 1168.871999952652,
+    "lam_hi": 1291.349457338995,
+    "exp": 449.88735919899875
+   },
+   {
+    "code": "B2",
+    "units": [
+     2,
+     3
+    ],
+    "units_lo": 2,
+    "units_hi": 3,
+    "L_lo": 0.5456459849517802,
+    "L_hi": 0.8184689774276703,
+    "n": 6,
+    "n_lo": 4,
+    "n_hi": 6,
+    "n_cfg": 6,
+    "lam_lo": 196.37049599204556,
+    "lam_hi": 315.59543998721614,
+    "exp": 296.2578222778473
+   }
+  ]
+ },
+ "warnings": [],
+ "out_dir": "C:\\\\pcal_test",
+ "data_dir": "C:\\\\pcal_test",
+ "template": "C:\\\\pcal_test",
+ "report_name": "000000000-某某-紫外光谱.docx",
+ "molecule_codes": [
+  "A1",
+  "A2",
+  "A3",
+  "A4",
+  "B1",
+  "B2"
+ ],
+ "choices": {
+  "conc": {
+   "1": [
+    "A3c1"
+   ],
+   "5": [
+    "A3c5",
+    "A3c5b"
+   ],
+   "10": [
+    "A3c10"
+   ],
+   "20": [
+    "A3c20",
+    "A3c20b"
+   ],
+   "50": [
+    "A3c50",
+    "A3c50b"
+   ],
+   "0.5": [
+    "A3c0.5"
+   ]
+  },
+  "mol": {
+   "A1": [
+    "A1"
+   ],
+   "A2": [
+    "A2",
+    "A2b"
+   ],
+   "A3": [
+    "A3c5",
+    "A3c5b"
+   ],
+   "A4": [
+    "A4"
+   ],
+   "B1": [
+    "B1",
+    "B1b",
+    "B1c"
+   ],
+   "B2": [
+    "B2"
+   ]
+  }
+ },
+ "conc_values": [
+  0.5,
+  1,
+  5,
+  10,
+  20,
+  50
+ ],
+ "conc_items": [
+  {
+   "key": "A3c0.5",
+   "conc": 0.5,
+   "lmax": 655.1439299123905,
+   "A": 0.06600879360649888
+  },
+  {
+   "key": "A3c1",
+   "conc": 1,
+   "lmax": 657.3967459324156,
+   "A": 0.08514785248692096
+  },
+  {
+   "key": "A3c5b",
+   "conc": 5,
+   "lmax": 656.1451814768461,
+   "A": 0.2468279143922903
+  },
+  {
+   "key": "A3c10",
+   "conc": 10,
+   "lmax": 656.6458072590739,
+   "A": 0.4774718417262448
+  },
+  {
+   "key": "A3c20b",
+   "conc": 20,
+   "lmax": 661.9023779724656,
+   "A": 0.5790811384411374
+  },
+  {
+   "key": "A3c50b",
+   "conc": 50,
+   "lmax": 618.5982478097623,
+   "A": 0.7124899521237171
+  }
+ ],
+ "file_slots": [
+  {
+   "key": "cal:d1_long",
+   "kind": "cal",
+   "group": "1",
+   "label": "第一周长波",
+   "note": "",
+   "default": "2026-10-14 & 17-01-51-氘灯.txt",
+   "rel": "2026-10-14 & 17-01-51-氘灯.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "cal:d2_long",
+   "kind": "cal",
+   "group": "1",
+   "label": "第二周长波",
+   "note": "",
+   "default": "2026-10-21 & 13-36-23-1到3的校准.txt",
+   "rel": "2026-10-21 & 13-36-23-1到3的校准.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "cal:d2_short",
+   "kind": "cal",
+   "group": "1",
+   "label": "第二周短波",
+   "note": "",
+   "default": "4\\2026-10-21 & 13-44-43-4的校准.txt",
+   "rel": "4\\2026-10-21 & 13-44-43-4的校准.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c0.5",
+   "kind": "sample",
+   "group": "1",
+   "label": "0.5 μmol·L⁻¹",
+   "note": "测量 A3c0.5",
+   "default": "2\\2026-10-21 & 12-29-42-A3-0.5.txt",
+   "rel": "2\\2026-10-21 & 12-29-42-A3-0.5.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c1",
+   "kind": "sample",
+   "group": "1",
+   "label": "1 μmol·L⁻¹",
+   "note": "测量 A3c1",
+   "default": "2\\2026-10-21 & 12-33-43-A3-1.txt",
+   "rel": "2\\2026-10-21 & 12-33-43-A3-1.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c5b",
+   "kind": "sample",
+   "group": "1",
+   "label": "5 μmol·L⁻¹、A3 · 二羰花青",
+   "note": "测量 A3c5b",
+   "default": "2\\2026-10-21 & 13-02-28-A3-5-2.txt",
+   "rel": "2\\2026-10-21 & 13-02-28-A3-5-2.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c10",
+   "kind": "sample",
+   "group": "1",
+   "label": "10 μmol·L⁻¹",
+   "note": "测量 A3c10",
+   "default": "2\\2026-10-21 & 12-40-17-A3-10.txt",
+   "rel": "2\\2026-10-21 & 12-40-17-A3-10.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c20b",
+   "kind": "sample",
+   "group": "1",
+   "label": "20 μmol·L⁻¹",
+   "note": "测量 A3c20b",
+   "default": "2\\2026-10-21 & 12-45-38-A3-20-2.txt",
+   "rel": "2\\2026-10-21 & 12-45-38-A3-20-2.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c50b",
+   "kind": "sample",
+   "group": "1",
+   "label": "50 μmol·L⁻¹",
+   "note": "测量 A3c50b",
+   "default": "2\\2026-10-21 & 12-51-12-A3-50-2.txt",
+   "rel": "2\\2026-10-21 & 12-51-12-A3-50-2.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A1",
+   "kind": "sample",
+   "group": "1",
+   "label": "A1 · 硫菁",
+   "note": "测量 A1",
+   "default": "4\\2026-10-21 & 13-49-27-A1.txt",
+   "rel": "4\\2026-10-21 & 13-49-27-A1.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A2b",
+   "kind": "sample",
+   "group": "1",
+   "label": "A2 · 噻碳菁",
+   "note": "测量 A2b",
+   "default": "3\\2026-10-21 & 13-31-52-A2-5-2.txt",
+   "rel": "3\\2026-10-21 & 13-31-52-A2-5-2.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A4",
+   "kind": "sample",
+   "group": "1",
+   "label": "A4 · 三羰花青",
+   "note": "测量 A4",
+   "default": "2026-10-14 & 17-05-15-A4-3.txt",
+   "rel": "2026-10-14 & 17-05-15-A4-3.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:B1c",
+   "kind": "sample",
+   "group": "1",
+   "label": "B1 · β-胡萝卜素",
+   "note": "测量 B1c",
+   "default": "4\\2026-10-21 & 14-14-51-B1-3.txt",
+   "rel": "4\\2026-10-21 & 14-14-51-B1-3.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:B2",
+   "kind": "sample",
+   "group": "1",
+   "label": "B2 · 辛三烯",
+   "note": "测量 B2",
+   "default": "4\\2026-10-21 & 14-01-40-B2.txt",
+   "rel": "4\\2026-10-21 & 14-01-40-B2.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3c5",
+   "kind": "sample",
+   "group": "1",
+   "label": "光源对比 · 卤钨灯",
+   "note": "测量 A3c5",
+   "default": "2\\2026-10-21 & 12-36-40-A3-5.txt",
+   "rel": "2\\2026-10-21 & 12-36-40-A3-5.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "sample:A3_DW",
+   "kind": "sample",
+   "group": "1",
+   "label": "光源对比 · 卤钨灯+氘灯",
+   "note": "测量 A3_DW",
+   "default": "3\\2026-10-21 & 13-06-53-A3-5-D+W.txt",
+   "rel": "3\\2026-10-21 & 13-06-53-A3-5-D+W.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "blank:b_A3_0",
+   "kind": "blank",
+   "group": "1",
+   "label": "A3 浓度系列",
+   "note": "",
+   "default": "2\\2026-10-21 & 12-56-02-A3-0.txt",
+   "rel": "2\\2026-10-21 & 12-56-02-A3-0.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "blank:b_EtOH",
+   "kind": "blank",
+   "group": "1",
+   "label": "短波段（A1/B1/B2）",
+   "note": "",
+   "default": "4\\2026-10-21 & 14-03-45-乙醇.txt",
+   "rel": "4\\2026-10-21 & 14-03-45-乙醇.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "blank:b_A2_0",
+   "kind": "blank",
+   "group": "1",
+   "label": "A2",
+   "note": "",
+   "default": "3\\2026-10-21 & 13-23-50-A2-0.txt",
+   "rel": "3\\2026-10-21 & 13-23-50-A2-0.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "blank:b_A4_EtOH",
+   "kind": "blank",
+   "group": "1",
+   "label": "A4（第一周）",
+   "note": "",
+   "default": "2026-10-14 & 17-11-53-A4-乙醇.txt",
+   "rel": "2026-10-14 & 17-11-53-A4-乙醇.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  },
+  {
+   "key": "blank:b_A3_DW",
+   "kind": "blank",
+   "group": "1",
+   "label": "A3 双光源",
+   "note": "",
+   "default": "3\\2026-10-21 & 13-11-41-A3-0-D+W.txt",
+   "rel": "3\\2026-10-21 & 13-11-41-A3-0-D+W.txt",
+   "path": "C:\\pcal_test",
+   "status": "default",
+   "score": null,
+   "overridden": false,
+   "suggestions": []
+  }
+ ],
+ "file_summary": {
+  "total": 21,
+  "default": 21,
+  "manual": 0,
+  "fuzzy": 0,
+  "fuzzy_items": []
+ },
+ "cal_options": [
+  {
+   "key": "d1_long",
+   "label": "长波范围（第一周 10-14）",
+   "short": "第一周长波",
+   "custom": false,
+   "file": "2026-10-14 & 17-01-51-氘灯.txt"
+  },
+  {
+   "key": "d2_long",
+   "label": "长波范围（第二周 10-21）",
+   "short": "第二周长波",
+   "custom": false,
+   "file": "2026-10-21 & 13-36-23-1到3的校准.txt"
+  },
+  {
+   "key": "d2_short",
+   "label": "短波范围（第二周 10-21）",
+   "short": "第二周短波",
+   "custom": false,
+   "file": "4\\2026-10-21 & 13-44-43-4的校准.txt"
+  }
+ ],
+ "custom_cals": [],
+ "curve_cal": {
+  "A4": "d1_long",
+  "A3c0.5": "d2_long",
+  "A3c1": "d2_long",
+  "A3c5": "d2_long",
+  "A3c10": "d2_long",
+  "A3c20": "d2_long",
+  "A3c20b": "d2_long",
+  "A3c50": "d2_long",
+  "A3c50b": "d2_long",
+  "A3c5b": "d2_long",
+  "A3_DW": "d2_long",
+  "A2": "d2_long",
+  "A2b": "d2_long",
+  "A1": "d2_short",
+  "B1": "d2_short",
+  "B1b": "d2_short",
+  "B1c": "d2_short",
+  "B2": "d2_short"
+ },
+ "curve_cal_default": {
+  "A4": "d1_long",
+  "A3c0.5": "d2_long",
+  "A3c1": "d2_long",
+  "A3c5": "d2_long",
+  "A3c10": "d2_long",
+  "A3c20": "d2_long",
+  "A3c20b": "d2_long",
+  "A3c50": "d2_long",
+  "A3c50b": "d2_long",
+  "A3c5b": "d2_long",
+  "A3_DW": "d2_long",
+  "A2": "d2_long",
+  "A2b": "d2_long",
+  "A1": "d2_short",
+  "B1": "d2_short",
+  "B1b": "d2_short",
+  "B1c": "d2_short",
+  "B2": "d2_short"
+ },
+ "curve_rows": [
+  {
+   "key": "A4",
+   "mol": "A4",
+   "kind": "molecule",
+   "day": 1,
+   "conc": 3,
+   "cal_key": "d1_long",
+   "cal_short": "第一周长波"
+  },
+  {
+   "key": "A3c0.5",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 0.5,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3c1",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 1,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3c5",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 5,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3c10",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 10,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3c20",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 20,
+   "cal_key": "d2_long",
+   "cal_short": ""
+  },
+  {
+   "key": "A3c20b",
+   "mol": "A3",
+   "kind": "conc_rep",
+   "day": 2,
+   "conc": 20,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3c50",
+   "mol": "A3",
+   "kind": "conc",
+   "day": 2,
+   "conc": 50,
+   "cal_key": "d2_long",
+   "cal_short": ""
+  },
+  {
+   "key": "A3c50b",
+   "mol": "A3",
+   "kind": "conc_rep",
+   "day": 2,
+   "conc": 50,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3c5b",
+   "mol": "A3",
+   "kind": "conc_rep",
+   "day": 2,
+   "conc": 5,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A3_DW",
+   "mol": "A3",
+   "kind": "source",
+   "day": 2,
+   "conc": 5,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A2",
+   "mol": "A2",
+   "kind": "molecule",
+   "day": 2,
+   "conc": 5,
+   "cal_key": "d2_long",
+   "cal_short": ""
+  },
+  {
+   "key": "A2b",
+   "mol": "A2",
+   "kind": "molecule_rep",
+   "day": 2,
+   "conc": 5,
+   "cal_key": "d2_long",
+   "cal_short": "第二周长波"
+  },
+  {
+   "key": "A1",
+   "mol": "A1",
+   "kind": "molecule",
+   "day": 2,
+   "conc": 10,
+   "cal_key": "d2_short",
+   "cal_short": "第二周短波"
+  },
+  {
+   "key": "B1",
+   "mol": "B1",
+   "kind": "molecule",
+   "day": 2,
+   "conc": 10,
+   "cal_key": "d2_short",
+   "cal_short": ""
+  },
+  {
+   "key": "B1b",
+   "mol": "B1",
+   "kind": "molecule_rep",
+   "day": 2,
+   "conc": 10,
+   "cal_key": "d2_short",
+   "cal_short": ""
+  },
+  {
+   "key": "B1c",
+   "mol": "B1",
+   "kind": "molecule_rep",
+   "day": 2,
+   "conc": 10,
+   "cal_key": "d2_short",
+   "cal_short": "第二周短波"
+  },
+  {
+   "key": "B2",
+   "mol": "B2",
+   "kind": "molecule",
+   "day": 2,
+   "conc": 30,
+   "cal_key": "d2_short",
+   "cal_short": "第二周短波"
+  }
+ ],
+ "default_cal_key": "d2_long"
+}

@@ -432,6 +432,129 @@ class ShortcutScriptTests(unittest.TestCase):
                             '找不到快捷方式时应给出可读提示，实际输出：%r' % out[:300])
 
 
+class FrontendBootTests(unittest.TestCase):
+    """每个模块的 web/app.js 必须能在最小 DOM 环境里真跑起来。
+
+    挡的是**语法合法但运行即崩**的前端 bug（如 ``cfg is not defined``）：
+    ``node --check`` 只看语法，这类错误它一个都抓不到。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.node = shutil.which('node')
+        cls.harness = REPO_ROOT / 'tests' / 'smoke_app.js'
+        cls.state_dir = REPO_ROOT / 'tests' / 'fixtures' / 'web_state'
+
+    def _modules(self):
+        import importlib.util
+        path = REPO_ROOT / '物化实验报告工具' / 'portal.py'
+        spec = importlib.util.spec_from_file_location('_portal_boot', str(path))
+        portal = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(portal)
+        return [m.get('tool') for m in portal.MODULES if m.get('tool')]
+
+    def test_node_available(self):
+        self.assertIsNotNone(
+            self.node,
+            '找不到 node，无法做前端冒烟检查。'
+            '这台机器上 node 是有的（v26.x）；CI 里缺 node 时应显式跳过而不是静默通过。')
+        self.assertTrue(self.harness.is_file(),
+                        '缺少 tests/smoke_app.js（前端冒烟脚本）')
+
+    def test_every_module_app_boots(self):
+        """逐个模块真跑 app.js，不许出现运行时错误或"初始化失败"。"""
+        import subprocess
+        if not self.node:
+            self.skipTest('没有 node')
+        bad = []
+        for tool in self._modules():
+            app = REPO_ROOT / tool / 'web' / 'app.js'
+            if not app.is_file():
+                bad.append('%s：没有 web/app.js' % tool)
+                continue
+            # 第二个参数是该模块真实的 /api/state 快照（tests/fixtures/web_state）。
+            # 手写假数据字段对不上会报 "Cannot read properties of undefined"，
+            # 那是假数据的错，会淹没真正的前端 bug。
+            state = self.state_dir / (tool + '.json')
+            args = [self.node, str(self.harness), str(app)]
+            if state.is_file():
+                args.append(str(state))
+            r = subprocess.run(args, capture_output=True, timeout=120)
+            out = ((r.stdout or b'') + (r.stderr or b'')).decode('utf-8', 'replace')
+            if r.returncode != 0:
+                head = ' / '.join(ln.strip() for ln in out.strip().splitlines()[-3:])
+                bad.append('%s：%s' % (tool, head[:300]))
+        self.assertEqual(
+            bad, [],
+            '这些模块的前端脚本一加载就报错，界面上会停在「初始化失败」：\n'
+            + '\n'.join(bad))
+
+    def test_state_fixtures_exist(self):
+        """每个模块都要有真实 /api/state 快照，否则冒烟用的是空数据（形同虚设）。"""
+        missing = [tool for tool in self._modules()
+                   if not (self.state_dir / (tool + '.json')).is_file()]
+        self.assertEqual(
+            missing, [],
+            '这些模块缺少 tests/fixtures/web_state/<工具>.json。\n'
+            '用下面的命令重新抓（需先确保各模块能独立启动）：\n'
+            '  node tests/dump_states.js <仓库根> tests/fixtures/web_state '
+            '\'["工具名", ...]\'\n'
+            '缺快照时冒烟脚本会喂空数据，前端问题就查不出来了。')
+
+    def test_state_fixtures_have_no_personal_info(self):
+        """夹具是 /api/state 的真实响应，会进**公开仓库**——必须清掉个人信息。
+
+        2026-11-14 抓完快照差点直接提交：里面带着真实姓名、学号、组别，
+        还有 `report_name`（"2400011877-张三-偶极矩.docx"）和本机绝对路径。
+        冒烟测试只需要结构，不需要真实值，所以统一换成占位符。
+        这条守住"以后重新抓快照时别忘了洗一遍"。
+        """
+        import json as _json
+        leaks = []
+        for path in sorted(self.state_dir.glob('*.json')):
+            text = path.read_text(encoding='utf-8')
+            hits = []
+            # ⚠ 不能假设学号的位数开头。北大本科是 10 位（2400011877），
+            # 但更稳的判据是「数字串整体恰为 10 位」——用零宽断言把它从
+            # 浮点数里摘出来（293.84999999999997 里的数字串不是独立 token）。
+            for pat, label in ((r'(?<![\d.])2\d{9}(?![\d.])', '学号'),
+                               (r'[Dd]:\\\\+北大', '开发机路径'),
+                               (r'C:\\\\+Users\\\\+[A-Za-z]', '用户目录'),
+                               (r'张瑞杰', '真实姓名')):
+                if re.search(pat, text):
+                    hits.append(label)
+            try:
+                data = _json.loads(text)
+            except ValueError as exc:
+                leaks.append('%s：JSON 坏了（%s）' % (path.name, exc))
+                continue
+            if hits:
+                leaks.append('%s：含 %s' % (path.name, '、'.join(hits)))
+        self.assertEqual(
+            leaks, [],
+            '这些前端状态快照里还有个人信息/本机路径，不能进公开仓库：\n'
+            + '\n'.join(leaks)
+            + '\n清洗方法见 tests/fixtures/web_state/README.md')
+
+    def test_js_syntax_all_apps(self):
+        """顺带保一层语法：node --check 每个 app.js。"""
+        import subprocess
+        if not self.node:
+            self.skipTest('没有 node')
+        bad = []
+        for tool in self._modules():
+            app = REPO_ROOT / tool / 'web' / 'app.js'
+            if not app.is_file():
+                continue
+            r = subprocess.run([self.node, '--check', str(app)],
+                               capture_output=True, timeout=60)
+            if r.returncode != 0:
+                err = (r.stderr or b'').decode('utf-8', 'replace').strip()
+                bad.append('%s：%s' % (tool, err.splitlines()[0][:200] if err else '?'))
+        self.assertEqual(bad, [], 'JS 语法错误：\n' + '\n'.join(bad))
+
+
 class LauncherStopTests(unittest.TestCase):
     """launcher.py 的 --stop 自动化路径必须不弹框、且要秒回。"""
 

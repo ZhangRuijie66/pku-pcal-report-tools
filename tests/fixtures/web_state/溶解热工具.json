@@ -1,0 +1,120 @@
+{
+ "ok": true,
+ "config": {
+  "student_name": "某某",
+  "student_id": "000000000",
+  "group": "1",
+  "group_no": "1",
+  "date": "2026/09/23",
+  "pressure_kPa": 101.3,
+  "water_volume_mL": 500,
+  "temperature_C": null,
+  "force_temperature": false,
+  "water_density": null,
+  "water_capacity": null,
+  "solute": "kno3",
+  "solute_molarmass": null,
+  "literature_Qs0": 34.89,
+  "sigma_current": 0.01,
+  "sigma_resistance": 0.2,
+  "sigma_time": 0.7,
+  "sigma_dt": 0.01,
+  "e_balance": 0.0002,
+  "point_source": "file",
+  "win_seconds": 32,
+  "lead_seconds": 6,
+  "lag_seconds": 10,
+  "dx": 0.1,
+  "data_dir": null,
+  "rounds": []
+ },
+ "defaults": {
+  "student_name": "",
+  "student_id": "",
+  "group": "",
+  "group_no": "",
+  "date": "",
+  "pressure_kPa": null,
+  "water_volume_mL": 500,
+  "temperature_C": null,
+  "force_temperature": false,
+  "water_density": null,
+  "water_capacity": null,
+  "solute": "kno3",
+  "solute_molarmass": null,
+  "literature_Qs0": 34.89,
+  "sigma_current": 0.01,
+  "sigma_resistance": 0.2,
+  "sigma_time": 0.7,
+  "sigma_dt": 0.01,
+  "e_balance": 0.0002,
+  "point_source": "file",
+  "win_seconds": 32,
+  "lead_seconds": 6,
+  "lag_seconds": 10,
+  "dx": 0.1,
+  "data_dir": null,
+  "rounds": []
+ },
+ "settings_file": "C:\\\\pcal_test",
+ "has_saved": true,
+ "substances": {
+  "kno3": {
+   "label": "硝酸钾 KNO3",
+   "tex_label": "KNO_{3}",
+   "Mr": 101.102,
+   "dissolution_note": "硝酸钾溶于水为吸热过程，$Q_s$ 随 $n_0$ 增大而增大。",
+   "solubility": "20 ℃ 时约 31.6 g/100 g 水、40 ℃ 时约 63.9 g/100 g 水。"
+  },
+  "kcl": {
+   "label": "氯化钾 KCl",
+   "tex_label": "KCl",
+   "Mr": 74.551,
+   "dissolution_note": "氯化钾溶于水为吸热过程。",
+   "solubility": "20 ℃ 时约 34.0 g/100 g 水。"
+  },
+  "nh4no3": {
+   "label": "硝酸铵 NH4NO3",
+   "tex_label": "NH_{4}NO_{3}",
+   "Mr": 80.043,
+   "dissolution_note": "硝酸铵溶于水为显著吸热过程。",
+   "solubility": "20 ℃ 时约 190 g/100 g 水。"
+  },
+  "nacl": {
+   "label": "氯化钠 NaCl",
+   "tex_label": "NaCl",
+   "Mr": 58.443,
+   "dissolution_note": "氯化钠溶于水热效应很小。",
+   "solubility": "20 ℃ 时约 36.0 g/100 g 水。"
+  },
+  "custom": {
+   "label": "自定义",
+   "tex_label": "待测溶质",
+   "Mr": null,
+   "dissolution_note": "",
+   "solubility": ""
+  }
+ },
+ "default_dir": "C:\\\\pcal_test",
+ "output_dir": "C:\\\\pcal_test",
+ "template": "C:\\\\pcal_test",
+ "template_exists": true,
+ "assets": {
+  "apparatus": true,
+  "principle": true
+ },
+ "water": {
+  "density": 0.997047,
+  "capacity": 4.1813
+ },
+ "constants": {
+  "M_H2O": 18.015,
+  "sigma_current": 0.01,
+  "sigma_resistance": 0.2,
+  "sigma_time": 0.7,
+  "sigma_dt": 0.01,
+  "e_balance": 0.0002,
+  "e_volume": 0.5
+ },
+ "python": "3.11.0 (main, Oct 24 2022, 18:26:48) [MSC v.1933 64 bit (AMD64)]"
+}

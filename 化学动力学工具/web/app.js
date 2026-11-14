@@ -62,8 +62,10 @@ async function api(path, opts) {
 
 /* ---------------------------------------------------------------- 表单 */
 function fillConfig(c) {
+  // 换算系数回填：读的是本函数的参数 c（不是 readConfig 里的 cfg——
+  // 2026-11-14 第一版写成 cfg 直接 ReferenceError，整页卡在「初始化失败」）
   const ar = $('acid_ratio');
-  if (ar) ar.value = (cfg.acid_ratio == null ? 0.5 : cfg.acid_ratio);
+  if (ar) ar.value = (c.acid_ratio == null ? 0.5 : c.acid_ratio);
 
   COVER_FIELDS.forEach((k) => {
     const el = $(k);

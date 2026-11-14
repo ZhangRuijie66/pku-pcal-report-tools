@@ -1,0 +1,83 @@
+{
+ "ok": true,
+ "config": {
+  "student_name": "某某",
+  "student_id": "000000000",
+  "group": "1",
+  "group_no": "1",
+  "date": "",
+  "room_temp": null,
+  "pressure": null,
+  "data_dir": "C:\\\\pcal_test"
+ },
+ "defaults": {
+  "student_name": "",
+  "student_id": "",
+  "group": "",
+  "group_no": "",
+  "date": "",
+  "room_temp": null,
+  "pressure": null,
+  "data_dir": "C:\\\\pcal_test"
+ },
+ "has_saved": true,
+ "settings_file": "C:\\\\pcal_test",
+ "data_dir": "C:\\\\pcal_test",
+ "data_file": "C:\\\\pcal_test",
+ "data": {
+  "temperature_C": 21.7,
+  "tube": {
+   "m_zero": 8.366,
+   "m_field": 8.3654
+  },
+  "mohr_salt": {
+   "m_zero": 10.4654,
+   "m_field": 10.4905
+  },
+  "硫酸铜": {
+   "m_zero": 10.8382,
+   "m_field": 10.843
+  },
+  "亚铁氰化钾": {
+   "m_zero": 10.6726,
+   "m_field": 10.6717
+  },
+  "未知样": {
+   "m_zero": 10.4895,
+   "m_field": 10.4972
+  }
+ },
+ "temperature_C": 21.7,
+ "temperature_K": 294.84999999999997,
+ "chi_std": 4.0351705538756857e-07,
+ "samples": {
+  "硫酸铜": {
+   "name": "硫酸铜",
+   "m_sample": 2.47200000000001,
+   "delta_m": 0.005399999999999849,
+   "chi_mass": 7.200026965750752e-08,
+   "chi_m": 1.7977027328086478e-08,
+   "mu": 1.8365345265352815,
+   "n": 1.0911382228719773
+  },
+  "亚铁氰化钾": {
+   "name": "亚铁氰化钾",
+   "m_sample": 2.3065999999999995,
+   "delta_m": -0.0002999999999993008,
+   "chi_mass": -4.28719198644663e-09,
+   "chi_m": -1.8108670231551919e-09,
+   "mu": null,
+   "n": null
+  },
+  "未知样": {
+   "name": "未知样",
+   "m_sample": 2.1235,
+   "delta_m": 0.008300000000000196,
+   "chi_mass": 1.2883972592179095e-07,
+   "chi_m": null,
+   "mu": null,
+   "n": null
+  }
+ },
+ "formatted": "温度: 21.7°C = 294.85 K\n莫尔盐比磁化率: 4.035e-07 m³·kg⁻¹\n\n硫酸铜:\n  比磁化率 χ: 7.200e-08 m³·kg⁻¹\n  摩尔磁化率 χ_m: 1.798e-08 m³·mol⁻¹\n  分子磁矩 μ: 1.837 μ_B\n  未成对电子数 n: 1.09\n\n亚铁氰化钾:\n  比磁化率 χ: -4.287e-09 m³·kg⁻¹\n  摩尔磁化率 χ_m: -1.811e-09 m³·mol⁻¹\n  分子磁矩 μ: —（反磁性）\n  未成对电子数 n: 0（反磁性）\n\n未知样:\n  比磁化率 χ: 1.288e-07 m³·kg⁻¹\n"
+}
