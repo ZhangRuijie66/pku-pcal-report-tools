@@ -5,6 +5,9 @@
 直接在服务进程里 ``tkinter.Tk()`` 会把整个服务卡住（窗口关掉前一律无响应）。
 子进程 + ``subprocess.run`` 只阻塞那一个请求线程，别的请求照常处理。
 
+Windows 上子进程开窗之前**必须先声明 DPI 感知**（见 ``_DPI_PRELUDE``），
+否则 200% 缩放的机器上系统对话框按 96 DPI 排版再被拉伸 2 倍，又小又糊。
+
 自动化测试用环境变量接管，不要弹真窗口：
 
     PCAL_PICK_AUTO=<目录>        → 「选择文件夹」直接返回它
@@ -57,7 +60,59 @@ def _norm_file(path, exts=None):
     return path
 
 
-_DIR_CODE = r"""
+_DPI_PRELUDE = r"""
+def _pcal_enable_dpi_awareness():
+    '''让本进程按显示器的真实 DPI 渲染。
+
+    Windows 默认把「不声明 DPI 感知」的进程当作 96 DPI，再把整窗位图放大到
+    200%（用户机器 devicePixelRatio=2）。后果是系统文件对话框按 96 DPI 排版、
+    再被拉伸 2 倍 —— 又小又糊。真实备上量到：不声明时窗口 dpi=96、
+    720x501 设备像素；声明后 dpi=192、1440x1002，文字按原生分辨率绘制。
+
+    必须在创建任何窗口（含 tk.Tk()）之前调用。只在子进程里做，
+    不动服务主进程（那里没有窗口，提前改感知模式反而会干扰日志/预览）。
+    '''
+    try:
+        import ctypes
+    except Exception:
+        return 'none'
+    try:
+        # Win10 1703+：每显示器感知 v2（跨显示器缩放切换也正确）
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return 'permonitor_v2'
+    except Exception:
+        pass
+    try:
+        # Win8.1+：每显示器感知
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            return 'permonitor'
+    except Exception:
+        pass
+    try:
+        # Vista+：系统级感知（低版本 Windows 的兜底，仍然比不声明清晰）
+        ctypes.windll.user32.SetProcessDPIAware()
+        return 'system'
+    except Exception:
+        pass
+    return 'none'
+
+
+_PCAL_DPI = _pcal_enable_dpi_awareness()
+if __import__('os').environ.get('PCAL_PICK_DPI_DEBUG'):
+    __import__('sys').stderr.write('dpi=' + _PCAL_DPI + '\n')
+"""
+
+
+def dpi_awareness_prelude():
+    """子进程里「开启 DPI 感知」的前置代码。
+
+    单独暴露出来是为了让测试跑同一份字符串，而不是另抄一份逻辑——
+    抄一份的话改了这里、测试仍然绿，这个坑就是这么漏掉的。
+    """
+    return _DPI_PRELUDE
+
+
+_DIR_CODE = _DPI_PRELUDE + r"""
 import sys, tkinter as tk
 from tkinter import filedialog
 root = tk.Tk(); root.withdraw()
@@ -74,7 +129,7 @@ root.destroy()
 sys.stdout.write(p or '')
 """
 
-_FILE_CODE = r"""
+_FILE_CODE = _DPI_PRELUDE + r"""
 import sys, os, tkinter as tk
 from tkinter import filedialog
 root = tk.Tk(); root.withdraw()

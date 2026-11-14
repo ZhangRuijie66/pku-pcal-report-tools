@@ -25,6 +25,32 @@ from pathlib import Path
 
 from support import REPO_ROOT
 
+
+def _decode_console(data):
+    """把子进程输出的字节解码成文本，按「控制台实际用的编码」猜。
+
+    中文 Windows 上 Python 子进程往**管道**写中文时用的是 ANSI/OEM 代码页
+    （本机 cp936），不是 UTF-8。先试 UTF-8（Linux/CI 和大多数工具的正确
+    情况），失败再退回本机首选编码，最后兜底 replace —— 绝不抛异常，
+    因为这条解码只用于断言提示文字。
+    """
+    if not data:
+        return ''
+    for enc in ('utf-8-sig', 'utf-8'):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    import locale
+    for enc in (locale.getpreferredencoding(False), 'gbk', 'cp936'):
+        if not enc:
+            continue
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode('utf-8', 'replace')
+
 # 会进可移植包、并且会被 cmd.exe / WSH / 浏览器真正执行的代码文件
 CODE_SUFFIXES = {'.py', '.js', '.html', '.cmd', '.vbs'}
 
@@ -420,11 +446,15 @@ class ShortcutScriptTests(unittest.TestCase):
         r = subprocess.run(
             [sys.executable, str(self.path), '--check'],
             capture_output=True, timeout=60)
-        out = (r.stdout or b'').decode('utf-8', 'replace')
+        # ⚠ 子进程的 stdout 必须按控制台编码解。2026-11-14 之前这里写死
+        # utf-8，中文 Windows 上管道里是 GBK（实测首字节 bf ec =「快捷」），
+        # 解出来全是 U+FFFD，于是「目标」永远匹配不上 —— 在没有快捷方式的
+        # 机器上也红，看起来像脚本坏了，其实只是测试解错了编码。
+        out = _decode_console(r.stdout or b'')
+        err = _decode_console(r.stderr or b'')
         # 0 = 读到了；1 = 没装（也合理，比如别人的电脑还没建过）
         self.assertIn(r.returncode, (0, 1),
-                      '--check 异常退出：%s / %s'
-                      % (out[:300], (r.stderr or b'').decode('utf-8', 'replace')[:300]))
+                      '--check 异常退出：%s / %s' % (out[:300], err[:300]))
         if r.returncode == 0:
             self.assertIn('目标', out)
         else:

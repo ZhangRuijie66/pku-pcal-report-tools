@@ -25,6 +25,7 @@ splash 自己轮询入口端口，**端口一能响应就关**，所以：
 """
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import time
@@ -32,8 +33,8 @@ import time
 TITLE = '物化实验报告工具'
 SUBTITLE = '正在启动，稍后会自动打开浏览器…'
 
-# 视觉参数
-W, H = 440, 150
+# 视觉参数（96 DPI 下的设计尺寸；实际运行时按显示器缩放放大，见 run()）
+W_BASE, H_BASE = 440, 150
 BG = '#ffffff'
 FG = '#1f2937'
 MUTED = '#6b7280'
@@ -90,6 +91,33 @@ def _parse(argv):
     return ports_out, max(3.0, timeout)
 
 
+def _enable_dpi_awareness():
+    """按显示器真实 DPI 渲染，否则 200% 缩放机上这张卡片会被拉伸 2 倍（发糊）。
+
+    Windows 把「未声明 DPI 感知」的进程当作 96 DPI，再把整窗位图放大到显示器
+    缩放。必须在建任何窗口之前声明；失败一律静默——启动画面绝不能因此起不来。
+    与 `_core/filepick.py` 的 `_DPI_PRELUDE` 同一套逻辑。
+    """
+    try:
+        import ctypes
+    except Exception:                       # noqa: BLE001
+        return
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:                       # noqa: BLE001
+        pass
+    try:
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            return
+    except Exception:                       # noqa: BLE001
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:                       # noqa: BLE001
+        pass
+
+
 def run(ports=(), timeout=25.0):
     """显示启动画面，直到端口就绪或超时。返回 0。"""
     ports = list(ports or ())
@@ -98,7 +126,23 @@ def run(ports=(), timeout=25.0):
     except Exception:                       # noqa: BLE001
         return 0                            # 没有 tkinter 就静默跳过，不能因此起不来
 
+    _enable_dpi_awareness()                 # 必须在 tk.Tk() 之前
     root = tk.Tk()
+
+    # 声明 DPI 感知之后，tk 的坐标是**物理像素**，写死的 440x150 在 200% 机上
+    # 只有 220x75 那么大（实测）。按实际缩放把尺寸与内边距一起放大，
+    # 才能让卡片保持原来的**物理**观感（约 11.6 cm x 4 cm），只是更清晰。
+    scale = 1.0
+    try:
+        scale = max(1.0, root.winfo_fpixels('1i') / 96.0)
+    except Exception:                       # noqa: BLE001
+        pass
+    W = int(round(W_BASE * scale))
+    H = int(round(H_BASE * scale))
+    pad = lambda v: int(round(v * scale))   # noqa: E731  内边距/字号同步放大
+    if os.environ.get('PCAL_SPLASH_DEBUG'):
+        sys.stderr.write('splash scale=%.3f W=%d H=%d fpixels=%.1f\n'
+                         % (scale, W, H, root.winfo_fpixels('1i')))
     root.title(TITLE)
     root.overrideredirect(True)             # 无标题栏的小卡片
     try:
@@ -120,16 +164,18 @@ def run(ports=(), timeout=25.0):
     inner.place(x=1, y=1, width=W - 2, height=H - 2)
 
     tk.Label(inner, text=TITLE, bg=BG, fg=FG,
-             font=('Microsoft YaHei UI', 15, 'bold')).pack(pady=(30, 6))
+             font=('Microsoft YaHei UI', pad(15), 'bold')).pack(pady=(pad(30), pad(6)))
     tk.Label(inner, text=SUBTITLE, bg=BG, fg=MUTED,
-             font=('Microsoft YaHei UI', 9)).pack()
+             font=('Microsoft YaHei UI', pad(9))).pack()
 
     # 不确定进度条：来回流动的色块
-    canvas = tk.Canvas(inner, width=W - 90, height=4, bg=BG,
+    bar_w = pad(110)                        # 色块宽度（原来写死 110）
+    track_w = W - pad(90)
+    canvas = tk.Canvas(inner, width=track_w, height=pad(4), bg=BG,
                        highlightthickness=0, bd=0)
-    canvas.pack(pady=(22, 0))
-    canvas.create_rectangle(0, 0, W - 90, 4, fill=TRACK, width=0)
-    bar = canvas.create_rectangle(0, 0, 0, 4, fill=ACCENT, width=0)
+    canvas.pack(pady=(pad(22), 0))
+    canvas.create_rectangle(0, 0, track_w, pad(4), fill=TRACK, width=0)
+    bar = canvas.create_rectangle(0, 0, 0, pad(4), fill=ACCENT, width=0)
 
     deadline = time.time() + max(3.0, timeout)
     state = {'pos': 0.0, 'dir': 1}
@@ -142,15 +188,15 @@ def run(ports=(), timeout=25.0):
             root.destroy()                  # 超时也要关，别把窗口留在屏幕上
             return
         # 让色块在轨道里来回跑
-        span = W - 90
-        state['pos'] += state['dir'] * 7.0
-        if state['pos'] > span - 110:
-            state['pos'] = span - 110
+        span = track_w
+        state['pos'] += state['dir'] * pad(7)
+        if state['pos'] > span - bar_w:
+            state['pos'] = span - bar_w
             state['dir'] = -1
         elif state['pos'] < 0:
             state['pos'] = 0
             state['dir'] = 1
-        canvas.coords(bar, state['pos'], 0, state['pos'] + 110, 4)
+        canvas.coords(bar, state['pos'], 0, state['pos'] + bar_w, pad(4))
         root.after(30, tick)
 
     root.update()                           # 先画出来，再开始轮询
