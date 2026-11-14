@@ -427,6 +427,133 @@ class AcidConcentrationTests(unittest.TestCase):
         self.assertAlmostEqual(self.a.default_config()['acid_ratio'], 0.5)
         self.assertIn('acid_ratio', self.a.PERSIST_KEYS)
 
+
+class AcidDisplayTests(unittest.TestCase):
+    """换算结果必须真的显示在界面上，不能只算不显示。
+
+    2026-11-14 用户报「填了标称酸浓度自动计算的结果要给出」：
+    后端算对了（acid_eff / acid_source 都在 /api/calc 的返回里），
+    但分组卡片渲染用的是 DATA.groups（**提交给后端的原始输入**），
+    那里没有这两个字段，所以「本组 c(H⁺) = 标称 × 系数 = …」永远不显示。
+
+    判据分两半：
+      · 后端：/api/calc 形状里有 acid_eff / acid_source / acid_ratio；
+      · 前端：真跑 app.js，渲染出的分组卡片 HTML 里出现换算说明。
+    """
+
+    def setUp(self):
+        import sys
+        from pathlib import Path
+        repo = Path(__file__).resolve().parent.parent
+        tool = repo / '化学动力学工具'
+        if str(tool) not in sys.path:
+            sys.path.insert(0, str(tool))
+        type(self)._mods_before = set(sys.modules)
+        from pcal import kinetics, analysis
+        self.k = kinetics
+        self.a = analysis
+        self.repo = repo
+        self.tool = tool
+
+    def tearDown(self):
+        import sys
+        before = getattr(type(self), '_mods_before', None)
+        if not before:
+            return
+        for name in [m for m in sys.modules if m not in before]:
+            if name == 'pcal' or name.startswith('pcal.'):
+                del sys.modules[name]
+
+    def test_analysis_exposes_acid_fields(self):
+        """analyze() 的返回里必须带 acid_eff / acid_source / acid.ratio。"""
+        import copy
+        data = copy.deepcopy(self.k.sample_data())
+        for g in data['groups']:
+            g['acid_true'] = None
+        an = self.k.analyze(data, self.a.default_config())
+        self.assertIn('acid', an, 'analyze 返回缺少 acid 段')
+        self.assertAlmostEqual(an['acid']['ratio'], 0.5)
+        self.assertEqual(len(an['acid']['derived']), 5)
+        for g in an['groups']:
+            self.assertEqual(g['acid_source'], 'nominal')
+            self.assertAlmostEqual(g['acid_eff'], g['acid_nominal'] * 0.5)
+
+    def test_app_renders_conversion_hint(self):
+        """真跑 app.js：分组卡片必须渲染出「标称 × 系数 = 值」。"""
+        import json
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('没有 node')
+        harness = self.repo / 'tests' / 'smoke_app.js'
+        self.assertTrue(harness.is_file(), '缺少 tests/smoke_app.js')
+
+        # 造一份「只填标称值」的 /api/state（形状照搬真实接口）
+        import copy
+        data = copy.deepcopy(self.k.sample_data())
+        for g in data['groups']:
+            g['acid_true'] = None
+        an = self.k.analyze(data, self.a.default_config())
+        state = {
+            'ok': True, 'config': self.a.default_config(), 'defaults': {},
+            'data': data,
+            'calibration': an['calibration'], 'alpha_inf': an['alpha_inf'],
+            'alpha0': an['alpha0'], 'c0': an['c0'],
+            'groups': [dict(label=g['label'], acid_nominal=g['acid_nominal'],
+                            acid_true=None, acid_eff=g['acid_eff'],
+                            acid_source=g['acid_source'], alpha_inf=g['alpha_inf'],
+                            exclude=g['exclude'], n=g['n'], data=g['data'],
+                            all_data=g['all_data'], k1=g['k1'],
+                            sigma_k1=g['sigma_k1'], t_half=g['t_half'],
+                            sigma_t_half=g['sigma_t_half'],
+                            r2={k: (v['r2'] if v else None) for k, v in g['fits'].items()},
+                            fits={})
+                       for g in an['groups']],
+            'acid_ratio': 0.5,
+            'acid_derived': an['acid']['derived'],
+            'order': an['order'], 'rate_law': an['rate_law'], 'loglog': None,
+            'warnings': [], 'temperature': an['temperature'],
+            'out_dir': '.', 'template': '.', 'report_name': 'x',
+            'group_labels': [g['label'] for g in an['groups']],
+        }
+        tmp = tempfile.mkdtemp(prefix='pcal_acid_')
+        try:
+            sf = os.path.join(tmp, 'state.json')
+            with open(sf, 'w', encoding='utf-8') as fh:
+                json.dump(state, fh, ensure_ascii=False)
+            r = subprocess.run(
+                [node, str(harness), str(self.tool / 'web' / 'app.js'), sf,
+                 '--dump-groups'],
+                capture_output=True, timeout=120)
+            out = ((r.stdout or b'') + (r.stderr or b'')).decode('utf-8', 'replace')
+            self.assertIn('GROUPS_HTML_BEGIN', out,
+                          '冒烟脚本没输出 --dump-groups 内容')
+            html = out.split('GROUPS_HTML_BEGIN', 1)[1].split('GROUPS_HTML_END', 1)[0]
+            n = html.count('换算所得')
+            self.assertEqual(
+                n, 5,
+                '分组卡片里「换算所得」应出现 5 次（五组都只填了标称值），'
+                '实际 %d 次。若为 0，说明 renderState() 没把后端的 acid_eff '
+                '回填进 DATA.groups（这正是 2026-11-14 用户报的问题）。' % n)
+            self.assertIn('标称', html)
+            self.assertIn('<b>', html, '换算结果应加粗显示')
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_merge_acid_matches_by_label_not_index(self):
+        """回填必须按 label 对齐——后端会按 c(H⁺) 重排，下标对不上。"""
+        src = (self.tool / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('function mergeAcid(', src,
+                      'app.js 应有 mergeAcid() 把后端结果回填进 DATA.groups')
+        self.assertIn('mergeAcid(s)', src, 'renderState() 里要调用 mergeAcid(s)')
+        self.assertIn('renderGroups()', src)
+        body = src.split('function mergeAcid(', 1)[1].split('function ', 1)[0]
+        self.assertIn('label', body, '回填应按 label 对齐而非下标')
+
 if __name__ == '__main__':
     unittest.main()
 

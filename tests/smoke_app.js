@@ -229,6 +229,15 @@ try {
     errors.push('状态栏显示失败: ' + stText);
   }
 
+  // --dump-groups：把渲染后的分组卡片 HTML 打出来，供人核对换算说明
+  if (process.argv.indexOf('--dump-groups') >= 0) {
+    const g = store.get('groups');
+    const html = g ? String(g.innerHTML || '') : '';
+    console.log('--- GROUPS_HTML_BEGIN ---');
+    console.log(html);
+    console.log('--- GROUPS_HTML_END ---');
+  }
+
   if (errors.length) {
     console.log('发现 ' + errors.length + ' 个问题：');
     for (const e of errors) console.log('  - ' + e);

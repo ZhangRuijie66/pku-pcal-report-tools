@@ -251,7 +251,10 @@ function renderResults(s) {
   const rows = (s.groups || []).map((g) => (
     '<tr><td>' + esc(g.label) + '</td><td>' +
     (g.acid_eff == null ? '—' : num(g.acid_eff, 3)) +
-    (g.acid_source === 'nominal' ? '<span title="由标称浓度换算">*</span>' : '') +
+    // 换算来的组把标称值一并显示，读者不用回头翻分组卡片
+    (g.acid_source === 'nominal'
+      ? '<span class="hint" title="由标称酸浓度换算">*（标称 ' +
+        num(g.acid_nominal, 1) + '）</span>' : '') +
     '</td>' +
     '<td>' + pm(g.k1 * 1e3, g.sigma_k1 * 1e3, 3) + '</td>' +
     '<td>' + pm(g.t_half, g.sigma_t_half, 1) + '</td>' +
@@ -326,10 +329,37 @@ function renderWarnings(s) {
   $('warns').innerHTML = list.map((w) => '<div class="msg">' + esc(w) + '</div>').join('');
 }
 
+function mergeAcid(s) {
+  // 把后端算出的 acid_eff / acid_source 回填进 DATA.groups。
+  //
+  // renderGroups() 用的是 DATA.groups（提交给后端的原始输入），里面没有
+  // 这两个字段——它们是后端算完才有的。不回填的话，卡片上那行
+  // 「本组 c(H⁺) = 标称 × 系数 = …」永远不显示（用户 2026-11-14 报的就是这个）。
+  //
+  // 按 label 对齐；label 重复时按出现次序一一对应，不能按下标硬对
+  // （后端会按 c(H⁺) 从小到大重排）。
+  const got = (s && s.groups) || [];
+  if (!got.length) return;
+  const pool = {};
+  got.forEach((g) => {
+    const k = String(g.label || '');
+    (pool[k] = pool[k] || []).push(g);
+  });
+  (DATA.groups || []).forEach((g) => {
+    const arr = pool[String(g.label || '')];
+    if (!arr || !arr.length) return;
+    const src = arr.shift();           // 同名组按出现次序一一对应
+    g.acid_eff = src.acid_eff;
+    g.acid_source = src.acid_source;
+  });
+}
+
 function renderState(s) {
   STATE = s;
   fillConfig(s.config);
   fillData(s.data);
+  mergeAcid(s);
+  renderGroups();                      // 回填后重绘，卡片才显示换算结果
   $('dataFile').textContent = s.data_file || '';
   DATA_DIR = s.data_dir || DATA_DIR || '';
   paintDataDir();
