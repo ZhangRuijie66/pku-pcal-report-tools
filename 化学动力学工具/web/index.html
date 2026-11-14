@@ -134,11 +134,18 @@ td input[type=checkbox]{transform:scale(1.05)}
           </select>
         </div>
       </div>
-      <div class="field"><label>判定级数所用组</label>
-        <select id="order_group"></select>
+      <div class="grid2">
+        <div class="field"><label>判定级数所用组</label>
+          <select id="order_group"></select>
+        </div>
+        <div class="field"><label>标称酸浓度 → c(H⁺) 系数</label>
+          <input type="number" step="0.001" id="acid_ratio" value="0.5">
+        </div>
       </div>
       <p class="hint">混合后蔗糖浓度 c₀ = 母液浓度 / 2；各组 α∞ 默认都用上面的实验值，
         个别组可在分组卡片里覆盖。</p>
+      <p class="hint">酸浓度同理：分组卡片里<strong>只填标称值</strong>时，自动按上面的
+        系数换算 c(H⁺)（默认 0.5，即混合后浓度减半）；手填了 c(H⁺) 真实值则以手填为准。</p>
     </section>
 
     <section class="card">

@@ -551,7 +551,54 @@ def _order_y(alpha, alpha_inf, order):
     raise ValueError('order must be 0/1/2')
 
 
-def _fit_group(group, alpha_inf_used):
+#: 标称酸浓度 → 实际 c(H⁺) 的默认换算系数。
+#: 盐酸母液经稀释/混合后浓度减半（与前端「c₀ = 母液浓度 / 2」同源），
+#: 2025 课程数据实测 0.498~0.510，取 0.5。界面上可以改。
+ACID_RATIO_DEFAULT = 0.5
+
+
+def acid_ratio_of(cfg):
+    """从配置里取换算系数；缺失/非法时退回默认值。"""
+    try:
+        v = float((cfg or {}).get('acid_ratio'))
+    except (TypeError, ValueError):
+        return ACID_RATIO_DEFAULT
+    if not (v > 0) or not math.isfinite(v):
+        return ACID_RATIO_DEFAULT
+    return v
+
+
+def effective_acid(nominal, true, ratio):
+    """这一组的实际 c(H⁺)，以及它是怎么来的。
+
+    返回 ``(value, source)``，source ∈ 'measured' / 'nominal' / 'missing'：
+
+    · 手填了 ``acid_true`` → 用它（**永不覆盖**，那是核过实验条件的值）；
+    · 只填了 ``acid_nominal`` → 按 ``ratio`` 换算；
+    · 两个都没有 → None，由上层给警告（不静默当 0 参与拟合）。
+    """
+    def _ok(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return v if math.isfinite(v) else None
+
+    t = _ok(true)
+    if t is not None:
+        return t, 'measured'
+    n = _ok(nominal)
+    if n is not None:
+        try:
+            r = float(ratio)
+            if r > 0 and math.isfinite(r):
+                return n * r, 'nominal'
+        except (TypeError, ValueError):
+            pass
+    return None, 'missing'
+
+
+def _fit_group(group, alpha_inf_used, ratio=None):
     pts = []
     for i, p in enumerate(group.get('data') or []):
         if len(p) >= 2:
@@ -575,8 +622,12 @@ def _fit_group(group, alpha_inf_used):
         t_half = math.log(2.0) / k1
         sigma_t_half = math.log(2.0) / (k1 ** 2) * sigma_k1
         alpha0_fit = alpha_inf_used + math.exp(first['intercept'])
+    acid_eff, acid_src = effective_acid(
+        group.get('acid_nominal'), group.get('acid_true'), ratio)
     return dict(label=group.get('label'), acid_nominal=group.get('acid_nominal'),
-                acid_true=group.get('acid_true'), alpha_inf=alpha_inf_used,
+                acid_true=group.get('acid_true'),
+                acid_eff=acid_eff, acid_source=acid_src,
+                alpha_inf=alpha_inf_used,
                 exclude=sorted(exclude), data=[[float(x), float(y)] for x, y in use],
                 all_data=[[float(t), float(a)] for _, t, a in pts],
                 n=len(use), fits=fits,
@@ -696,6 +747,9 @@ def analyze(data, cfg=None):
         except (TypeError, ValueError):
             pass
 
+    # 标称酸浓度 → 实际 c(H⁺) 的换算系数（手填 acid_true 时不用它）
+    acid_ratio = acid_ratio_of(cfg)
+
     # ---- 1) α–c 标定
     #
     # 标定点带可选的 ``n``（该浓度下平行测量了几次）与 ``sd``（读数的标准差）。
@@ -742,6 +796,7 @@ def analyze(data, cfg=None):
 
     # ---- 3) 各组动力学
     groups = []
+    derived = []          # c(H⁺) 由标称浓度换算得到的组（报告里要标注）
     for g in data.get('groups') or []:
         if not g.get('label'):
             continue
@@ -752,7 +807,7 @@ def analyze(data, cfg=None):
             used = alpha_inf_global
         if not np.isfinite(used):
             used = alpha_inf_global
-        r = _fit_group(g, used)
+        r = _fit_group(g, used, acid_ratio)
         groups.append(r)
         if r['n'] < 3:
             warnings.append('%s：有效数据点只有 %d 个' % (r['label'], r['n']))
@@ -770,9 +825,12 @@ def analyze(data, cfg=None):
     # 正文却印「单调增大」——数字与措辞对不上，读者一眼觉得算错了。
     # 这里按 c(H⁺) 从小到大稳定排序（浓度缺失/相同的保持原顺序），
     # 使表、图和正文论断三者一致。
-    # 注意：只用 acid_true 排，不动 acid_nominal 的语义，也不改数据本体。
+    # 注意：用**有效浓度** acid_eff 排（手填值优先，否则由标称值换算），
+    # 不动 acid_nominal 的语义，也不改数据本体。
+    # 只认 acid_true 会漏掉"只填标称浓度"的用法：那时 acid_true 全是 None，
+    # 排序退化成原始录入顺序，表和正文的「随浓度增大」就对不上了。
     def _acid_key(g):
-        v = g.get('acid_true')
+        v = g.get('acid_eff', g.get('acid_true'))
         try:
             v = float(v)
             return (0, v) if np.isfinite(v) else (1, 0.0)
@@ -854,7 +912,15 @@ def analyze(data, cfg=None):
                        {'0': '零', '1': '一', '2': '二'}[best], r2[best]))
 
     # ---- 5) k1–c(H+) 与 lg–lg
-    cH = [g['acid_true'] for g in groups]
+    # 用「有效浓度」做 k1–c(H⁺) 拟合：手填的 acid_true 优先，
+    # 只填标称值时按 acid_ratio 换算（见 effective_acid）。
+    cH = [g['acid_eff'] for g in groups]
+    for g in groups:
+        if g['acid_source'] == 'missing':
+            warnings.append('%s：既没填标称酸浓度也没填 c(H⁺)，该组不参与 '
+                            'k₁–c(H⁺) 拟合' % g['label'])
+        elif g['acid_source'] == 'nominal':
+            derived.append(g['label'])
     k1 = [g['k1'] for g in groups]
     rate_law = _rate_law(cH, k1)
     loglog = None
@@ -888,5 +954,7 @@ def analyze(data, cfg=None):
                        used=alpha_inf_global, mode=mode, relative=rel_ainf,
                        n=alpha_inf_n, sd=alpha_inf_sd),
         groups=groups, order=order, rate_law=rate_law, loglog=loglog,
+        # c(H⁺) 的换算口径：ratio 是系数，derived 是「由标称值换算而来」的组
+        acid=dict(ratio=acid_ratio, derived=derived),
         warnings=warnings, constants=dict(M_SUC=M_SUC, M_GLU=M_GLU,
                                           A_SUC=A_SUC, A_GLU=A_GLU, A_FRU=A_FRU))

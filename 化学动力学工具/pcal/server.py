@@ -266,7 +266,10 @@ def _summary(an):
     for g in an['groups']:
         groups.append(dict(
             label=g['label'], acid_nominal=g['acid_nominal'],
-            acid_true=g['acid_true'], alpha_inf=g['alpha_inf'],
+            acid_true=g['acid_true'],
+            # acid_eff = 实际用于计算的 c(H⁺)（手填优先，否则按系数换算）
+            acid_eff=g.get('acid_eff'), acid_source=g.get('acid_source'),
+            alpha_inf=g['alpha_inf'],
             exclude=g['exclude'], n=g['n'], data=g['data'],
             all_data=g['all_data'], alpha0_fit=g['alpha0_fit'],
             k1=g['k1'], sigma_k1=g['sigma_k1'],
@@ -288,6 +291,9 @@ def _summary(an):
         'alpha0': an['alpha0'], 'c0': an['c0'],
         'groups': groups, 'order': an['order'],
         'rate_law': an['rate_law'], 'loglog': an['loglog'],
+        # c(H⁺) 的换算口径：系数，以及哪些组的 c(H⁺) 是由标称值换算来的
+        'acid_ratio': (an.get('acid') or {}).get('ratio'),
+        'acid_derived': (an.get('acid') or {}).get('derived') or [],
         'warnings': an['warnings'], 'temperature': an['temperature'],
         'out_dir': OUT_DIR, 'template': TEMPLATE,
         'report_name': _report_filename(cfg),

@@ -593,7 +593,7 @@ def _sec_first_order(rb, analysis, groups, png, num):
         fit = g['fits'].get('1')
         rows.append([
             g['label'],
-            k(g['acid_true'], 3) if g['acid_true'] is not None else '—',
+            k(g.get('acid_eff'), 3) if g.get('acid_eff') is not None else '—',
             pm(g['k1'] * 1e3, g['sigma_k1'] * 1e3) if fit else '—',
             pm(g['t_half'], g['sigma_t_half']) if fit else '—',
             k(fit['r2'], 4) if fit else '—',
@@ -665,12 +665,23 @@ def _sec_rate_law(rb, analysis, rl, ll, png_rate, png_log, num):
                 ('t', 'c', ITALIC), ('t', '(H^{+})', {}),
                 ') 非线性拟合'], 3)
     tbl = num.t()
-    rb.para([
-        '实验中所用的盐酸浓度是加入时的标称浓度，混合后又被蔗糖溶液稀释一倍，'
-        '因此参与动力学计算的氢离子浓度应取标称值的一半，列于表%d。' % tbl,
-    ])
+    acid = analysis.get('acid') or {}
+    ratio = acid.get('ratio')
+    derived = acid.get('derived') or []
+    if derived and ratio:
+        rb.para([
+            '实验中所用的盐酸浓度是加入时的标称浓度，混合后又被蔗糖溶液稀释一倍，'
+            '因此参与动力学计算的氢离子浓度应取标称值乘以换算系数 %.3f'
+            '（本组数据中 %s 的 c(H⁺) 即由此换算得到），列于表%d。'
+            % (float(ratio), '、'.join(derived), tbl),
+        ])
+    else:
+        rb.para([
+            '实验中所用的盐酸浓度是加入时的标称浓度，混合后又被蔗糖溶液稀释一倍，'
+            '因此参与动力学计算的氢离子浓度应取标称值的一半，列于表%d。' % tbl,
+        ])
     rows = [[g['label'], k(g['acid_nominal'], 1) if g['acid_nominal'] is not None else '—',
-             k(g['acid_true'], 3) if g['acid_true'] is not None else '—']
+             k(g.get('acid_eff'), 3) if g.get('acid_eff') is not None else '—']
             for g in analysis['groups']]
     rb.caption('表%d  各盐酸标称浓度对应的真实氢离子浓度' % tbl)
     rb.table(['编号', 'c_{nom} / (mol·L^{-1})', 'c(H^{+}) / (mol·L^{-1})'],

@@ -10,6 +10,7 @@
     python _tools\\launcher.py --restart             静默重启入口页（更新装完后自己调）
     python _tools\\launcher.py --update [--apply] [--no-restart]
                                                      命令行检查/安装更新
+    python _tools\\launcher.py --shortcut [--all-user]   创建/修复桌面快捷方式
 
 只有两种情况会看到命令行窗口：首次运行需要 pip 装依赖，或者本机没装 Python。
 `--restart` 与 `--update` 是自动化路径：**全程不弹消息框**，结果只打进日志和 stdout。
@@ -77,14 +78,42 @@ def _portal_port():
         return 0
     return portal.find_portal_port()
 
-# 每个工具额外需要的第三方库（缺了就开个窗口 pip 安装）
+# 每个工具需要的第三方库 —— 写 **pip 安装名**，不是 import 名。
+# 缺了就开个可见窗口 pip 安装（见 install_and_start）。
+# 装什么由 PROBE_EXPR 决定探测方式，两边必须同时有键（有测试守着）。
 DEPS = {
-    '化学动力学工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
-    '蒸气压工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
-    '偶极矩工具': ['numpy', 'scipy', 'matplotlib', 'docx', 'openpyxl'],
-    '高斯计算工具': ['rdkit', 'paramiko'],
+    '化学动力学工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
+    '蒸气压工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
+    # 表面吸附工具的 pcal/exportdata.py 真的 import openpyxl（导出数据表 xlsx）
+    '表面吸附工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
+    '偶极矩工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
+    # paramiko 在 vendor/ 里有自带副本（gcalc/hpc.py 的 _load_paramiko），
+    # 缺了也能跑，所以不算硬依赖；rdkit/numpy/matplotlib 与它自己的
+    # requirements.txt 对齐。
+    '高斯计算工具': ['rdkit', 'numpy', 'matplotlib'],
 }
-DEFAULT_DEPS = ['numpy', 'scipy', 'matplotlib', 'docx']
+DEFAULT_DEPS = ['numpy', 'scipy', 'matplotlib', 'python-docx']
+
+#: pip 安装名 → 判「装好了没」的探测表达式。
+#:
+#: ⚠️ **不能只写 `import <模块名>`**：PyPI 上 ``docx`` 是另一个早已废弃的包
+#: （0.2.4，只有一个单文件 docx.py），装它之后 ``import docx`` 会**通过**，
+#: 但 ``docx.shared`` / ``docx.oxml`` 全都不存在，于是被误判成「依赖齐了」，
+#: 启动时才在 report/docxkit 里崩。python-docx 必须探到子模块。
+PROBE_EXPR = {
+    'numpy': 'import numpy',
+    'scipy': 'import scipy',
+    'matplotlib': 'import matplotlib',
+    'python-docx': 'import docx, docx.shared, docx.enum.text, docx.oxml',
+    'openpyxl': 'import openpyxl',
+    'rdkit': 'import rdkit',
+    'paramiko': 'import paramiko',
+}
+
+#: 分发包名与 import 名不一致的那些（报错信息里要说清，不然用户看不懂）
+DIST_HINT = {
+    'python-docx': 'python-docx（import 名是 docx；注意不是 PyPI 上的 docx）',
+}
 
 #: pip 用的国内镜像（清华源，见 README「安装依赖」）
 PIP_MIRROR = 'https://pypi.tuna.tsinghua.edu.cn/simple'
@@ -139,8 +168,23 @@ def _spawn_hidden(argv, cwd=None):
                 pass
 
 
-def _has(exe, module):
-    probe = subprocess.run([exe, '-c', 'import %s' % module],
+def _probe_expr(dist):
+    """pip 安装名 → 探测表达式（没登记的退回 ``import <名字>`im``）。"""
+    return PROBE_EXPR.get(dist, 'import %s' % dist.replace('-', '_'))
+
+
+def _dist_label(dist):
+    """报错/展示用的依赖名（带 import 名提示）。"""
+    return DIST_HINT.get(dist, dist)
+
+
+def _has(exe, dist):
+    """这个 pip 分发包能不能用（按 PROBE_EXPR 深度探测）。
+
+    返回 False 的两种情况都会被 install_and_start 拿去装：
+    真的没装，或装的是同名冒牌包（见 PROBE_EXPR 的注释）。
+    """
+    probe = subprocess.run([exe, '-c', _probe_expr(dist)],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return probe.returncode == 0
 
@@ -194,7 +238,11 @@ def _deps_cache_write(finger, missing):
 
 
 def missing_deps(exe, modules):
-    """哪些依赖缺失（带缓存）。返回模块名列表，空列表表示都齐了。"""
+    """哪些依赖缺失（带缓存）。
+
+    参数与返回值都是 **pip 安装名**（如 ``python-docx``），不是 import 名。
+    空列表表示都齐了。
+    """
     modules = list(modules or ())
     finger = _deps_fingerprint(exe, modules)
     cached = _deps_cache_read(finger)
@@ -359,15 +407,24 @@ def _pip_env():
 def install_and_start(tool_dir):
     """在可见的命令行窗口里装依赖，装好后转后台启动。"""
     exe = sys.executable or 'python'
-    req = os.path.join(LAB_DIR, 'requirements.txt')
     name = os.path.basename(tool_dir.rstrip('\\/'))
+    wanted = DEPS.get(name, DEFAULT_DEPS)
+
+    # 优先用这个工具自己的清单（高斯计算工具是独立仓库，依赖也不一样），
+    # 没有就用套件根目录那份共用清单。
+    own_req = os.path.join(tool_dir, 'requirements.txt')
+    req = own_req if os.path.exists(own_req) else os.path.join(
+        LAB_DIR, 'requirements.txt')
+
+    missing = missing_deps(exe, wanted)
     print('首次运行：正在安装 %s 需要的依赖……' % name)
-    if name == '高斯计算工具':
-        cmd = [exe, '-m', 'pip', 'install', 'rdkit', 'paramiko']
-    elif os.path.exists(req):
+    if missing:
+        print('  缺少：%s' % '、'.join(_dist_label(m) for m in missing))
+
+    if os.path.exists(req):
         cmd = [exe, '-m', 'pip', 'install', '-r', req]
     else:
-        cmd = [exe, '-m', 'pip', 'install'] + DEPS.get(name, DEFAULT_DEPS)
+        cmd = [exe, '-m', 'pip', 'install'] + wanted
     cmd += ['-i', PIP_MIRROR]
     rc = subprocess.call(cmd, env=_pip_env())
     if rc:
@@ -377,6 +434,21 @@ def install_and_start(tool_dir):
         print('        清单，旧包请换成新版本）。也可以手动装一次：')
         print('          "%s" -m pip install -r "%s" -i %s' % (exe, req, PIP_MIRROR))
     else:
+        # 装完再验一次：有些「装成功但版本不对」的情况（比如装上了废弃的
+        # docx 而不是 python-docx）只有真 import 子模块才看得出来。
+        still = missing_deps(exe, wanted)
+        if still:
+            print('\n[ERROR] 依赖装完了但仍不可用：%s'
+                  % '、'.join(_dist_label(m) for m in still))
+            print('        常见原因：环境里装的是同名但不相干的包（例如 PyPI 上')
+            print('        废弃的 docx 顶替了 python-docx）。先卸载再重装：')
+            for dist in still:
+                print('          "%s" -m pip uninstall -y %s' % (exe, dist))
+            print('          "%s" -m pip install -U %s -i %s'
+                  % (exe, ' '.join(still), PIP_MIRROR))
+            print('\n本窗口 20 秒后自动关闭。')
+            time.sleep(20)
+            return 1
         print('\n依赖已就绪，正在后台启动 %s …' % name)
         start(tool_dir)
         print('已在后台启动，稍后浏览器会自动打开这个工具的页面。')
@@ -651,6 +723,22 @@ def update_cli(apply=False, no_restart=False):
     return restart_services()
 
 
+def create_shortcut(all_user=False):
+    """创建/修复桌面快捷方式（转调 _tools/创建快捷方式.py）。
+
+    单独放一个脚本是为了让「建快捷方式」也能脱离启动器直接用
+    （``python _tools/创建快捷方式.py --check``），这里只做一层转发。
+    """
+    script = os.path.join(TOOLS_DIR, '创建快捷方式.py')
+    if not os.path.exists(script):
+        print('[ERROR] 找不到 %s' % script)
+        return 1
+    cmd = [sys.executable, script]
+    if all_user:
+        cmd.append('--all-user')
+    return subprocess.call(cmd)
+
+
 def main(argv):
     argv = list(argv)
     if not argv:
@@ -666,6 +754,8 @@ def main(argv):
     if argv[0] == '--update':
         return update_cli(apply='--apply' in argv[1:],
                           no_restart='--no-restart' in argv[1:])
+    if argv[0] == '--shortcut':
+        return create_shortcut(all_user=('--all-user' in argv[1:]))
     if argv[0] in ('-h', '--help'):
         _say(__doc__)
         return 0

@@ -43,6 +43,13 @@ function pm(x, u, d = 3) {
   if (u == null || u === '' || isNaN(u) || Number(u) === 0) return num(x, d);
   return num(x, d) + ' ± ' + num(u, d);
 }
+// 标称酸浓度 → c(H⁺) 的换算系数（与后端 acid_ratio_of 的默认值一致）。
+// 界面上可改；这里只负责在没有输入框值时给个显示用的默认。
+function ACID_RATIO() {
+  const el = document.getElementById('acid_ratio');
+  const v = el && el.value !== '' ? Number(el.value) : 0.5;
+  return (isFinite(v) && v > 0) ? v : 0.5;
+}
 const SUP = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
   '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
 function sup(n) { return String(n).split('').map((c) => SUP[c] || c).join(''); }
@@ -55,6 +62,9 @@ async function api(path, opts) {
 
 /* ---------------------------------------------------------------- 表单 */
 function fillConfig(c) {
+  const ar = $('acid_ratio');
+  if (ar) ar.value = (cfg.acid_ratio == null ? 0.5 : cfg.acid_ratio);
+
   COVER_FIELDS.forEach((k) => {
     const el = $(k);
     if (!el) return;
@@ -72,6 +82,8 @@ function readConfig() {
       ? (el.value === '' ? null : Number(el.value)) : el.value;
   });
   cfg.alpha_inf_mode = $('alpha_inf_mode').value;
+  const lit = $('acid_ratio');
+  cfg.acid_ratio = (lit && lit.value !== '') ? Number(lit.value) : null;
   cfg.order_group = $('order_group').value || CURRENT_ORDER;
   cfg.data_dir = DATA_DIR || null;
   return cfg;
@@ -212,7 +224,12 @@ function renderGroups() {
       '<div class="field"><label>标称酸浓度 /(mol·L⁻¹)</label><input type="number" step="any" data-g="acid_nominal" value="' +
       (g.acid_nominal == null ? '' : esc(g.acid_nominal)) + '"></div>' +
       '<div class="field"><label>c(H⁺) 真实值</label><input type="number" step="any" data-g="acid_true" value="' +
-      (g.acid_true == null ? '' : esc(g.acid_true)) + '"></div></div>' +
+      (g.acid_true == null ? '' : esc(g.acid_true)) +
+      '" placeholder="留空则按 标称×系数 换算"></div></div>' +
+      (g.acid_source === 'nominal' ?
+        '<p class="hint">本组 c(H⁺) = 标称 ' + esc(g.acid_nominal) + ' × 系数 ' +
+        num(ACID_RATIO(), 3) + ' = <b>' + num(g.acid_eff, 4) +
+        '</b>（换算所得；手填真实值可覆盖）</p>' : '') +
       '<div class="grid2">' +
       '<div class="field"><label>α∞ 覆盖（可空）</label><input type="number" step="any" data-g="alpha_inf" value="' +
       (g.alpha_inf == null ? '' : esc(g.alpha_inf)) + '"></div>' +
@@ -231,7 +248,9 @@ function renderResults(s) {
   const ainf = s.alpha_inf || {};
   const rows = (s.groups || []).map((g) => (
     '<tr><td>' + esc(g.label) + '</td><td>' +
-    (g.acid_true == null ? '—' : num(g.acid_true, 3)) + '</td>' +
+    (g.acid_eff == null ? '—' : num(g.acid_eff, 3)) +
+    (g.acid_source === 'nominal' ? '<span title="由标称浓度换算">*</span>' : '') +
+    '</td>' +
     '<td>' + pm(g.k1 * 1e3, g.sigma_k1 * 1e3, 3) + '</td>' +
     '<td>' + pm(g.t_half, g.sigma_t_half, 1) + '</td>' +
     '<td>' + (g.fits && g.fits['1'] ? num(g.r2['1'], 4) : '—') + '</td>' +
@@ -245,6 +264,10 @@ function renderResults(s) {
     note += '标定：α = (' + num(cal.fit.slope, 2) + ' ± ' + num(cal.fit.sigma_slope, 2) +
       ')c + (' + num(cal.fit.intercept, 3) + ' ± ' + num(cal.fit.sigma_intercept, 3) +
       ')，R² = ' + num(cal.fit.r2, 5) + '。';
+  }
+  if (s.acid_derived && s.acid_derived.length) {
+    note += ' c(H⁺) 中标 * 的 ' + s.acid_derived.length + ' 组由标称酸浓度 × ' +
+      num(s.acid_ratio, 3) + ' 换算；';
   }
   note += ' c₀ = ' + num(s.c0, 4) + ' g·mL⁻¹，α₀ = ' + num(s.alpha0, 2) + '°，' +
     'α∞ 实验 ' + num(ainf.measured, 2) + '° / 理论 ' + num(ainf.theory, 2) + '°。';

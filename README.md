@@ -88,6 +88,23 @@
 - 入口页右上角点 **停止全部服务**；或者
 - 双击本目录的 **`停止服务.vbs`**（会把独立启动的模块和 `高斯计算工具` 一起收掉）。
 
+### 重建桌面快捷方式
+
+快捷方式丢了（换电脑、便携版解压到新位置、误删）就重跑一条命令，不用手工右键新建：
+
+```bash
+python _tools\创建快捷方式.py                 # 建到当前用户桌面
+python _tools\创建快捷方式.py --check         # 只看现有快捷方式的属性
+python _tools\创建快捷方式.py --target D:\某\x.lnk   # 指定输出位置
+python _tools\创建快捷方式.py --remove        # 删掉
+```
+
+也可以走启动器：`python _tools\launcher.py --shortcut [--all-user]`。
+
+脚本会把目标设成 `wscript.exe` + `启动入口.vbs`（所以双击没有黑框），
+并把图标设成 `_tools\pcal.ico`——**漏掉图标不会报错，只会退回 pythonw.exe 的
+默认蓝图标**，所以脚本建完会回读校验，把每个字段打印出来。
+
 后台看不到界面时，运行输出都写进 `_tools\启动日志.log`。
 
 ### 单独启动某个模块
@@ -112,6 +129,21 @@ python -m pip install -r requirements.txt
 需要 Python 3.10+（推荐 3.11）。依赖只有 `python-docx`、`numpy`、`scipy`、`matplotlib`、`openpyxl`。
 首次运行 `启动.vbs` 时若缺依赖，会自动弹一个命令行窗口装（装完自动关闭），
 也可以直接双击 **`安装依赖.cmd`**。
+
+> ⚠️ **必须装 `python-docx`，不是 `docx`。** PyPI 上还有一个叫 `docx` 的包，
+> 那是 2011 年的废弃版本（0.2.4，只有一个单文件 `docx.py`），没有
+> `docx.shared` / `docx.oxml`。装了它 `import docx` 反而会「成功」，
+> 但生成报告时会崩。如果环境里混进了它，先卸载再装：
+>
+> ```bash
+> python -m pip uninstall -y docx
+> python -m pip install -U python-docx
+> ```
+
+> ⚠️ **依赖清单保持纯 ASCII。** pip 在中文 Windows 上会用 GBK 解码
+> `requirements.txt`（除非文件带 UTF-8 BOM 或 PEP 263 声明），清单里写中文
+> 注释会导致 `pip install -r` 直接抛 `UnicodeDecodeError`。启动器已经给 pip
+> 强制了 UTF-8 模式，但清单本身也别写中文——有回归测试守着。
 
 ## 自检与核心同步
 
@@ -332,6 +364,7 @@ Word 原生公式 OMML、五号字、图表题注）。
 ├─ 启动入口.vbs              ← 一键启动统一入口（无黑框；桌面快捷方式指向它）
 ├─ 停止服务.vbs              ← 停掉入口和全部模块
 ├─ 安装依赖.cmd              ← 只在缺依赖/换电脑时需要
+│  （换电脑时想重建桌面图标：`python _tools\创建快捷方式.py`）
 ├─ 启动入口.cmd              ← 同上，只是转去叫 启动入口.vbs
 ├─ requirements.txt
 ├─ make_release.py           ← 发版脚本（改版本号/写更新日志/同步/测试/commit+tag+push；默认只打印计划）

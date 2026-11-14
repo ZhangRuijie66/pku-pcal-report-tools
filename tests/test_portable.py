@@ -199,6 +199,239 @@ class RequirementsEncodingTests(unittest.TestCase):
                       '否则双击安装的路径仍会用 cp936 解码依赖清单')
 
 
+class DependencyTableTests(unittest.TestCase):
+    """启动器的依赖表必须写 pip 安装名、且与各工具真实 import 对齐。
+
+    2026-11-14 排查「别人电脑装不上」时，顺带发现两个同类缺陷：
+
+    · ``DEPS`` 里写的是 ``docx``。PyPI 上 ``docx`` 是 2011 年那个废弃包
+      （0.2.4，只有一个单文件 docx.py），而项目要的是 ``python-docx``。
+      更麻烦的是装了假包之后 ``import docx`` **会通过**，`_has()` 于是判
+      「依赖齐了」，真正崩在 docxkit 的 ``docx.shared`` 上。
+    · 表面吸附工具的 ``pcal/exportdata.py`` 真的 import openpyxl，但
+      ``DEPS`` 没给它列 → 缺这个包时不会弹安装窗，直接启动失败。
+      表现是「双击没反应 / 秒退」，没有任何提示。
+
+    这里做**静态交叉核对**：依赖表 vs 各工具 pcal 里的真实 import。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        path = REPO_ROOT / '_tools' / 'launcher.py'
+        spec = importlib.util.spec_from_file_location('_launcher_deps', str(path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        cls.mod = mod
+
+    def _all_declared(self):
+        names = set(self.mod.DEFAULT_DEPS)
+        for deps in self.mod.DEPS.values():
+            names |= set(deps)
+        return names
+
+    def test_no_legacy_docx_distribution(self):
+        """依赖表里不许出现 ``docx`` 这个分发包名（必须是 python-docx）。"""
+        used = self._all_declared()
+        self.assertNotIn(
+            'docx', used,
+            'DEPS 里写的是 PyPI 上废弃的 docx 包，装完 import docx 会「成功」'
+            '但缺 docx.shared，实际起不来。请改成 python-docx。')
+
+    def test_probe_table_covers_every_declared_dep(self):
+        """每个声明过的依赖都要有探测表达式，否则探测会退化成死猜。"""
+        declared = self._all_declared()
+        probes = set(self.mod.PROBE_EXPR)
+        missing = sorted(declared - probes)
+        self.assertEqual(
+            missing, [],
+            '这些依赖没有登记探测表达式（PROBE_EXPR）：%s\n'
+            '没登记会退回「import 模块名」，而 python-docx 这种必须探子模块'
+            '才能认出冒牌包。' % missing)
+
+    def test_python_docx_probe_reaches_submodule(self):
+        """python-docx 的探测必须到 docx.shared（只 import docx 挡不住假包）。"""
+        expr = self.mod.PROBE_EXPR.get('python-docx', '')
+        self.assertIn('docx.shared', expr,
+                      'python-docx 的探测表达式要包含 docx.shared，'
+                      '否则 PyPI 上的假 docx 会被误判成「已安装」；'
+                      '当前是 %r' % expr)
+
+    def test_tools_importing_openpyxl_declare_it(self):
+        """pcal 里真 import openpyxl 的工具，DEPS 必须列 openpyxl。"""
+        offenders = []
+        for mod in self._tool_dirs():
+            real = self._real_imports(mod, 'openpyxl')
+            if not real:
+                continue
+            declared = set(self.mod.DEPS.get(mod, self.mod.DEFAULT_DEPS))
+            if 'openpyxl' not in declared:
+                offenders.append('%s：%s 里 import 了 openpyxl，但 DEPS 没列'
+                                 % (mod, ', '.join(sorted(real))))
+        self.assertEqual(
+            offenders, [],
+            '这些工具会用 openpyxl 却不会因此弹安装窗，缺包时只会启动即崩：\n'
+            + '\n'.join(offenders))
+
+    #: pcal 里可能出现的第三方包 → 它在 DEPS 里的分发包名。
+    #: 只列「项目真会用到」的，标准库不在内。
+    IMPORT_TO_DIST = {
+        'numpy': 'numpy',
+        'scipy': 'scipy',
+        'matplotlib': 'matplotlib',
+        'docx': 'python-docx',      # import 名 docx ↔ 分发包 python-docx
+        'openpyxl': 'openpyxl',
+        'rdkit': 'rdkit',
+        'paramiko': 'paramiko',
+    }
+
+    def test_declared_deps_cover_real_imports(self):
+        """每个工具真实 import 的第三方包，都要被它的依赖清单覆盖。
+
+        这是「缺包时会不会弹安装窗」的正面判据：漏登一个包，使用者那台
+        机器上没有它，就会启动即崩且没有任何提示。
+        """
+        offenders = []
+        for tool in self._tool_dirs():
+            declared = set(self.mod.DEPS.get(tool, self.mod.DEFAULT_DEPS))
+            for module, dist in self.IMPORT_TO_DIST.items():
+                hits = self._real_imports(tool, module)
+                if not hits:
+                    continue
+                if dist in declared:
+                    continue
+                # 高斯计算工具的 paramiko 可走 vendor/，不算硬依赖
+                if tool == '高斯计算工具' and dist == 'paramiko':
+                    continue
+                offenders.append('%s：import 了 %s（分发包 %s），但依赖清单是 %s'
+                                 % (tool, module, dist, sorted(declared)))
+        self.assertEqual(
+            offenders, [],
+            '这些工具用到的包没有登记进 DEPS，缺包时不会弹安装窗、'
+            '只会启动即崩：\n' + '\n'.join(offenders))
+
+    # ---- 辅助 ---------------------------------------------------------
+    def _tool_dirs(self):
+        import importlib.util
+        path = REPO_ROOT / '物化实验报告工具' / 'portal.py'
+        spec = importlib.util.spec_from_file_location('_portal_deps', str(path))
+        portal = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(portal)
+        names = [m.get('tool') for m in portal.MODULES if m.get('tool')]
+        # 高斯计算工具不在 MODULES 里（独立仓库），但确实由同一启动器拉起
+        if (REPO_ROOT / '高斯计算工具' / 'gcalc').is_dir():
+            names.append('高斯计算工具')
+        return names
+
+    def _real_imports(self, tool, module):
+        """这个工具目录里真正 import 了 module 的文件（相对路径列表）。
+
+        ⚠️ 返回的是**文件路径**，不是模块名。判「有没有用到」要写
+        ``if not hits``，不要写 ``if module not in hits``。
+
+        只看 ``import x`` / ``from x`` 这种**语句**，注释和字符串里的不算；
+        跳过 vendor/（第三方自带副本不算工具的依赖）。还要排除
+        ``workspace.py`` 里那种「字符串清单」——它是元数据，不是依赖。
+        """
+        import re
+        pat = re.compile(r'^\s*(?:import|from)\s+%s(?:[\s.,]|$)' % module,
+                         re.MULTILINE)
+        hits = []
+        root = REPO_ROOT / tool
+        if not root.is_dir():
+            return hits
+        for path in root.rglob('*.py'):
+            rel = str(path.relative_to(root)).replace('\\', '/')
+            if 'vendor/' in rel or '__pycache__' in rel:
+                continue
+            try:
+                src = path.read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                continue
+            # 去掉整行注释，避免 ``# import openpyxl`` 这种说明被当成依赖
+            code = '\n'.join(ln for ln in src.splitlines()
+                              if not ln.lstrip().startswith('#'))
+            if pat.search(code):
+                hits.append(rel)
+        return hits
+
+
+class ShortcutScriptTests(unittest.TestCase):
+    """桌面快捷方式的创建脚本必须存在、可移植、且不会写死开发机路径。
+
+    以前这一步只写在技能文档里（手工敲 PowerShell），换台电脑就得重来，
+    而且很容易漏 ``IconLocation``——漏了不会报错，只是变成 pythonw.exe 的
+    默认蓝图标，属于「不说话的错误」。现在脚本化并加测试。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.path = REPO_ROOT / '_tools' / '创建快捷方式.py'
+        cls.src = cls.path.read_text(encoding='utf-8')
+
+    def test_script_exists(self):
+        self.assertTrue(self.path.is_file(),
+                        '缺少 _tools/创建快捷方式.py（桌面快捷方式没法重建）')
+
+    def test_paths_derived_from_file(self):
+        """根目录必须从 __file__ 推导，不能写死盘符。"""
+        self.assertIn('__file__', self.src,
+                      '创建快捷方式.py 应从头文件位置推导套件根目录')
+        self.assertIsNone(DEV_ROOT_RE.search(self.src),
+                          '创建快捷方式.py 里不许出现写死的开发机路径')
+
+    def test_sets_icon_location(self):
+        """必须显式设 IconLocation，否则退回默认蓝图标（属于不说话的错误）。"""
+        self.assertIn('IconLocation', self.src,
+                      '要设 $link.IconLocation，否则快捷方式没有锥形瓶图标')
+        self.assertIn('pcal.ico', self.src,
+                      '图标应指向 _tools/pcal.ico')
+
+    def test_targets_wscript_with_vbs(self):
+        """双击要无黑框启动：Target=wscript.exe，Arguments 是 启动入口.vbs。"""
+        self.assertIn('wscript', self.src.lower(),
+                      '快捷方式应以 wscript.exe 为目标（这样才没有命令行窗口）')
+        self.assertIn('启动入口.vbs', self.src,
+                      '参数要指向 启动入口.vbs')
+
+    def test_verifies_after_save(self):
+        """建完要回读校验，不能存完就宣布成功。"""
+        self.assertIn('def read(', self.src)
+        create_body = self.src.split('def create(', 1)[1].split('\ndef ', 1)[0]
+        self.assertIn('read(', create_body,
+                      'create() 写完应回读校验（否则存坏了也不知道）')
+
+    def test_reports_errors_instead_of_silent_none(self):
+        """读 .lnk 失败要明确报错，不能静默返回 None 属性。
+
+        WScript.Shell.CreateShortcut 对非 .lnk 后缀抛 COMException，而
+        PowerShell 默认不把它变成非零退出码——原实现因此静默返回
+        Target=None，看起来像「读到了一个没有目标的快捷方式」。
+        """
+        self.assertIn('ERR ', self.src,
+                      'read() 应把 PowerShell 的异常显式带出来（ERR 前缀）')
+        self.assertIn("Write-Output ('ERR '", self.src,
+                      'PS 片段里要 try/catch 并把错误信息打出来')
+
+    def test_script_runs_and_checks(self):
+        """真跑一次 --check：能回读现有快捷方式或明确说不存在。"""
+        import subprocess
+        import sys
+        r = subprocess.run(
+            [sys.executable, str(self.path), '--check'],
+            capture_output=True, timeout=60)
+        out = (r.stdout or b'').decode('utf-8', 'replace')
+        # 0 = 读到了；1 = 没装（也合理，比如别人的电脑还没建过）
+        self.assertIn(r.returncode, (0, 1),
+                      '--check 异常退出：%s / %s'
+                      % (out[:300], (r.stderr or b'').decode('utf-8', 'replace')[:300]))
+        if r.returncode == 0:
+            self.assertIn('目标', out)
+        else:
+            self.assertTrue('读不到快捷方式' in out or '不存在' in out,
+                            '找不到快捷方式时应给出可读提示，实际输出：%r' % out[:300])
+
+
 class LauncherStopTests(unittest.TestCase):
     """launcher.py 的 --stop 自动化路径必须不弹框、且要秒回。"""
 

@@ -22,6 +22,9 @@ def default_config():
         # ---- 处理
         'alpha_inf_mode': 'measured',    # 'measured' 实验值 / 'theory' 理论值
         'order_group': '4M',             # 用哪一组判定蔗糖反应级数
+        # 标称酸浓度 → 实际 c(H⁺) 的换算系数。实验里母液混合后浓度减半，
+        # 所以默认 0.5；只在某组没手填 c(H⁺) 时生效。
+        'acid_ratio': 0.5,
         # 浏览/导入文件的文件夹（数据本体在 data/化学动力学数据.json）。
         # None = 交给 server.default_data_dir() 运行时推导，不写死盘符。
         'data_dir': None,
@@ -31,7 +34,8 @@ def default_config():
 
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
-    'room_temp', 'pressure', 'alpha_inf_mode', 'order_group', 'data_dir',
+    'room_temp', 'pressure', 'alpha_inf_mode', 'order_group', 'acid_ratio',
+    'data_dir',
 )
 
 

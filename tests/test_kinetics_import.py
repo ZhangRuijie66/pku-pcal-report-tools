@@ -298,6 +298,135 @@ class TestChemistrySanity(unittest.TestCase):
         self.assertLess(abs(an['groups'][0]['k1'] - kk) / kk, 1e-6)
 
 
+
+class AcidConcentrationTests(unittest.TestCase):
+    """标称酸浓度 → 实际 c(H⁺) 换算（用户 2026-11-14 要求）。
+
+    用户原话：「标称酸浓度和实际浓度之间是有 2 倍关系的，可以直接填写
+    标称酸浓度换算成实际浓度」。核对 2025 课程数据：实际/标称 = 0.498~0.510，
+    即浓度减半（与讲义「混合后又被蔗糖溶液稀释一倍」一致）。
+
+    三条判据：
+      1. 手填 acid_true 时行为**逐位不变**（不能因为加了换算而改数）；
+      2. 只填标称值时按系数换算，且换算结果等价于原来的手填值；
+      3. 两个都不填时明确告警，不静默当 0 参与拟合。
+    """
+
+    #: 导入内核前 sys.modules 的快照——用完必须还原。
+    #: 每个工具的 ``pcal/server.py`` 都用裸包名 ``from pcal import …``，
+    #: 一旦留在缓存里，后面紫外光谱的 ``from pcal import gcalc_bridge``
+    #: 就会拿到动力学的 pcal 并抛 ImportError。单独跑一个文件看不出来，
+    #: 全量跑才有 3 项 ERROR（tests/test_echem_assign.py 里记过同一个坑）。
+    _mods_before = None
+
+    def setUp(self):
+        import sys
+        from pathlib import Path
+        repo = Path(__file__).resolve().parent.parent
+        tool = repo / '化学动力学工具'
+        if str(tool) not in sys.path:
+            sys.path.insert(0, str(tool))
+        type(self)._mods_before = set(sys.modules)
+        from pcal import kinetics, analysis
+        self.k = kinetics
+        self.a = analysis
+
+    def tearDown(self):
+        """把本类导入时新出现的裸 ``pcal`` 及其子模块清掉。"""
+        import sys
+        before = type(self)._mods_before
+        if not before:
+            return
+        for name in [m for m in sys.modules if m not in before]:
+            if name == 'pcal' or name.startswith('pcal.'):
+                del sys.modules[name]
+
+    def _base(self):
+        import copy
+        return copy.deepcopy(self.k.sample_data())
+
+    def _cfg(self, **kw):
+        cfg = self.a.default_config()
+        cfg.update(kw)
+        return cfg
+
+    def test_measured_value_wins(self):
+        """手填 c(H⁺) 优先于换算。"""
+        data = self._base()
+        g = data['groups'][0]
+        g['acid_nominal'] = 4.0
+        g['acid_true'] = 9.99
+        an = self.k.analyze(data, self._cfg())
+        row = next(x for x in an['groups'] if x['label'] == g['label'])
+        self.assertEqual(row['acid_eff'], 9.99)
+        self.assertEqual(row['acid_source'], 'measured')
+
+    def test_nominal_converted_by_ratio(self):
+        """只填标称值时按系数换算。"""
+        data = self._base()
+        for g in data['groups']:
+            g['acid_true'] = None
+        an = self.k.analyze(data, self._cfg(acid_ratio=0.5))
+        for row in an['groups']:
+            self.assertEqual(row['acid_source'], 'nominal')
+            self.assertAlmostEqual(row['acid_eff'], row['acid_nominal'] * 0.5)
+        self.assertEqual(sorted(an['acid']['derived']),
+                         sorted(g['label'] for g in an['groups']))
+
+    def test_conversion_reproduces_measured_numbers(self):
+        """用标称值换算，得到的 k1 应与原来手填真值一致（量级 + 相对差）。"""
+        measured = self.k.analyze(self._base(), self._cfg())
+        data = self._base()
+        for g in data['groups']:
+            g['acid_true'] = None
+        derived = self.k.analyze(data, self._cfg(acid_ratio=0.5))
+
+        by_label_m = {g['label']: g for g in measured['groups']}
+        for row in derived['groups']:
+            ref = by_label_m[row['label']]
+            # 示例数据的真值不是精确的一半（0.498~0.510），允许 3% 偏差
+            self.assertAlmostEqual(row['k1'], ref['k1'],
+                                   delta=abs(ref['k1']) * 0.03,
+                                   msg='%s 的 k1 差太多' % row['label'])
+
+    def test_ratio_from_config_and_bad_values_fall_back(self):
+        """系数可配；非法值退回默认 0.5。"""
+        self.assertAlmostEqual(self.k.acid_ratio_of({'acid_ratio': 0.4}), 0.4)
+        for bad in (None, '', 0, -1, 'abc', float('nan')):
+            self.assertAlmostEqual(
+                self.k.acid_ratio_of({'acid_ratio': bad}), 0.5,
+                msg='非法系数 %r 应退回默认' % (bad,))
+
+    def test_missing_both_warns_not_silent(self):
+        """两个都不填 → source=missing、eff=None，且有明确警告（不静默当 0）。"""
+        data = self._base()
+        for g in data['groups']:
+            g['acid_true'] = None
+            g['acid_nominal'] = None
+        an = self.k.analyze(data, self._cfg())
+        self.assertTrue(all(g['acid_source'] == 'missing' for g in an['groups']))
+        self.assertTrue(all(g['acid_eff'] is None for g in an['groups']))
+        self.assertTrue(any('既没填标称酸浓度' in w for w in an['warnings']),
+                        '缺少浓度时必须给出可读警告')
+        self.assertIsNone(an['rate_law'],
+                          '没有浓度就不该硬拟合速率方程')
+
+    def test_sorting_uses_effective_concentration(self):
+        """只填标称值时，组仍按 c(H⁺) 递增排列（否则表/正文对不上）。"""
+        data = self._base()
+        for g in data['groups']:
+            g['acid_true'] = None
+        data['groups'].reverse()          # 故意打乱录入顺序
+        an = self.k.analyze(data, self._cfg())
+        eff = [g['acid_eff'] for g in an['groups']]
+        self.assertEqual(eff, sorted(eff), '各组应按 c(H⁺) 从小到大排列')
+
+    def test_default_ratio_is_half(self):
+        """默认系数就是 0.5（与讲义「稀释一倍」一致）。"""
+        self.assertAlmostEqual(self.k.ACID_RATIO_DEFAULT, 0.5)
+        self.assertAlmostEqual(self.a.default_config()['acid_ratio'], 0.5)
+        self.assertIn('acid_ratio', self.a.PERSIST_KEYS)
+
 if __name__ == '__main__':
     unittest.main()
 
