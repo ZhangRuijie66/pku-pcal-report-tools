@@ -851,5 +851,63 @@ class PortableZipTests(unittest.TestCase):
             % (self.ZIP_NAME, len(hits)))
 
 
+class SelfTestWithoutRawDataTests(unittest.TestCase):
+    """`run.py --test` 在**没有原始数据**时不许崩，要给可读提示。
+
+    这条是 2026-11-19 打便携版时实测发现的：包里按设计不附原始数据，
+    解压后逐个模块跑自检，10 个模块自带示例数据照常跑通，只有电化学
+    依赖 CHI 导出的 txt，`Analysis.run()` 缺空白 CV 时优雅地把 `esa`
+    留成空 dict（这是对的），但 `run.py` 直接解引用 `esa['A']` →
+    `KeyError: 'A'` + 一整段 traceback。别人拿到包一测就以为包坏了。
+
+    教训：**自检脚本也是交付物**，它的失败路径要和非交互脚本一样体面。
+    """
+
+    def test_electrochem_selftest_without_data_is_graceful(self):
+        """真的在空数据目录里跑一次：不许 traceback，退出码为 0。"""
+        import os
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        tool = REPO_ROOT / '电化学工具'
+        if not (tool / 'run.py').is_file():
+            self.skipTest('没有电化学工具/run.py')
+        with tempfile.TemporaryDirectory() as tmp:
+            # PCAL_PROFILE 指到空档案，data_dir 指到空目录：
+            # 模拟「别人解压后第一次跑」——包里没有原始数据。
+            profile = Path(tmp) / 'profile.json'
+            profile.write_text('{"data_dirs": {}}', encoding='utf-8')
+            empty = Path(tmp) / 'empty'
+            empty.mkdir()
+            env = dict(os.environ)
+            env['PCAL_PROFILE'] = str(profile)
+            env['PYTHONIOENCODING'] = 'utf-8'
+            r = subprocess.run(
+                [sys.executable, '-X', 'utf8', 'run.py', '--test'],
+                cwd=str(tool), capture_output=True, timeout=300, env=env)
+            out = (r.stdout or b'').decode('utf-8', 'replace') + \
+                  (r.stderr or b'').decode('utf-8', 'replace')
+        self.assertNotIn('Traceback', out,
+                         '缺少原始数据时不许抛异常（别人解压后一测就崩）：\n'
+                         + out[-1200:])
+        self.assertNotIn('KeyError', out, '缺数据时不该有 KeyError：\n' + out[-800:])
+        self.assertEqual(r.returncode, 0,
+                         '缺数据是使用者的正常起点，自检应正常结束；'
+                         '实际退出码 %s：\n%s' % (r.returncode, out[-800:]))
+
+    def test_electrochem_selftest_has_guard(self):
+        src = (REPO_ROOT / '电化学工具' / 'run.py').read_text(encoding='utf-8')
+        self.assertIn('if not an.esa or not an.table1', src,
+                      '电化学 run.py --test 要在解引用 esa 之前判空')
+        self.assertIn('可移植包', src,
+                      '缺数据时的提示要说明「便携包不附原始数据」')
+        guard_at = src.find('if not an.esa or not an.table1')
+        first_access = src.find("esa['A']")
+        self.assertGreater(guard_at, -1)
+        self.assertGreater(first_access, guard_at,
+                           "esa['A'] 必须出现在判空之后，否则缺数据时仍会 KeyError")
+
+
 if __name__ == '__main__':
     unittest.main()

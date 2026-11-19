@@ -52,6 +52,18 @@ def self_test():
     if an.warnings:
         for w in an.warnings:
             print('  ⚠', w)
+    # `Analysis.run()` 在缺关键数据（如空白 CV）时会**优雅提前返回**，
+    # 此时 esa/table1 都是空的。可移植包里按设计不带原始数据，所以
+    # 「解压后跑 --test」必然走到这条路——不能直接解引用，
+    # 要明确说清「缺数据、去哪儿补」，而不是抛 KeyError 让人以为包坏了。
+    if not an.esa or not an.table1:
+        print()
+        print('无法自检：缺少电化学原始数据（CHI 导出的 txt）。')
+        print('  数据目录：%s' % data_dir)
+        print('  可移植包**不附带原始数据**，请把自己的数据放进去，')
+        print('  再到网页界面「数据文件映射」里对应到槽位。')
+        print('  这里只是自检，界面与服务本身可以正常启动。')
+        return 1
     print('表1（含氧物种脱附峰，CHI Segment 5 读数）：')
     for r in an.table1:
         print('  v=%.1f V/s  Ep=%.3f V  ip=%.4e A' % (r['v'], r['Ep'], r['ip']))

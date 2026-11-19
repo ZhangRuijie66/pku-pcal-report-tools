@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "files": {
-    "version.py": "a635a8a71e1a50853ebe3277163e7a5b523fd0c38a755d289df287d452c97a5b",
+    "version.py": "70de5d736ae03e7012c94c472174a23aece3af3424c7f79f7077371ce66907ce",
     "omml.py": "9e2157e5091c78475bee005ec0d004ae32bdcbcfc7792a190fddb73d04038424",
     "docxkit.py": "4a1438a1fc2e389ed42ed91b834261a95216d85a109c2811e5674bb4eb5232bb",
     "sigfig.py": "90582e2858ff7066bf92bd6d211f7a91673baf86e05b8a1619a29f62401a9bc8",
@@ -16,7 +16,7 @@
     "web_draft.js": "f23dfb8643b5fa876e242c0bfe9f26cdfea7c165d12bc8cbcbfa826a1d4d0125"
   },
   "web_files_all": {
-    "web_files.js": "66568d50e2972af7ab3a475e367ae8ebda80c77ad5ab930ddd299be30df11bb8"
+    "web_files.js": "17373e626a8917d186f128eda21416882d9ceff67af02ec6485e1f26b10ed44a"
   },
   "tools": [
     "燃烧热工具",
