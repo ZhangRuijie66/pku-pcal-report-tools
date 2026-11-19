@@ -87,6 +87,8 @@ DEPS = {
     # 表面吸附工具的 pcal/exportdata.py 真的 import openpyxl（导出数据表 xlsx）
     '表面吸附工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
     '偶极矩工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
+    # 电导率工具的 pcal/shared.py 真的 import openpyxl（解析周三组共享数据表）
+    '电导率工具': ['numpy', 'scipy', 'matplotlib', 'python-docx', 'openpyxl'],
     # paramiko 在 vendor/ 里有自带副本（gcalc/hpc.py 的 _load_paramiko），
     # 缺了也能跑，所以不算硬依赖；rdkit/numpy/matplotlib 与它自己的
     # requirements.txt 对齐。

@@ -34,13 +34,19 @@ from pcal import plotting                        # noqa: E402
 from pcal import report as rpt                   # noqa: E402
 from pcal import profile
 from pcal import workspace
+from pcal import analysis
+from pcal import shared as sharedtable
 from pcal.atomicio import atomic_write_json
 from pcal.analysis import (Analysis, DATA_DIR_CANDIDATES, DATA_FILENAME,  # noqa: E402
                            PERSIST_KEYS, default_config,
                            default_config_with_saved)
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
-STATE = {'analysis': None, 'config': None, 'key': None}
+STATE = {'analysis': None, 'config': None, 'key': None,
+         # 共享数据表的解析结果（``analysis.analyze_shared`` 的返回值）：
+         # 一旦读过就留着，_analysis() 重建时把它挂到 an.shared 上，
+         # 导出报告就自动带上 4.2 节。
+         'shared': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
 EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
@@ -119,6 +125,16 @@ def _analysis(cfg, force=False):
         if not force and STATE['key'] == key and STATE['analysis'] is not None:
             return STATE['analysis']
         an = Analysis(cfg).run()
+        # 共享数据的组内统计（若已算过）挂上来：报告据此写 4.2 节。
+        # 挂的是**上一次 _load_shared 的结果**，不在这里重新解析 xlsx——
+        # 解析 + 逐人计算要几百毫秒，而每次改封面字段都会重跑 _analysis，
+        # 在解析路径上重复做这件事会让界面明显变卡。
+        shared = STATE.get('shared')
+        if shared:
+            idx = (shared.get('match') or {}).get('index')
+            members = shared.get('members') or []
+            if idx is not None and 0 <= idx < len(members):
+                an.shared = shared
         STATE.update(analysis=an, config=cfg, key=key)
         return an
 
@@ -166,7 +182,122 @@ def _summary(an):
         'data_dir': cfg.get('data_dir'),
         'template': TEMPLATE,
         'report_name': _report_filename(cfg),
+        # 共享数据是否已读、认领到谁——界面据此显示状态并决定是否提示手选
+        'shared': _shared_state_brief(),
     }
+
+
+def _shared_state_brief():
+    """给 ``/api/state`` 用的共享数据摘要（不含整份组内统计，体积太大）。"""
+    shared = STATE.get('shared')
+    if not shared:
+        return {'loaded': False, 'path': '', 'match': {}, 'n': 0}
+    match = dict(shared.get('match') or {})
+    return {
+        'loaded': True,
+        'path': shared.get('path') or '',
+        'n': (shared.get('group') or {}).get('n', 0),
+        'match': match,
+        'fixes': shared.get('fixes') or [],
+        'suspects': shared.get('suspects') or [],
+        'needs_choice': match.get('index') is None,
+    }
+
+
+# ---------------------------------------------------------------- 共享数据
+def _shared_payload(result):
+    """把 :func:`analysis.analyze_shared` 的结果转成可 JSON 化的 dict。
+
+    ``Analysis`` 对象本身不能序列化，也不该把整份分析塞给前端；
+    前端要的是「组内统计表 + 成员名单 + 认领结果 + 纠错记录」。
+    """
+    group = result.get('group') or {}
+    members = []
+    for m in result.get('members') or []:
+        an = m.get('analysis')
+        members.append(dict(
+            no=m.get('no'), name=m.get('name'), is_me=bool(m.get('is_me')),
+            lam_inf={k: (v or {}).get('lam_inf') for k, v in (m.get('lam') or {}).items()},
+            lam_hac=m.get('lam_hac'),
+            k_mean=((m.get('kmean') or {}) or {}).get('mean'),
+            k_fit=((m.get('kfit') or {}) or {}).get('K'),
+            warnings=list(getattr(an, 'warnings', []) or []),
+        ))
+    return {
+        'ok': True,
+        'n': group.get('n', 0),
+        'names': group.get('names') or [],
+        'members': members,
+        'group': group,
+        'meta': result.get('meta') or {},
+        'fixes': result.get('fixes') or [],
+        'suspects': result.get('suspects') or [],
+        'match': result.get('match') or {},
+    }
+
+
+def _load_shared(payload=None, query=None):
+    """``/api/shared``：解析共享数据表并返回组内统计。
+
+    两种入口：``GET ?path=…``（已保存到设置里的路径）与
+    ``POST {file_b64 | path, me_index}``。文件路径优先取请求里的，
+    其次取 settings 里记住的，都没有就报错让用户先选表。
+    """
+    payload = payload or {}
+    path = payload.get('path')
+    me_index = payload.get('me_index')
+    if query:
+        qpath = (query.get('path') or [''])[0]
+        path = path or qpath
+        qidx = (query.get('me_index') or [''])[0]
+        if qidx not in ('', None):
+            try:
+                me_index = int(qidx)
+            except (TypeError, ValueError):
+                me_index = None
+    cfg = STATE.get('config') or _config_from()
+    path = path or cfg.get('shared_path') or ''
+    if me_index is None:
+        me_index = cfg.get('shared_index')
+        if isinstance(me_index, str) and me_index.strip() == '':
+            me_index = None
+        elif me_index is not None:
+            try:
+                me_index = int(me_index)
+            except (TypeError, ValueError):
+                me_index = None
+
+    b64 = payload.get('file_b64')
+    source = None
+    if b64:
+        import base64
+        try:
+            source = base64.b64decode(b64)
+        except (ValueError, TypeError) as exc:
+            raise ValueError('共享数据表的内容无法解码：%s' % exc)
+    elif path:
+        if not os.path.isfile(path):
+            raise ValueError('共享数据表不存在：%s' % path)
+        source = path
+    else:
+        raise ValueError('还没有选择共享数据表。请点「选择共享数据表」挑一份 '
+                         '《电导率测定实验数据记录表》的 .xlsx。')
+
+    base_cfg = _config_from()
+    result = analysis.analyze_shared(
+        source, base_cfg=base_cfg,
+        me_name=(base_cfg.get('student_name') or '').strip() or None,
+        me_index=me_index)
+    result['path'] = path if path else ''
+    # 存进 STATE：后续 _analysis() 重建 Analysis 时会把它挂到 an.shared 上，
+    # 于是导出报告自动带上 4.2 节，而不必每次导出都重新解析 xlsx。
+    with LOCK:
+        STATE['shared'] = result
+    out = _shared_payload(result)
+    # 把「我是谁/认领到哪一行」也带上，界面据此决定要不要弹选择框
+    out['match'] = dict(out.get('match') or {},
+                        student_name=base_cfg.get('student_name') or '')
+    return out
 
 
 # ---------------------------------------------------------------- 数据文件
@@ -395,6 +526,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_files(q))
             if path == '/api/file/info':
                 return self._json(_file_info(q))
+            if path == '/api/shared':
+                return self._json(_load_shared(query=q))
             return self._json({'ok': False, 'error': 'not found: ' + path}, 404)
         except Exception as exc:  # noqa: BLE001
             return self._error(exc)
@@ -415,6 +548,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok': True, 'saved': data,
                                    'config': default_config_with_saved(data),
                                    'has_saved': True})
+            if u.path == '/api/shared':
+                # 共享数据表：既接受磁盘路径，也接受 base64 上传的字节
+                # （界面用后者，免得要求用户先把文件放到某个固定位置）。
+                return self._json(_load_shared(payload=self._body()))
             if u.path == '/api/data':
                 # 请求体只能读一次：Content-Length 的字节读走就没了，
                 # 再调一次 _body() 会一直阻塞到客户端超时（请求线程永久挂死）。

@@ -51,7 +51,7 @@ def self_test():
     if an.warnings:
         for w in an.warnings:
             print('  ⚠', w)
-    for key in ('NaNO3', 'NaAc', 'HNO3'):
+    for key in ('NaCl', 'NaAc', 'HCl'):
         f = an.fits[key]
         print('%s: Λm∞=(%.5f ± %.5f) S·m²·mol⁻¹  r=%.2f'
               % (key, f['lam_inf'], f['sigma_inf'], f['r']))

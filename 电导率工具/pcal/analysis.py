@@ -46,7 +46,28 @@ DEFAULT_DATA_DIR = _default_data_dir()
 #: 本实验的数据文件名（手记读数，字符串存以保留末位 0）
 DATA_FILENAME = conduct.DATA_FILENAME
 
-STRONG_KEYS = ('NaNO3', 'NaAc', 'HNO3')
+STRONG_KEYS = conduct.STRONG_SPECIES
+
+
+def _usable_combo(combo, fits):
+    """校验数据文件里的 ``combo``，不可用就退回默认组合。
+
+    ⚠ 为什么必须校验：``电导率数据.json`` 是**用户磁盘上的旧文件**，
+    物种从 NaNO₃/HNO₃ 改成 NaCl/HCl 以后，老文件里的
+    ``{"add": ["NaAc","HNO3"], "sub": ["NaNO3"]}`` 仍然指向已经不存在的物种，
+    直接拿去 :func:`conduct.combo_lambda_inf` 会抛
+    ``KeyError: 'HNO3'``——一个"数据没坏但配置文件旧了"的崩。
+
+    判定标准是**参与组合的物种是否都算出来了**：少一个就整条组合式不成立，
+    只能退回默认组合（而不是拿残缺的项硬加，那会得到错数）。
+    """
+    default = dict(conduct.DEFAULT_COMBO)
+    if not isinstance(combo, dict):
+        return default
+    keys = list(combo.get('add') or []) + list(combo.get('sub') or [])
+    if not keys or any(k not in fits for k in keys):
+        return default
+    return combo
 
 
 def default_config():
@@ -61,12 +82,19 @@ def default_config():
         'pressure': None,
         # ---- 数据
         'data_dir': DEFAULT_DATA_DIR,
+        # ---- 共享数据（周三组那台共享表）
+        # 空串表示"这次不用共享数据"；给了路径就解析并做组内统计。
+        # 不设默认路径：可移植包里本来就不附这门课的其他文件。
+        'shared_path': '',
+        # 「我的数据」：先按姓名自动认领（与个人档案的 student_name 比），
+        # 认不出就用 shared_index 手动指定（0 基下标，None 表示没选）。
+        'shared_index': None,
     }
 
 
 PERSIST_KEYS = (
     'student_name', 'student_id', 'group', 'group_no', 'date',
-    'room_temp', 'pressure', 'data_dir',
+    'room_temp', 'pressure', 'data_dir', 'shared_path', 'shared_index',
 )
 
 
@@ -97,6 +125,9 @@ class Analysis:
         self.esa = None       # (Λm∞(HAc), σ)
         self.kmean = None
         self.kfit = None
+        # 共享数据的组内统计结果（``analyze_shared`` 挂在这里）；
+        # 没读共享表时为 None，报告据此整节省略 4.2。
+        self.shared = None
 
     # ------------------------------------------------------------ 主流程
     def run(self):
@@ -107,10 +138,19 @@ class Analysis:
 
         self.data, self.data_path, data_warnings = conduct.load_data_ex(data_dir)
         self.warnings.extend(data_warnings)
+        return self.compute()
+
+    def compute(self):
+        """在 ``self.data`` 已就位的前提下算出全部结果。
+
+        抽出来是为了让**共享数据的每个成员**走完全相同的代码路径：
+        组内统计必须用同一套口径，不能各写一份"差不多"的实现。
+        """
+        self.warnings = []
         self.ctx = conduct.prepare(self.data)
 
         sols = self.data.get('solutions', {})
-        for key in ('NaNO3', 'NaAc', 'HNO3', 'HAc'):
+        for key in conduct.SPECIES_ORDER:
             sol = sols.get(key)
             if not sol or not sol.get('kappa'):
                 self.warnings.append('缺少 %s 的测量数据' % conduct.SPECIES_LABEL.get(key, key))
@@ -141,17 +181,28 @@ class Analysis:
                                  '、'.join(conduct.SPECIES_LABEL.get(k, k) for k in missing))
             return self
 
-        combo = self.data.get('combo') or {'add': ['NaAc', 'HNO3'], 'sub': ['NaNO3']}
+        combo = _usable_combo(self.data.get('combo'), self.fits)
+        # 数据文件是**旧版物种口径**（NaNO₃/HNO₃）时要明说：老数据本身还能
+        # 正常显示，但报告正文按 2026 讲义的新物种写，两者会不一致。
+        # 静默沿用旧物种会让用户以为"怎么报告里写着 NaCl 而界面是 NaNO₃"。
+        legacy = [k for k in (self.data.get('solutions') or {})
+                  if k not in conduct.SPECIES_ORDER and k not in ('HAc',)]
+        if legacy:
+            self.warnings.append(
+                '当前数据文件里还有旧物种（%s），而本版按 2026 秋讲义改用 '
+                '%s。旧物种不会被用于计算与报告；如需作为本次实验的数据，'
+                '请在左侧「测量数据」里按 NaCl / HCl 填新的读数并保存。'
+                % ('、'.join(conduct.SPECIES_LABEL.get(k, k) for k in legacy),
+                   ' / '.join(conduct.SPECIES_LABEL[k]
+                              for k in conduct.STRONG_SPECIES)))
         lam_hac, sigma_hac = conduct.combo_lambda_inf(self.fits, combo)
         self.esa = dict(lam_inf=lam_hac, sigma=sigma_hac, combo=combo)
 
         # 文献对比表（表6）
         self.lit_table = []
-        for key, lam_exp, sig in (
-                ('NaNO3', self.fits['NaNO3']['lam_inf'], self.fits['NaNO3']['sigma_inf']),
-                ('NaAc', self.fits['NaAc']['lam_inf'], self.fits['NaAc']['sigma_inf']),
-                ('HNO3', self.fits['HNO3']['lam_inf'], self.fits['HNO3']['sigma_inf']),
-                ('HAc', lam_hac, sigma_hac)):
+        for key in conduct.SPECIES_ORDER:
+            lam_exp = lam_hac if key == 'HAc' else self.fits[key]['lam_inf']
+            sig = sigma_hac if key == 'HAc' else self.fits[key]['sigma_inf']
             theo = conduct.LAMBDA_THEO[key]
             self.lit_table.append(dict(
                 key=key, exp=lam_exp, sigma=sig, theo=theo,
@@ -173,3 +224,113 @@ class Analysis:
 
     def has(self, key):
         return key in self.tables
+
+    # ------------------------------------------------------------ 共享数据
+    def group_report(self, me_index=None):
+        """组内统计（本工具只负责算"我这一份"）。
+
+        共享表的解析与逐人计算都在 :func:`analyze_shared` 里；
+        这里只是把"我"的 cfg 带进组内统计，便于 server 直接取用。
+        """
+        from . import groupstat
+        return groupstat.group_analysis([], me_index=me_index)
+
+
+def analyze_shared(path_or_bytes, base_cfg=None, me_name=None, me_index=None,
+                   progress=None):
+    """解析共享数据表 → 逐人跑一遍 → 组内统计。
+
+    返回 dict::
+
+        {'ok': True,
+         'members': [{'no':…, 'name':…, 'is_me':bool, 'analysis':Analysis,
+                      'lam':{…}, 'k':{…}}, …],
+         'group': groupstat.group_analysis(...) 的返回值,
+         'meta': {'date':…, 'skipped':[…], 'sheets':[…]},
+         'fixes': [量级纠错记录], 'suspects': [改不掉的可疑点],
+         'match': {'name': 用在档案里的名字, 'index': 认领到的下标,
+                   'candidates': [候选…], 'auto': bool}}
+
+    ``me_name`` 给了就按姓名自动认领；认不出（或给了 ``me_index``）
+    交给界面手动选。**绝不猜**——认错了整份报告的数据就是别人的。
+    """
+    from . import groupstat, shared
+    from . import conduct as _conduct
+
+    members, meta = shared.parse_workbook(path_or_bytes)
+    fixes = shared.correct_magnitudes(members)
+    suspects = shared.suspect_points(members)
+
+    # ---- 认领"我的数据"
+    auto = False
+    idx = None
+    candidates = []
+    if me_index is not None and 0 <= me_index < len(members):
+        idx = int(me_index)
+    elif me_name:
+        idx, candidates = shared.match_member(members, me_name)
+        auto = idx is not None
+    if idx is None:
+        candidates = candidates or list(range(len(members)))
+
+    defaults = _conduct._deep_default()
+    base_cfg = dict(base_cfg or default_config())
+    out_members, results = [], []
+    for i, m in enumerate(members):
+        data = shared.to_data(m, {'_defaults': defaults})
+        cfg = copy.deepcopy(base_cfg)
+        # 共享表里有室温/气压，覆盖 cfg 里的封面值（各人自己的实验条件）
+        if _isfinite(m.get('room_temp')):
+            cfg['room_temp'] = m['room_temp']
+        if _isfinite(m.get('pressure')):
+            cfg['pressure'] = m['pressure']
+        cfg['data_dir'] = '(共享数据表)'
+        an = Analysis(cfg)
+        an.data = data
+        an.data_dir = '(共享数据表)'
+        an.data_path = None
+        try:
+            an.compute()
+        except Exception as exc:                      # noqa: BLE001
+            # 某一个成员的数据坏了不该让整份组内统计失败
+            an.warnings.append('该成员数据无法计算：%s' % exc)
+        if progress:
+            progress('%d/%d %s' % (i + 1, len(members), m['name']))
+        rec = dict(no=m['no'], name=m['name'], is_me=(i == idx),
+                   analysis=an,
+                   lam={k: v for k, v in (an.fits or {}).items()},
+                   lam_hac=(an.esa or {}).get('lam_inf'),
+                   sigma_hac=(an.esa or {}).get('sigma'),
+                   kmean=an.kmean, kfit=an.kfit)
+        out_members.append(rec)
+        results.append(dict(no=m['no'], name=m['name'], fits=an.fits or {},
+                            lam_hac=rec['lam_hac'], sigma_hac=rec['sigma_hac'],
+                            kmean=an.kmean, kfit=an.kfit))
+
+    group = groupstat.group_analysis(results, me_index=idx)
+    result = {
+        'ok': True,
+        'members': out_members,
+        'group': group,
+        'meta': meta,
+        'fixes': fixes,
+        'suspects': suspects,
+        'match': {'name': me_name, 'index': idx, 'auto': auto,
+                  'candidates': candidates,
+                  'candidate_names': [shared.member_names(members)[i]
+                                      for i in candidates]},
+    }
+    # 把共享结果挂到**本人**那个 Analysis 上，报告就能直接取用：
+    #   an.shared = {..., 'group': …, 'members': …, 'fixes': …}
+    # 只挂本人那份，避免"我的报告里混进别人的组内统计"这种混淆。
+    if idx is not None and 0 <= idx < len(out_members):
+        me_an = out_members[idx]['analysis']
+        me_an.shared = result
+    return result
+
+
+def _isfinite(v):
+    try:
+        return v is not None and float(v) == float(v)
+    except (TypeError, ValueError):
+        return False

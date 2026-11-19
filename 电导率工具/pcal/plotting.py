@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""电导率实验的绘图（复刻 2025 参考报告里 Origin 图的样式）。
+"""电导率实验的绘图（样式沿用 2025 参考报告里 Origin 图的风格）。
 
-图2：κ校–c 三溶液折线（黑方 NaNO₃ / 红圆 HNO₃ / 蓝三角 HAc）
+图2：κ校–c 三溶液折线（黑方 NaCl / 红圆 HCl / 蓝三角 HAc）
 图3~5：强电解质 Λm–√c 拟合（黑点 + 红色拟合直线）
 图6：HAc 的 (c/c°)Λm–1/Λm 拟合
+
+⚠ 物种口径 2026-11-20 由 NaNO₃/HNO₃ 改为 NaCl/HCl（与 2026 秋讲义、
+周三组共享数据表一致）；图例文字直接用 ``NaCl``/``HCl``，不再用 mathtext
+下标——这两种分子式本来就没有下标，用 ``NaNO$_3$`` 那套是多余的。
 """
 from __future__ import annotations
 
@@ -21,8 +25,8 @@ plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['path.simplify'] = True
 plt.rcParams['agg.path.chunksize'] = 10000
 
-C_NANO3 = '#3b3b3b'
-C_HNO3 = '#d62728'
+C_NACL = '#3b3b3b'
+C_HCL = '#d62728'
 C_HAC = '#1f77b4'
 C_FIT = 'red'
 C_DATA = 'black'
@@ -44,11 +48,11 @@ def _pad_lim(lo, hi, pad_frac=0.06):
 
 # ---------------------------------------------------------------- 图2
 def make_kappa_c_figure(an):
-    """κ校–c 关系曲线（NaNO₃ / HNO₃ / HAc）。"""
+    """κ校–c 关系曲线（NaCl / HCl / HAc）。"""
     fig, ax = plt.subplots(figsize=(6.2, 4.4), dpi=DPI_PREVIEW)
     series = [
-        ('NaNO3', C_NANO3, 's', 'NaNO$_3$'),
-        ('HNO3', C_HNO3, 'o', 'HNO$_3$'),
+        ('NaCl', C_NACL, 's', 'NaCl'),
+        ('HCl', C_HCL, 'o', 'HCl'),
         ('HAc', C_HAC, '^', 'HAc'),
     ]
     xs, ys = [], []

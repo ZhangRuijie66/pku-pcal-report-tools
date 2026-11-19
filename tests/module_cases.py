@@ -68,6 +68,9 @@ def _magnetic():
 def _conductivity():
     tool = '电导率工具'
     cfg = _cfg(tool)
+    # 数据目录指向随仓库走的 fixtures（7 号仪器的真实读数），
+    # 不再依赖仓库外那份手记数据 —— 否则新 clone 上数值基准会静默降级。
+    cfg['data_dir'] = str(FIXTURES / '电导率')
     an = load_module(tool, 'analysis').Analysis(cfg).run()
     return ModuleCase('电导率', tool, an, cfg)
 

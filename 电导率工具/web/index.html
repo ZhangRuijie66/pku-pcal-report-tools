@@ -179,13 +179,42 @@ td input:focus{outline:2px solid rgba(31,111,235,.18);border-color:var(--accent)
     </section>
 
     <section class="card">
+      <h2>共享数据（全组共享的《电导率测定实验数据记录表》）</h2>
+      <p class="hint">
+        选一份共享表即可算出组内一致性（均值 / s / RSD）、Grubbs 异常值甄别，
+        以及本人与组内其余同学之间的 t 检验、F 检验。读取结果只用于分析与报告，
+        <b>不会改动你自己的测量数据</b>。
+      </p>
+      <div class="btnrow">
+        <button class="btn" id="btnSharedPick">选择共享数据表…</button>
+        <button class="btn" id="btnSharedReload">重新读取</button>
+        <input type="file" id="sharedInput" accept=".xlsx" style="display:none">
+      </div>
+      <p class="hint" id="sharedInfo">尚未读取共享数据表。</p>
+      <div id="sharedMeBox" style="display:none">
+        <label>我的数据（姓名匹配不上时请手动选择）</label>
+        <div class="grid2">
+          <div class="field">
+            <select id="sharedMe"></select>
+          </div>
+          <div class="field">
+            <button class="btn" id="btnSharedUseMe">用这份作为「我的数据」</button>
+          </div>
+        </div>
+        <p class="hint" id="sharedMeHint"></p>
+      </div>
+      <div id="sharedWarns"></div>
+      <div id="sharedTables"></div>
+    </section>
+
+    <section class="card">
       <div class="chartbar">
         <h2 style="margin:0">预览</h2>
         <select id="chartKind">
           <option value="kappa_c">图2 · κ校–c 关系曲线</option>
-          <option value="fit:NaNO3">图3 · NaNO₃ 拟合</option>
+          <option value="fit:NaCl">图3 · NaCl 拟合</option>
           <option value="fit:NaAc">图4 · NaAc 拟合</option>
-          <option value="fit:HNO3">图5 · HNO₃ 拟合</option>
+          <option value="fit:HCl">图5 · HCl 拟合</option>
           <option value="kfit">图6 · HAc 拟合直线</option>
         </select>
         <span class="sub" id="chartHint"></span>

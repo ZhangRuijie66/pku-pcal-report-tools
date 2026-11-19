@@ -30,48 +30,69 @@ KCL_TOLERANCE = 5.0
 C_STD = 1000.0                # 标准浓度 c° / mol·m⁻³
 
 # 25 ℃ 离子极限摩尔电导率（CRC Handbook，S·m²·mol⁻¹；参考报告引用值）
+#
+# ⚠ 2026-11-20 按 2026 秋季讲义改口径：讲义「仪器和试剂」与配制表用的是
+# **NaCl / HCl**（共享数据表也是这两瓶），而 2025 参照报告用的是
+# NaNO₃ / HNO₃。物种换过来以后，CL⁻ 的离子值必须有，否则理论值无从加和。
+# NO₃⁻ 仍留在表里：老数据文件（NaNO₃ 口径）还能被解析，只是不再是默认物种。
 LAMBDA_ION = {
     'H': 0.034965,
     'Na': 0.005008,
     'Ac': 0.00409,
+    'Cl': 0.007631,
     'NO3': 0.007142,
 }
 # 由离子值加和的理论 Λm∞（S·m²·mol⁻¹）
 LAMBDA_THEO = {
-    'NaNO3': LAMBDA_ION['Na'] + LAMBDA_ION['NO3'],
+    'NaCl': LAMBDA_ION['Na'] + LAMBDA_ION['Cl'],
     'NaAc': LAMBDA_ION['Na'] + LAMBDA_ION['Ac'],
-    'HNO3': LAMBDA_ION['H'] + LAMBDA_ION['NO3'],
+    'HCl': LAMBDA_ION['H'] + LAMBDA_ION['Cl'],
     'HAc': LAMBDA_ION['H'] + LAMBDA_ION['Ac'],
 }
 PKA_HAC = 4.756               # CRC，25 ℃
 KA_HAC = 10 ** (-PKA_HAC)     # = 1.754×10⁻⁵
 
-SPECIES_LABEL = {'NaNO3': 'NaNO₃', 'NaAc': 'NaAc', 'HNO3': 'HNO₃', 'HAc': 'HAc'}
-# 普通文本里的化学式（真下标写法）
-CHEM_MARK = {'NaNO3': 'NaNO_{3}', 'NaAc': 'NaAc', 'HNO3': 'HNO_{3}', 'HAc': 'HAc'}
+#: 三种强电解质，顺序即报告里的表号顺序（表3/表4/表5、图3/图4/图5）。
+STRONG_SPECIES = ('NaCl', 'NaAc', 'HCl')
+#: 全部物种（含弱电解质），按加和关系组合时也依这个顺序。
+SPECIES_ORDER = STRONG_SPECIES + ('HAc',)
 
-# ---------------------------------------------------------------- 默认数据
+SPECIES_LABEL = {'NaCl': 'NaCl', 'NaAc': 'NaAc', 'HCl': 'HCl', 'HAc': 'HAc',
+                 'NaNO3': 'NaNO₃', 'HNO3': 'HNO₃'}
+# 普通文本里的化学式（真下标写法）
+CHEM_MARK = {'NaCl': 'NaCl', 'NaAc': 'NaAc', 'HCl': 'HCl', 'HAc': 'HAc',
+             'NaNO3': 'NaNO_{3}', 'HNO3': 'HNO_{3}'}
+# 拟合直线方程里用的 LaTeX 化学式（\mathrm 内不能有裸数字下标）
+CHEM_LATEX = {'NaCl': r'\mathrm{NaCl}', 'NaAc': r'\mathrm{NaAc}',
+              'HCl': r'\mathrm{HCl}', 'HAc': r'\mathrm{HAc}'}
+
+#: 离子独立运动定律的组合：Λm∞(HAc) = Λm∞(HCl) + Λm∞(NaAc) − Λm∞(NaCl)
+#: 等价于 (H⁺+Cl⁻)+(Na⁺+Ac⁻)−(Na⁺+Cl⁻) = H⁺+Ac⁻ = Λm∞(HAc)。
+DEFAULT_COMBO = {'add': ['NaAc', 'HCl'], 'sub': ['NaCl']}
+
+#: 默认数据：**共享数据表第 7 号仪器**（武湛博 / 张瑞杰 合作那一台，
+#: 2026-11-18 周三组）。用真实数据当默认值，自检报告也就等于本人数据。
 DEFAULT_DATA = {
-    'temp_c': 21.3,
-    'kcl_label_uS': 1401.0,
+    'temp_c': 23.5,
+    'kcl_label_uS': 1415.0,
     'kcl_theory_uS': KCL_THEORY_US,
-    'cell_constant_label': 0.970,
-    'cell_constant': 0.979,
+    'cell_constant_label': 0.977,
+    'cell_constant': 0.977,
     'kcl_after_uS': 1415.0,
-    'kappa_w_uS': 6.25,
+    'kappa_w_uS': 1.49,
     'compensation': 2.00,       # 仪器温度补偿系数 %/℃
     'solutions': {
-        'NaNO3': {'conc': ['25.00', '10.00', '5.000', '2.500', '1.250'],
-                  'kappa': ['0.2770', '0.1139', '0.0574', '0.0300', '0.01575']},
+        'NaCl': {'conc': ['25.00', '10.00', '5.000', '2.500', '1.250'],
+                 'kappa': ['0.2860', '0.1176', '0.0593', '0.0311', '0.01532']},
         'NaAc': {'conc': ['25.00', '10.00', '5.000', '2.500', '1.250'],
-                 'kappa': ['0.1959', '0.0827', '0.0426', '0.0223', '0.01178']},
-        'HNO3': {'conc': ['10.00', '5.000', '2.500', '1.000', '0.5000'],
-                 'kappa': ['0.4400', '0.2210', '0.1115', '0.0443', '0.0218']},
+                 'kappa': ['0.1990', '0.0820', '0.0419', '0.0222', '0.01113']},
+        'HCl': {'conc': ['25.00', '12.00', '8.000', '5.000', '2.000'],
+                'kappa': ['1.0060', '0.4910', '0.3290', '0.2090', '0.0851']},
         'HAc': {'conc': ['25.00', '10.00', '5.000', '2.500', '1.250'],
-                'kappa': ['0.0258', '0.01592', '0.01113', '0.00766', '0.00525']},
+                'kappa': ['0.0256', '0.01598', '0.01111', '0.00785', '0.00541']},
     },
     # 离子独立运动定律的组合：Λm∞(HAc) = 加项 − 减项
-    'combo': {'add': ['NaAc', 'HNO3'], 'sub': ['NaNO3']},
+    'combo': dict(DEFAULT_COMBO),
 }
 
 DATA_FILENAME = '电导率数据.json'
@@ -210,7 +231,15 @@ def _deep_default():
 
 
 def _merge(base, patch):
-    """浅层合并 + solutions 逐键合并，容忍 JSON 里少写字段。"""
+    """浅层合并 + solutions 逐键合并，容忍 JSON 里少写字段。
+
+    ⚠ 合并**不删除** patch 里的额外物种：2026-11-20 把物种从
+    NaNO₃/HNO₃ 改成 NaCl/HCl 以后，用户磁盘上的老 ``电导率数据.json``
+    里仍是旧物种，合并后会同时存在四个物种（NaCl/NaAc/HCl/HAc 加上
+    NaNO₃/HNO₃）。这本身不算错——老数据还能看——但 ``combo`` 若指向
+    已经不存在的物种，就会在 ``combo_lambda_inf`` 里抛 KeyError。
+    那种情况由 ``analysis._usable_combo`` 兜住。
+    """
     out = _deep_default()
     for k, v in base.items():
         out[k] = v
@@ -342,24 +371,27 @@ def line_fit(x, y):
     if n < 2 or x.size != y.size:
         return dict(k=float('nan'), b=float('nan'),
                     sigma_k=float('nan'), sigma_b=float('nan'),
-                    r=float('nan'), n=n)
+                    r=float('nan'), n=n, s2=float('nan'), df=0)
     if n == 2:
         # 两点：斜率和截距是唯一解，直接用差分算（比 polyfit 更稳、更准）
         dx = float(x[1] - x[0])
         if dx == 0:
             return dict(k=float('nan'), b=float('nan'),
                         sigma_k=float('nan'), sigma_b=float('nan'),
-                        r=float('nan'), n=n)
+                        r=float('nan'), n=n, s2=float('nan'), df=0)
         k = float((y[1] - y[0]) / dx)
         b = float(y[0] - k * x[0])
         return dict(k=k, b=b,
                     sigma_k=float('nan'), sigma_b=float('nan'),
-                    r=float('nan'), n=n)
+                    r=float('nan'), n=n, s2=float('nan'), df=0)
     k, b = np.polyfit(x, y, 1)
     yhat = k * x + b
     resid = y - yhat
     sse = float(np.sum(resid ** 2))
     sxx = float(np.sum((x - x.mean()) ** 2))
+    df = n - 2
+    # 残差方差 s²：F 检验比较"各人的拟合精度"时用。sse/df 只在 df>0 时有定义。
+    s2 = (sse / df) if df > 0 else float('nan')
     if n > 2 and sxx > 0:
         s = np.sqrt(sse / (n - 2))
         sigma_k = s / np.sqrt(sxx)
@@ -369,7 +401,8 @@ def line_fit(x, y):
     sst = float(np.sum((y - y.mean()) ** 2))
     r = float(np.corrcoef(x, y)[0, 1]) if sst > 0 else float('nan')
     return dict(k=float(k), b=float(b), sigma_k=float(sigma_k),
-                sigma_b=float(sigma_b), r=r, n=n)
+                sigma_b=float(sigma_b), r=r, n=n,
+                s2=float(s2), df=df)
 
 
 def solution_table(sol, kappa_w):

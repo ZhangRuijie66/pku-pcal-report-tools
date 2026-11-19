@@ -224,14 +224,24 @@ class ModuleRegressionTests(unittest.TestCase):
 
     def test_conductivity(self):
         an = self.case('电导率').an
-        for key, expected in (('NaNO3', 0.012144), ('NaAc', 0.00911507),
-                              ('HNO3', 0.0428627)):
+        # 基准来源：tests/fixtures/电导率/电导率数据.json（**7 号仪器**武湛博/
+        # 张瑞杰合作那台的真实读数，2026-11-18 周三组）。期望值不是照当前代码
+        # 抄的，而是按讲义口径独立算的：κ校 = κ测 − κw、Λm = κ校/c、
+        # Λm–√c 直线拟合取截距。共享表里老师自己算的 Λm∞ 可以交叉验证这套
+        # 口径（见 test_conduct_shared：对填了值的 5 位成员逐位吻合）。
+        for key, expected in (('NaCl', 0.0124660294), ('NaAc', 0.0090219534),
+                              ('HCl', 0.0431320265)):
             self.close(an.fits[key]['lam_inf'], expected, label=key)
-        self.close(an.esa['lam_inf'], 0.0398338, label='Λm∞(HAc)')
-        self.close(an.esa['sigma'], 0.00075, rtol=0.02, label='σ(HAc)')
-        self.close(an.kmean['mean'], 1.4344265e-05, label='K mean')
-        self.close(an.kfit['K'], 1.7870724e-05, label='K fit')
-        self.close(an.kfit['r'], 0.99991435, rtol=1e-6, label='K fit r')
+        self.close(an.esa['lam_inf'], 0.0396879505, label='Λm∞(HAc)')
+        self.close(an.esa['sigma'], 0.0003633933, rtol=0.02, label='σ(HAc)')
+        self.close(an.kmean['mean'], 1.6330882135e-05, label='K mean')
+        self.close(an.kfit['K'], 1.7190135715e-05, label='K fit')
+        self.close(an.kfit['r'], 0.9998891952, rtol=1e-6, label='K fit r')
+        # 物理判据：实验 Λm∞ 与该物种的离子加和理论值相比，相对误差应在 2% 内
+        for row in an.lit_table:
+            self.assertLess(abs(row['er']), 2.0,
+                            '%s 的 Λm∞ 相对理论值偏差 %.2f%% 过大'
+                            % (row['key'], row['er']))
         self.assertEqual(an.warnings, [])
 
     def test_electrochemistry(self):

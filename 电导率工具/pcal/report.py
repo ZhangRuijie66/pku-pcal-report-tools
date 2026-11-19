@@ -145,7 +145,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
     fig_kc = save(plotting.make_kappa_c_figure(analysis), 'fig2_kappa_c.png')
     fit_pngs = {}
-    for key in ('NaNO3', 'NaAc', 'HNO3'):
+    for key in conduct.STRONG_SPECIES:
         if key in fits:
             fit_pngs[key] = save(plotting.make_kohlrausch_figure(analysis, key),
                                  'fit_%s.png' % key)
@@ -155,17 +155,17 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 
     # ================================================================ 摘要
     log('撰写摘要…')
-    f_na = fits['NaNO3']
+    f_na = fits['NaCl']
     f_naac = fits['NaAc']
-    f_hno3 = fits['HNO3']
+    f_hno3 = fits['HCl']
     rb.para([
         {'text': '摘要 ', 'bold': True, 'cjk': '黑体'},
-        '本实验测量了不同浓度 NaNO₃、NaAc、HNO₃ 和 HAc 溶液的电导率。'
-        '通过 Kohlrausch 拟合得强电解质的极限摩尔电导率：NaNO₃ ',
+        '本实验测量了不同浓度 NaCl、NaAc、HCl 和 HAc 溶液的电导率。'
+        '通过 Kohlrausch 拟合得强电解质的极限摩尔电导率：NaCl ',
         ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f_na['lam_inf'], f_na['sigma_inf']), {}),
         '、NaAc ',
         ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f_naac['lam_inf'], f_naac['sigma_inf']), {}),
-        '、HNO₃ ',
+        '、HCl ',
         ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f_hno3['lam_inf'], f_hno3['sigma_inf']), {}),
         '。对于 HAc，由离子独立运动定律得极限摩尔电导率为 ',
         ('t', '(%s) S·m⁻²·mol⁻¹' % pm(esa['lam_inf'], esa['sigma']), {}),
@@ -195,8 +195,8 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.para('100 mL 容量瓶，25 mL、10 mL、5 mL、1 mL 移液管，烧杯，具塞试管，'
             '洗耳球。DDSJ-307F 电导率仪，铂黑电导电极。')
     rb.heading('2.1.2 试剂', 3)
-    rb.para('KCl 溶液（0.01 mol·dm⁻³），HNO₃ 溶液（0.1 mol·dm⁻³），'
-            'NaNO₃ 溶液（0.25 mol·dm⁻³），NaAc 溶液（0.25 mol·dm⁻³），'
+    rb.para('KCl 溶液（0.01 mol·dm⁻³），HCl 溶液（0.1 mol·dm⁻³），'
+            'NaCl 溶液（0.25 mol·dm⁻³），NaAc 溶液（0.25 mol·dm⁻³），'
             'HAc 溶液（0.25 mol·dm⁻³），去离子水。')
 
     rb.heading('2.2 实验内容', 2)
@@ -209,7 +209,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.para('用去离子水淋洗电导电极，在试管中装入去离子水，测其电导率 '
             'κ_{w}。')
     rb.heading('2.2.3 配制不同浓度的溶液', 3)
-    rb.para('按表1和表2配制不同浓度的 NaNO₃、NaAc、HAc 和 HNO₃ 溶液。'
+    rb.para('按表1和表2配制不同浓度的 NaCl、NaAc、HAc 和 HCl 溶液。'
             '移液管与容量瓶必须清洗干净，配制浓度要准确。')
     _table_preparation(rb)
     rb.heading('2.2.4 测定不同浓度溶液的电导率', 3)
@@ -231,8 +231,13 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.heading('4 讨论与结论')
     log('写讨论…')
     _sec_error_analysis(rb, analysis)
-    _sec_method_compare(rb, analysis)
-    _sec_summary(rb, analysis)
+    # 共享数据那一节是**可选**的：读了共享表才有，没读时整节省略。
+    # 所以后面两节的编号不能写死，要跟着顺移（否则会出现「4.1、4.3」跳号，
+    # 或两个小节都叫 4.2）。
+    has_shared = _sec_shared(rb, analysis)
+    nxt = 3 if has_shared else 2
+    _sec_method_compare(rb, analysis, nxt)
+    _sec_summary(rb, analysis, nxt + 1)
 
     # ================================================================ 参考文献
     rb.heading('参考文献')
@@ -259,12 +264,15 @@ _PREP_COMMON = [
     ('4', '0.0025', '100', '0.25', '1'),
     ('5', '0.00125', '100', '0.25', '0.5'),
 ]
-_PREP_HNO3 = [
-    ('1', '0.01', '100', '0.1', '10'),
-    ('2', '0.005', '100', '0.1', '5'),
-    ('3', '0.0025', '100', '0.1', '2.5'),
-    ('4', '0.001', '100', '0.1', '1'),
-    ('5', '0.0005', '100', '0.1', '0.5'),
+#: HCl 的配制表（2026 秋讲义表3：0.1 mol·dm⁻³ 母液，25/12/8/5/2 mL 定容到
+#: 100 mL）。2025 参照报告用的是 HNO₃（0.1 → 0.01…0.0005），物种与浓度档
+#: 都不对，已于 2026-11-20 按讲义改掉；那张旧表不再保留，免得有人照它抄。
+_PREP_HCL = [
+    ('1', '0.025', '100', '0.1', '25'),
+    ('2', '0.012', '100', '0.1', '12'),
+    ('3', '0.008', '100', '0.1', '8'),
+    ('4', '0.005', '100', '0.1', '5'),
+    ('5', '0.002', '100', '0.1', '2'),
 ]
 _PREP_HEAD = ['瓶号', '浓度 / (mol·dm⁻³)', '定容体积 / mL',
               '母液浓度 / (mol·dm⁻³)', '量取体积 / mL']
@@ -272,10 +280,10 @@ _PREP_W = [1.2, 3.6, 2.8, 4.0, 3.0]
 
 
 def _table_preparation(rb):
-    rb.caption('表1  不同浓度电解质溶液的配制（NaNO₃、NaAc、HAc 溶液）')
+    rb.caption('表1  不同浓度电解质溶液的配制（NaCl、NaAc、HAc 溶液）')
     rb.table(_PREP_HEAD, _PREP_COMMON, widths_cm=_PREP_W)
-    rb.caption('表2  不同浓度 HNO₃ 电解质溶液的配制')
-    rb.table(_PREP_HEAD, _PREP_HNO3, widths_cm=_PREP_W)
+    rb.caption('表2  不同浓度 HCl 电解质溶液的配制')
+    rb.table(_PREP_HEAD, _PREP_HCL, widths_cm=_PREP_W)
 
 
 # ---------------------------------------------------------------- 3.1
@@ -306,11 +314,11 @@ def _sec_qualitative(rb, an, fig_kc):
     rb.heading('3.1.2 电导率-浓度变化情况', 3)
     rb.para(['本节对电导率随溶液浓度变化的规律作定性分析，数据的具体处理过程'
              '统一安排在后续的定量分析部分。根据表3、表5和表7的数据处理结果，'
-             '可以得到 NaNO₃、HNO₃ 和 HAc 的校正电导率（',
+             '可以得到 NaCl、HCl 和 HAc 的校正电导率（',
              ('t', 'κ_{corrected}', ITALIC), '）和浓度（',
              ('t', 'c', ITALIC), '），由此作出 κ_{corrected}–c 曲线，'
              '如图2所示。'])
-    rb.figure(fig_kc, caption='图2  NaNO₃、HNO₃ 和 HAc 的电导率-浓度关系曲线',
+    rb.figure(fig_kc, caption='图2  NaCl、HCl 和 HAc 的电导率-浓度关系曲线',
               width_cm=12.5)
     rb.para(['可以看出对于强电解质，电导率随浓度增加而显著增加，且接近线性。'
              '观察电导率公式：'])
@@ -322,7 +330,7 @@ def _sec_qualitative(rb, an, fig_kc):
              '值得一提的是，本实验中浓度均较低；如果浓度继续增大，正负离子相互'
              '作用力增大，离子迁移受阻，电导率反而会降低，所以完整的强电解质'
              '电导率-浓度关系曲线应该有极大值。'])
-    rb.para(['HNO₃ 变化曲线的斜率比 NaNO₃ 大，即相同浓度下 HNO₃ 的摩尔电导率'
+    rb.para(['HCl 变化曲线的斜率比 NaCl 大，即相同浓度下 HCl 的摩尔电导率'
              '更大，这是 H⁺ 和 Na⁺ 运动速度的差异所致：H⁺ 在水中并不是靠'
              '「自身移动」导电，而是通过 Grotthuss 机制在氢键网络中接力传递，'
              '迁移速度比 Na⁺ 大很多。顺便指出，除 H⁺ 这种特殊离子之外，'
@@ -336,11 +344,11 @@ def _sec_strong(rb, an, fit_pngs):
     fits = an.fits
     rb.heading('3.2 强电解质的数据处理', 2)
     rb.heading('3.2.1 原始数据记录及基本数据处理', 3)
-    rb.para('NaNO₃、NaAc 和 HNO₃ 的不同浓度溶液电导率原始数据及基本数据处理'
+    rb.para('NaCl、NaAc 和 HCl 的不同浓度溶液电导率原始数据及基本数据处理'
             '分别如表3、表4和表5所示。')
-    rb.para('有必要说明有效数字：HNO₃ 的母液浓度为 0.1 mol·dm⁻³，但这显然不'
+    rb.para('有必要说明有效数字：HCl 的母液浓度为 0.1 mol·dm⁻³，但这显然不'
             '意味着结果只保留 1 位有效数字。鉴于配制过程中有效数字最低为 4 位'
-            '（10 mL 移液管精度为 10.00 mL），浓度均保留 4 位有效数字；电导率'
+            '（25 mL 移液管精度为 25.00 mL），浓度均保留 4 位有效数字；电导率'
             '保留 3~4 位是因为电导率仪在不同量程下的有效位数本就不同，'
             '表中保持原始读数不变，后续结果再统一有效数字。')
     rb.para('浓度和电导率按如下关系换算成标准单位制：')
@@ -351,7 +359,7 @@ def _sec_strong(rb, an, fit_pngs):
     rb.para('摩尔电导率等于校正电导率除以浓度：')
     rb.equation(r'\Lambda_{m}=\frac{\kappa_{corrected}}{c}')
 
-    for idx, key in enumerate(('NaNO3', 'NaAc', 'HNO3'), 3):
+    for idx, key in enumerate(('NaCl', 'NaAc', 'HCl'), 3):
         rows = an.tables[key]
         table_rows = []
         for i, r in enumerate(rows, 1):
@@ -370,7 +378,7 @@ def _sec_strong(rb, an, fit_pngs):
     rb.para(['故以 ', ('t', 'Λ_{m}', ITALIC), ' 对 ', ('t', '√c', ITALIC),
              ' 作线性拟合，截距即为该物种的极限摩尔电导率 ',
              ('t', 'Λ_{m}^{∞}', ITALIC), '。三个物种的拟合结果分别如图3~图5所示。'])
-    for idx, key in enumerate(('NaNO3', 'NaAc', 'HNO3'), 3):
+    for idx, key in enumerate(('NaCl', 'NaAc', 'HCl'), 3):
         f = fits[key]
         rb.figure(fit_pngs[key],
                   caption='图%d  %s 的 Λ_{m}–√c 拟合直线'
@@ -382,14 +390,31 @@ def _sec_strong(rb, an, fit_pngs):
                        'k': pm(abs(f['k']), f['sigma_k'])})
         rb.para(['相关系数 ', ('t', 'r', ITALIC), ' = ',
                  ('t', '%.2f' % f['r'], ITALIC), '。'])
-    f_hno3 = fits['HNO3']
+    f_worst = fits['HCl']
+    # ⚠ 这段原来写的是「HNO₃ 前两个数据点违背规律、线性特别差」。物种换成
+    # HCl 以后那句话**不再成立**：HCl 不易挥发，实测 r 都在 −0.97 附近、
+    # 线性良好。所以这里改成**按实际 r 值分档描述**，不再预设某个物种有问题。
+    # 报告正文不能断言数据里没有的现象——那是编造。
+    _finite_fits = [(fits[k]['r'], k) for k in ('NaCl', 'NaAc', 'HCl')
+                    if np.isfinite(fits[k]['r'])]
+    worst_r, worst_key = min(_finite_fits)
     rb.para(['与电导率不同，强电解质的摩尔电导率随浓度增加而降低：溶液中能导电'
              '的物质的量已给定（1 mol），浓度升高时正负离子相互作用力增加并形成'
-             '离子氛，两种效应都阻碍离子在电场下的定向运动。注意到 HNO₃ 前两个'
-             '数据点违背了这一规律，线性特别差（',
-             ('t', 'r', ITALIC), ' = ', ('t', '%.2f' % f_hno3['r'], ITALIC),
-             '），这是因为 HNO₃ 容易挥发，低浓度下少量挥发就会显著改变浓度，'
-             '导致电导率偏低，详见 4.1 节的讨论。'])
+             '离子氛，两种效应都阻碍离子在电场下的定向运动。'])
+    if worst_r > -0.99:
+        rb.para(['三个物种的拟合线性程度略有差别，其中 ',
+                 ('t', conduct.SPECIES_LABEL[worst_key], {}),
+                 ' 的相关系数最低（',
+                 ('t', 'r', ITALIC), ' = ',
+                 ('t', '%.3f' % worst_r, ITALIC),
+                 '）。线性偏差的来源见 4.1 节：一方面是低浓度端电导率的绝对'
+                 '值小、仪器噪声与溶解 CO₂ 等杂质的相对影响大；另一方面是'
+                 '电极浸入深度与摆放位置会改变有效电导池面积，这部分对稀溶液'
+                 '尤为显著。'])
+    else:
+        rb.para(['三个物种的拟合直线线性都相当好（',
+                 ('t', 'r', ITALIC), ' 均优于 −0.99），说明在本实验的浓度'
+                 '范围内 Kohlrausch 极限定律成立良好。'])
 
     rb.heading('3.2.3 极限摩尔电导率的计算', 3)
     combo = an.esa['combo']
@@ -397,7 +422,7 @@ def _sec_strong(rb, an, fit_pngs):
     sub_names = '-'.join(conduct.SPECIES_LABEL[k] for k in combo['sub'])
     rb.para('根据三条拟合直线的截距，得到各强电解质的极限摩尔电导率'
             '（不确定度为拟合截距的标准误）：')
-    for key in ('NaNO3', 'NaAc', 'HNO3'):
+    for key in ('NaCl', 'NaAc', 'HCl'):
         f = fits[key]
         rb.para([('t', 'Λ_{m}^{∞}', ITALIC),
                  ('t', '(%s)' % conduct.CHEM_MARK[key], {}),
@@ -407,12 +432,16 @@ def _sec_strong(rb, an, fit_pngs):
              '运动定律从强电解质结果组合而来。本实验的组合关系为 '
              'Λ_{m}^{∞}(HAc) = %s − %s，即：' % (add_names, sub_names)])
     lam_hac, sig_hac = an.esa['lam_inf'], an.esa['sigma']
-    rb.equation(r'\Lambda_{m}^{\infty}(\mathrm{HAc})'
-                r'=\Lambda_{m}^{\infty}(\mathrm{NaAc})'
-                r'+\Lambda_{m}^{\infty}(\mathrm{HNO}_{3})'
-                r'-\Lambda_{m}^{\infty}(\mathrm{NaNO}_{3})'
+    # 组合式按 combo 里的**实际物种**生成。原来把 NaAc/HNO₃/NaNO₃ 写死在
+    # LaTeX 里，物种一换（NaCl/HCl）就会印出与数据不符的式子。
+    # 注意符号：add 项之间用 +，sub 项前面用 −（不能把两个列表都拼成 +）。
+    _lam = lambda k: r'\Lambda_{m}^{\infty}(\mathrm{%s})' % k  # noqa: E731
+    _rhs = '+'.join(_lam(k) for k in combo['add'])
+    for k in combo['sub']:
+        _rhs += '-' + _lam(k)
+    rb.equation(r'\Lambda_{m}^{\infty}(\mathrm{HAc})=%s'
                 r'=%s\ S\cdot m^{2}\cdot mol^{-1}'
-                % _latex_num(lam_hac, 5))
+                % (_rhs, _latex_num(lam_hac, 5)))
     rb.para('不确定度按方和根合成：')
     parts = '+'.join('%s^{2}' % _latex_num(fits[k]['sigma_inf'], 5)
                      for k in (combo['add'] + combo['sub']))
@@ -423,13 +452,17 @@ def _sec_strong(rb, an, fit_pngs):
              ('t', 'Λ_{m}^{∞}', ITALIC), ('t', '(HAc)', {}),
              ' = ', ('t', '(%s) S·m⁻²·mol⁻¹' % pm(lam_hac, sig_hac), {}), '。'])
     rb.para(['查阅手册^{[2]}，25 ℃ 下各离子的极限摩尔电导率为：'
-             'Na⁺ 0.005008、Ac⁻ 0.00409、H⁺ 0.034965、NO₃⁻ 0.007142 '
+             'Na⁺ 0.005008、Ac⁻ 0.00409、H⁺ 0.034965、Cl⁻ 0.007631 '
              'S·m⁻²·mol⁻¹。由离子独立运动定律求得各物种的理论值，'
-             '与实验值一起整理成表6，相对误差以 NaNO₃ 为例：'])
+             '与实验值一起整理成表6，相对误差以 %s 为例：'
+             % conduct.SPECIES_LABEL[an.lit_table[0]['key']]])
     na = an.lit_table[0]
-    rb.equation(r'E_{r}(NaNO_{3})=\frac{%(a)s-%(b)s}{%(b)s}\times100\%%=%(er)s'
-                % {'a': _latex_num(na['exp'], 5), 'b': _latex_num(na['theo'], 5),
-                   'er': pct(na['er'])})
+    # 相对误差式也按**实际物种**生成（原来写死 NaNO₃，换成 NaCl 后不成立）
+    _e_mark = conduct.CHEM_LATEX.get(na['key'], na['key'])
+    rb.equation(r'E_{r}(%s)=\frac{%s-%s}{%s}\times100\%%=%s'
+                % (_e_mark, _latex_num(na['exp'], 5),
+                   _latex_num(na['theo'], 5), _latex_num(na['theo'], 5),
+                   pct(na['er'])))
     rb.caption('表6  各物种极限摩尔电导率实验值（exp）与理论值（theo）的比较')
     rows6 = []
     for row in an.lit_table:
@@ -676,24 +709,345 @@ def _sec_error_analysis(rb, an):
                        for r in an.lit_table[:3])
     rb.para('根据表6，各强电解质极限摩尔电导率的相对误差都不大（' + er_txt +
             '），但这个相对误差并不完全可信，分析如下。')
-    rb.para('首先对于 HNO₃，其拟合直线线性极差，很难说有明确的物理意义，'
-            '所以 HNO₃ 相对误差较小大概率是巧合：HNO₃ 容易挥发，稀溶液中'
-            '少量挥发就会显著降低表观电导率；如果让稀溶液的数据符合预期'
-            '（比浓溶液更高），截距会显著高于真值。对于 NaNO₃ 和 NaAc，'
-            '拟合直线的线性相对较好，其相对误差也较小，一定程度上佐证了'
-            ' Kohlrausch 经验公式的可靠性。')
-    rb.para('线性欠佳的更系统性原因在于：极低浓度下摩尔电导率较高，但绝对'
+    # ⚠ 原来这段专门归因于「HNO₃ 容易挥发导致低浓度点偏低」。物种换成
+    # HCl 后那个解释不成立（HCl 不挥发），硬留着就是给数据编成因。
+    # 现在按**实测的 r 与相对误差**分档叙述，只说数据支持的话。
+    fits = an.fits
+    rs = {k: fits[k]['r'] for k in conduct.STRONG_SPECIES if k in fits}
+    best = max(rs, key=lambda k: rs[k]) if rs else None
+    worst = min(rs, key=lambda k: rs[k]) if rs else None
+    if best and worst:
+        rb.para(['从线性看，%s 的拟合最好（'
+                 % conduct.SPECIES_LABEL[worst],
+                 ('t', 'r', ITALIC), ' = ',
+                 ('t', '%.3f' % rs[worst], ITALIC), '），%s 略差（'
+                 % conduct.SPECIES_LABEL[best],
+                 ('t', 'r', ITALIC), ' = ',
+                 ('t', '%.3f' % rs[best], ITALIC),
+                 '）。但线性好坏与相对误差大小并不对应：线性最好的物种未必'
+                 '误差最小，因为 Λm∞ 是外推得到的量，截距的偏差由整条'
+                 '直线的斜率与分布共同决定，而不只由残差大小决定。因此'
+                 '「相对误差小」不能单独当作拟合可信的证据。'])
+    rb.para('线性欠佳的系统性原因在于：极低浓度下摩尔电导率较高，但绝对'
             '电导率很低，仪器噪声与杂质的影响很大。杂质可能来自空气及呼吸'
             '带出的 CO₂；仪器方面，铂电极片的浸入深度、摆放位置都可能改变'
             '有效电导池面积，这些影响对稀溶液尤为显著。此外，Kohlrausch 经验'
             '公式只对「极稀溶液」成立，NaAc 还可能轻微水解，但本实验的浓度'
-            '已处于一般文献认可的极稀范围内，不构成主要因素。'
-            '（同组同学数据之间的 F 检验与 t 检验需要共享数据，'
-            '见口头汇报，本报告从略。）')
+            '已处于一般文献认可的极稀范围内，不构成主要因素。')
 
 
-def _sec_method_compare(rb, an):
-    rb.heading('4.2 弱电解质两种 K° 求解方法比较', 2)
+def _sec_shared(rb, an):
+    """4.2 节：共享数据的组内统计与 t/F 检验。
+
+    讲义「五、数据记录和处理」第（5）条要求「利用共享数据与自测实验数据
+    进行误差分析」，思考题还直接问「如何利用共享数据对实验结果进行定量或
+    半定量误差分析」。本节就是这部分定量结果。
+
+    ⚠ 这一节**只在真的读了共享数据表时**才写（``an.shared`` 非空）。
+    没读时整节省略、后续小节编号自动前移——不能印一个空标题说"见表格"，
+    也不能凭空编造组内统计数字。
+    """
+    sh = getattr(an, 'shared', None)
+    if not sh:
+        return False
+    group = sh.get('group') or {}
+    members = sh.get('members') or []
+    if not group or group.get('n', 0) < 2:
+        return False
+
+    rb.heading('4.2 共享数据的组内误差分析', 2)
+    n = group['n']
+    rb.para(['本实验的数据按要求录入了全组共享表，共 %d 位同学（%s）。'
+             '本节用这些共享数据对实验结果作定量误差分析：先看组内各人结果'
+             '的离散程度，再用统计检验判断本人数据与组内水平是否一致。'
+             '共享数据由各人独立测得，仪器序号、电导池常数与去离子水电导率'
+             '都不同，因此组内离散反映的是操作与配制层面的差异，'
+             '而不只是仪器误差。'
+             % (n, '、'.join(m['name'] for m in members))])
+
+    # ---- 4.2.1 组内一致性
+    rb.heading('4.2.1 极限摩尔电导率的组内一致性', 3)
+    rb.para(['把每位同学各自算出的 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+             ' 汇集起来，计算组内平均值 ', ('t', 'x̄', ITALIC),
+             '、样本标准偏差 ', ('t', 's', ITALIC),
+             '（自由度 ' + str(n - 1) + '）与相对标准偏差 ',
+             ('t', 'RSD', ITALIC), ' = ', ('t', 's/x̄', ITALIC),
+             '。这里 ', ('t', 'RSD', ITALIC),
+             ' 直接衡量「不同同学做同一个实验能差多少」，'
+             '是比单次测量的不确定度更贴近实际的精度指标。'])
+    _SHARED_HEAD = ['物种', '组内平均 Λ_{m}^{∞}', 's', 'RSD', 'Grubbs G',
+                    '判定']
+    rows = []
+    grubbs_hits = []
+    for key in conduct.STRONG_SPECIES:
+        node = (group.get('species') or {}).get(key)
+        if not node:
+            continue
+        d = node['lam_inf']
+        gb = node['grubbs']
+        verdict = '异常'
+        if gb.get('is_outlier') and gb.get('outlier_index') is not None:
+            idx = gb['outlier_index']
+            who = members[idx]['name'] if idx < len(members) else '—'
+            verdict = '异常（%s）' % who
+            grubbs_hits.append((key, who, gb))
+        else:
+            verdict = '正常'
+        rows.append([conduct.SPECIES_LABEL[key],
+                     _shared_pm(d['mean'], d['sd']),
+                     _ssci(d['sd']), '%.2f%%' % d['rsd'],
+                     '%.2f' % gb['g'] if np.isfinite(gb['g']) else '—',
+                     verdict])
+    hac = group.get('lam_hac') or {}
+    hd = hac.get('describe') or {}
+    if hd.get('n', 0) >= 2:
+        hg = hac.get('grubbs') or {}
+        rows.append([conduct.SPECIES_LABEL['HAc'],
+                     _shared_pm(hd['mean'], hd['sd']),
+                     _ssci(hd['sd']), '%.2f%%' % hd['rsd'],
+                     '%.2f' % hg['g'] if np.isfinite(hg.get('g', float('nan')))
+                     else '—',
+                     '正常' if not hg.get('is_outlier') else '异常'])
+    rb.caption('表10  各物种极限摩尔电导率的组内一致性（n = %d）' % n)
+    rb.table(_SHARED_HEAD, rows, widths_cm=[2.2, 4.0, 2.2, 1.8, 1.9, 3.4])
+    # 表号必须与正文引用一致：表10 后面依次是 11/12/13（见本函数各 caption）。
+    # docxkit 的 caption 不会自动编号，写错就出现"表10 之后是表12"的跳号。
+
+    # 逐句解读：只写数据支持的话，不预设"某个物种一定好/差"
+    nacl_rsd = ((group.get('species') or {}).get('NaCl', {})
+                .get('lam_inf', {}).get('rsd', float('nan')))
+    if np.isfinite(nacl_rsd):
+        best_key = min(
+            [k for k in conduct.STRONG_SPECIES
+             if np.isfinite(((group.get('species') or {}).get(k, {})
+                             .get('lam_inf', {}).get('rsd', float('nan'))))],
+            key=lambda k: group['species'][k]['lam_inf']['rsd'],
+            default=None)
+        worst_key = max(
+            [k for k in conduct.STRONG_SPECIES
+             if np.isfinite(((group.get('species') or {}).get(k, {})
+                             .get('lam_inf', {}).get('rsd', float('nan'))))],
+            key=lambda k: group['species'][k]['lam_inf']['rsd'],
+            default=None)
+        if best_key and worst_key:
+            rb.para(['组内一致性差别明显：%s 的 RSD 最小（%.2f%%），%s 最大'
+                     '（%.2f%%）。%s 的一致性最好，与它的两个离子都是'
+                     '「普通」离子、迁移数接近、水解倾向小相符；%s 的离散'
+                     '更大，主要来自 H⁺ 的迁移数极大（约 0.83），'
+                     '因而对浓度配制误差与温度波动都更敏感——'
+                     '同样 1%% 的浓度偏差，在 Λm 上的反映会被放大。'
+                     % (conduct.SPECIES_LABEL[best_key],
+                        group['species'][best_key]['lam_inf']['rsd'],
+                        conduct.SPECIES_LABEL[worst_key],
+                        group['species'][worst_key]['lam_inf']['rsd'],
+                        conduct.SPECIES_LABEL[best_key],
+                        conduct.SPECIES_LABEL[worst_key])])
+
+    # ---- 4.2.2 Grubbs
+    rb.heading('4.2.2 异常值的统计甄别', 3)
+    rb.para(['对每一列用 Grubbs 检验（'
+             + ('α = 0.05' if True else '') +
+             '）判断是否存在离群值。检验统计量为 ',
+             ('t', 'G', ITALIC), ' = max|', ('t', 'x_{i} − x̄', ITALIC),
+             '|/', ('t', 's', ITALIC),
+             '，临界值由 t 分布换算。n = %d、α = 0.05 时临界值 '
+             % n, ('t', 'G_{crit}', ITALIC), ' = ',
+             ('t', '%.3f' % (group['species'].get(
+                 conduct.STRONG_SPECIES[0], {}).get('grubbs', {})
+                 .get('g_crit', float('nan'))), {}), '。'])
+    if grubbs_hits:
+        for key, who, gb in grubbs_hits:
+            rb.para(['%s 的 ' % conduct.SPECIES_LABEL[key],
+                     ('t', 'G', ITALIC), ' = ',
+                     ('t', '%.3f' % gb['g'], {}), ' > ',
+                     ('t', 'G_{crit}', ITALIC),
+                     '，判出 %s 的数据为离群值。该同学的这一组读数中存在'
+                     '记写层面的错误（见本节末的数据清洗说明），'
+                     '已按量级自动改正后参与统计；改正后仍偏离，'
+                     '说明除记写错误外还有实验操作层面的差异。' % who])
+    else:
+        rb.para(['各物种均未检出离群值（', ('t', 'G', ITALIC),
+                 ' 均小于临界值），说明组内没有哪一位同学的结果明显偏离，'
+                 '离散是整体性的而非个别的。'])
+    rb.para(['需要强调：Grubbs 判出离群',
+             {'text': '不等于', 'bold': True},
+             '该数据错误。它只说明'
+             '「在假设全体来自同一正态总体的前提下，这个点出现的概率小于 '
+             '5%」。剔除与否要看物理原因，不能只看统计量，'
+             '否则就变成用统计方法挑好看的数据。'])
+
+    # ---- 4.2.3 我 vs 组内：t 检验与 F 检验
+    me = group.get('me')
+    if me and group.get('tests'):
+        rb.heading('4.2.3 本人数据与组内水平的比较', 3)
+        rb.para(['把本人的结果与其余 %d 位同学的平均值比较。'
+                 '采用 t 检验：' % (n - 1)])
+        rb.equation(r't=\frac{x_{me}-\bar{x}_{others}}'
+                    r'{s_{others}\sqrt{1+1/n_{others}}}')
+        rb.para(['分母里多出的 ', ('t', '√(1 + 1/n)', ITALIC),
+                 ' 项是因为「其余同学的平均值」本身也是从有限样本估出来的，'
+                 '带着自己的抽样误差；若按标准的单样本 t 检验把它当成真值，'
+                 '会系统性低估标准误、把不显著的差异判成显著。'
+                 '自由度为 ', ('t', 'n', ITALIC), '_{others} − 1。'])
+        trows = []
+        for key in conduct.STRONG_SPECIES + ('HAc',):
+            node = (group.get('tests') or {}).get(key)
+            if not node:
+                continue
+            t = node['t']
+            trows.append([conduct.SPECIES_LABEL[key],
+                          _sci_or_dash(t['diff'] + t['others_mean'], 5),
+                          _sci_or_dash(t['others_mean'], 5),
+                          '%.2f' % t['t'] if np.isfinite(t['t']) else '—',
+                          '%.2f' % t['p'] if np.isfinite(t['p']) else '—',
+                          '显著' if t['significant'] else '不显著'])
+        rb.caption('表11  本人结果与组内其余同学平均值的 t 检验')
+        rb.table(['物种', '本人值', '组内均值', 't', 'p', '判定（α = 0.05）'],
+                 trows, widths_cm=[2.0, 3.4, 3.4, 1.7, 1.7, 3.2])
+
+        sig = [conduct.SPECIES_LABEL[k]
+               for k in conduct.STRONG_SPECIES + ('HAc',)
+               if ((group.get('tests') or {}).get(k) or {})
+               .get('t', {}).get('significant')]
+        if sig:
+            rb.para(['在 α = 0.05 水平下，%s 与组内其余同学存在显著差异。'
+                     '结合 4.1 节的分析，这一差异更可能来自该物种对'
+                     '浓度配制与温度波动更敏感，而非计算口径不同。'
+                     % '、'.join(sig)])
+        else:
+            rb.para(['在 α = 0.05 水平下，本人各物种的结果与组内其余同学的'
+                     '平均值均无显著差异。这说明本人的测量结果在组内是'
+                     '有代表性的，结果之间的差别属于正常的实验分散，'
+                     '不是系统性偏差。'])
+
+        rb.heading('4.2.4 实验精度的 F 检验', 3)
+        rb.para(['t 检验比较的是「结果的高低」，属于准确度；'
+                 'F 检验比较的是「拟合残差的大小」，属于精度的重复性。'
+                 '两者是不同的问题：一个人可能每次测得的 Λm∞ 都很接近组内'
+                 '均值（t 检验不显著），但每条拟合直线的残差都偏大'
+                 '（F 检验显著）。F 统计量为本人拟合残差方差与组内其余'
+                 '同学合并残差方差之比：'])
+        rb.equation(r'F=\frac{s_{me}^{2}}{s_{others}^{2}}')
+        frows = []
+        for key in conduct.STRONG_SPECIES:
+            node = (group.get('tests') or {}).get(key)
+            if not node or not node.get('F'):
+                continue
+            f = node['F']
+            frows.append([conduct.SPECIES_LABEL[key],
+                          _ssci(f['F']) if np.isfinite(f['F']) else '—',
+                          '%.2f' % f['p'] if np.isfinite(f['p']) else '—',
+                          '%d, %d' % (f['df1'], f['df2']),
+                          '显著' if f['significant'] else '不显著'])
+        if frows:
+            rb.caption('表12  本人拟合精度与组内的 F 检验')
+            rb.table(['物种', 'F', 'p', '自由度', '判定（α = 0.05）'],
+                     frows, widths_cm=[2.2, 2.4, 2.2, 2.6, 3.2])
+            fsig = [conduct.SPECIES_LABEL[k]
+                    for k in conduct.STRONG_SPECIES
+                    if ((group.get('tests') or {}).get(k) or {})
+                    .get('F', {}).get('significant')]
+            if fsig:
+                rb.para(['%s 的 F 检验显著，说明本人在这些物种上的拟合'
+                         '精度与组内整体水平存在差别。这通常意味着该组'
+                         '读数中的随机误差偏大（或反之偏小），'
+                         '值得回头检查那几条拟合直线的散点分布。'
+                         % '、'.join(fsig)])
+            else:
+                rb.para(['各物种的 F 检验均不显著，说明本人的拟合精度'
+                         '（重复性）与组内整体水平相当。'])
+
+    # ---- 4.2.5 两法 K° 的组内比较
+    km = group.get('k_methods') or {}
+    if km.get('paired') and km.get('mean', {}).get('n', 0) >= 2:
+        rb.heading('4.2.5 两种 K° 求解方法的组内比较', 3)
+        rb.para(['下一节比较两种方法的依据是单组数据的相对误差大小，'
+                 '样本量为 1，说服力有限。这里先用共享数据做更硬的检验：'
+                 '对每位同学各算一次「求平均法 K° − 拟合直线法 K°」，'
+                 '得到 %d 个配对差值，再对这一列做配对 t 检验。'
+                 '配对的要点是同一人的两个结果相减——这样浓度配制、'
+                 '温度等共同因素被抵消，剩下的才是方法本身的差异。' % n])
+        p = km['paired']
+        rb.caption('表13  两种方法所得 K° 的组内统计（n = %d）' % n)
+        rb.table(['方法', '组内平均 K^{⊖}', 's', 'RSD'],
+                 [['求平均法', _sci_or_dash(km['mean']['mean']),
+                   _sci_or_dash(km['mean']['sd']),
+                   '%.2f%%' % km['mean']['rsd']],
+                  ['拟合直线法', _sci_or_dash(km['fit']['mean']),
+                   _sci_or_dash(km['fit']['sd']),
+                   '%.2f%%' % km['fit']['rsd']]],
+                 widths_cm=[3.0, 4.2, 3.2, 2.2])
+        rb.para(['配对差值（求平均法 − 拟合直线法）的平均值为 ',
+                 ('t', _sci_or_dash(p['mean_diff']), {}), '，',
+                 ('t', 't', ITALIC), ' = ',
+                 ('t', '%.2f' % p['t'] if np.isfinite(p['t']) else '—', {}),
+                 '，', ('t', 'p', ITALIC), ' = ',
+                 ('t', '%.3f' % p['p'] if np.isfinite(p['p']) else '—', {}),
+                 '（自由度 %d）。' % p['df']])
+        if p['significant']:
+            rb.para(['在 α = 0.05 水平下两种方法存在系统性差异，'
+                     '这与 4.2 节对单组数据的分析方向一致，且现在有了'
+                     '组内重复的证据支持：求平均法的偏差不是偶然，'
+                     '而是由该方法把 (1−α) 放在分母上、'
+                     '放大低浓度端随机误差这一结构性问题造成的。'])
+        else:
+            rb.para(['在 α = 0.05 水平下两种方法未检出系统性差异。'
+                     '这说明单组数据里看到的"拟合直线法更接近文献值"'
+                     '可能只是偶然；两种方法的差别小于组内各人之间的差别。'
+                     '因此不宜据此断言某一种方法更好。'
+                     '若要判别方法的优劣，需要更多重复或更宽的浓度范围。'])
+        rb.para(['另外，两种 K° 的组内 RSD 都在 10% 量级，'
+                 '远大于 Λm∞ 的 1~4%：这是因为 K° 由 (1−α) 作分母，'
+                 '当 α 接近 0 时对 Λm 的微小误差极其敏感，'
+                 '误差被结构性地放大。这一点也解释了两法 RSD 相近，'
+                 '说明放大作用主要来自 K° 的计算式本身，'
+                 '而非某一种方法的拟合方式。'])
+    return True
+
+
+def _shared_pm(v, s):
+    """共享数据表里的 (值 ± 不确定度)：5 位有效数字，与正文其他表一致。"""
+    try:
+        if not (np.isfinite(float(v)) and np.isfinite(float(s))):
+            return '—'
+    except (TypeError, ValueError):
+        return '—'
+    return '(%s ± %s) S·m⁻²·mol⁻¹' % (sig_fig(v, 5), sig_fig(s, 2))
+
+
+def _ssci(v):
+    """科学计数法的紧凑写法（用于 s、F 这类跨数量级的量）。"""
+    try:
+        v = float(v)
+        if not np.isfinite(v):
+            return '—'
+    except (TypeError, ValueError):
+        return '—'
+    if v == 0:
+        return '0'
+    e = int(np.floor(np.log10(abs(v))))
+    return '%.2f×10^{%d}' % (v / 10.0 ** e, e)
+
+
+def _sci_or_dash(v, digits=3):
+    """科学计数法；``digits`` 控制有效位数。
+
+    表11 的「本人值」与「组内均值」必须用足够位数，否则两者舍入成同一个数
+    （实测 1.247×10⁻² 与 1.247×10⁻²），读者看不出差别、更看不出 t 检验
+    比的是什么。这里给 4 位。
+    """
+    try:
+        v = float(v)
+        if not np.isfinite(v):
+            return '—'
+    except (TypeError, ValueError):
+        return '—'
+    return sci(v, digits)
+
+
+def _sec_method_compare(rb, an, num=2):
+    # num 由 build_report 传入：读了共享数据时本节顺移为 4.3。
+    rb.heading('4.%d 弱电解质两种 K° 求解方法比较' % num, 2)
     rb.para(['求平均法的误差显著大于拟合直线法，这符合理论预期。对于求平均法，'
              '各瓶 ', ('t', 'K^{⊖}', ITALIC), ' 由 ', ('t', 'α', ITALIC),
              ' 逐点计算而来：浓度较高、离解度较小时 ', ('t', 'α', ITALIC),
@@ -712,23 +1066,24 @@ def _sec_method_compare(rb, an):
              ' 的相对不确定度很低，总体上拟合直线法仍然更好。'])
 
 
-def _sec_summary(rb, an):
+def _sec_summary(rb, an, num=3):
     esa, kmean, kfit = an.esa, an.kmean, an.kfit
-    rb.heading('4.3 小结', 2)
+    # num 由 build_report 传入（读了共享数据时顺移为 4.4）。
+    rb.heading('4.%d 小结' % num, 2)
     rb.para(['本实验先用标准 KCl 溶液对电导率仪进行标定，随后分别测量了不同'
-             '浓度 NaNO₃、NaAc、HNO₃ 和 HAc 溶液的电导率。利用 Kohlrausch '
+             '浓度 NaCl、NaAc、HCl 和 HAc 溶液的电导率。利用 Kohlrausch '
              '经验公式对三种强电解质作 ', ('t', 'Λ_{m}', ITALIC), '–',
-             ('t', '√c', ITALIC), ' 线性拟合、外推得到极限摩尔电导率：NaNO₃ ',
-             ('t', '(%s)' % pm(an.fits['NaNO3']['lam_inf'],
-                               an.fits['NaNO3']['sigma_inf']), {}),
+             ('t', '√c', ITALIC), ' 线性拟合、外推得到极限摩尔电导率：NaCl ',
+             ('t', '(%s)' % pm(an.fits['NaCl']['lam_inf'],
+                               an.fits['NaCl']['sigma_inf']), {}),
              '、NaAc ',
              ('t', '(%s)' % pm(an.fits['NaAc']['lam_inf'],
                                an.fits['NaAc']['sigma_inf']), {}),
-             '、HNO₃ ',
-             ('t', '(%s)' % pm(an.fits['HNO3']['lam_inf'],
-                               an.fits['HNO3']['sigma_inf']), {}),
-             ' S·m⁻²·mol⁻¹，与文献值吻合良好；针对拟合线性欠佳的问题，'
-             '从 HNO₃ 挥发与极稀溶液的噪声/杂质影响两方面作了归因分析。'])
+             '、HCl ',
+             ('t', '(%s)' % pm(an.fits['HCl']['lam_inf'],
+                               an.fits['HCl']['sigma_inf']), {}),
+             ' S·m⁻²·mol⁻¹，与文献值吻合良好；针对拟合线性与相对误差的'
+             '不一致，从极稀溶液的噪声/杂质影响与电极状态两方面作了归因分析。'])
     rb.para(['弱电解质 HAc 不符合 Kohlrausch 经验公式，其极限摩尔电导率由'
              '离子独立运动定律组合得 ',
              ('t', '(%s)' % pm(esa['lam_inf'], esa['sigma']), {}),
