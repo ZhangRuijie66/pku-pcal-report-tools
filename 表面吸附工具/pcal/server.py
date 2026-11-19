@@ -2,6 +2,7 @@
 """溶液表面吸附实验报告生成 —— 本地网页服务。"""
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -27,6 +28,7 @@ from pcal import adsorption, plotting                      # noqa: E402
 from pcal.jsonutil import core_json_dumps
 from pcal import report as rpt                             # noqa: E402
 from pcal import exportdata
+from pcal import importdata
 from pcal import dataloc, filepick
 from pcal import profile
 from pcal import workspace
@@ -108,6 +110,53 @@ def _file_text(query):
     return {'ok': True, 'name': os.path.basename(path), 'rel': rel,
             'dir': os.path.abspath(d), 'size': size, 'text': text}
 
+
+def _file_b64(query):
+    """GET /api/fileb64：把浏览目录里的数据文件读成 base64（给 xlsx 用）。
+
+    与 /api/filetext 同一套限制：只允许浏览目录内部 + 白名单后缀 + 体积上限，
+    路径先过 dataloc.resolve_rel（拒绝 ../ 穿越）。前端拿到字节后走
+    /api/import_table 解析，**不再提供按绝对路径读任意文件的能力**。
+    """
+    with LOCK:
+        cfg = STATE.get('config')
+    d = _browse_dir(query, cfg)
+    rel = str((query.get('rel') or [''])[0] or '').strip()
+    path = dataloc.resolve_rel(d, rel) if (d and rel) else ''
+    if not path or not os.path.isfile(path):
+        return {'ok': False, 'error': '找不到文件：%s' % rel}
+    if not path.lower().endswith(tuple(e.lower() for e in dataloc.DATA_EXTS)):
+        return {'ok': False, 'error': '不是数据文件：%s' % rel}
+    size = os.path.getsize(path)
+    if size > MAX_BODY_BYTES:
+        return {'ok': False,
+                'error': '文件太大（%.1f MB）：%s' % (size / 1048576.0, rel)}
+    with open(path, 'rb') as fh:
+        raw = fh.read()
+    return {'ok': True, 'name': os.path.basename(path), 'rel': rel,
+            'dir': os.path.abspath(d), 'size': size,
+            'b64': base64.b64encode(raw).decode('ascii')}
+
+
+def _import_table(payload, cfg):
+    """POST /api/import_table：把导出的 xlsx/csv 数据表读回读数与配置。
+
+    纯读：只返回 data/config，绝不写 data/表面吸附数据.json —— 落盘仍由
+    /api/data 负责（与 exportdata 的只读口径一致，见 SKILL §21）。
+    表里没有的项（如吊片法纯水读数）沿用 payload 里当前的 data，不清空。
+    """
+    raw = base64.b64decode(payload.get('b64') or '')
+    name = str(payload.get('name') or '')
+    base = _normalize_data(payload.get('data')) if payload.get('data') else \
+        _normalize_data(_current_data())
+    res = importdata.read(name, raw, base)
+    data = res['data']
+    # 只回填表里真有的配置项；其余沿用当前值（_coerce 保证键都在白名单里）
+    merged = dict(cfg)
+    merged.update(res['config'])
+    merged = _coerce(default_config(), {'config': merged})
+    return dict(ok=True, name=name, data=data, config=merged,
+                info=res['info'], warnings=res['warnings'])
 
 
 # ---------------------------------------------------------------- 设置
@@ -522,6 +571,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_files_payload(q))
             if path == '/api/filetext':
                 return self._json(_file_text(q))
+            if path == '/api/fileb64':
+                return self._json(_file_b64(q))
             if path == '/api/pickdir':
                 initial = (q.get('initial') or [''])[0] or _browse_dir(q)
                 return self._json({'ok': True,
@@ -572,6 +623,9 @@ class Handler(BaseHTTPRequestHandler):
                 kind = (q.get('kind') or ['bubble'])[0]
                 body = self._body()
                 return self._json(_import(kind, body.get('text') or ''))
+            if u.path == '/api/import_table':
+                body = self._body()
+                return self._json(_import_table(body, _config_from(body)))
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
         except BodyTooLarge as exc:
             return self._json({'ok': False, 'error': str(exc)}, 413)

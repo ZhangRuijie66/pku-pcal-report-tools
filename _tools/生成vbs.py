@@ -132,6 +132,65 @@ sh.Run "wscript.exe //NoLogo """ & target & """ --stop", 0, False
 '''
 
 
+# FindPython 只留一份：两个模板共用。
+# ⚠ 2026-11-19 我复制这段时把 `"""python.exe"""` 写成了四个引号，
+#   VBScript 报「缺少 ')'」行 67，而真正的原因在第 67 行看起来完全正常——
+#   拼接同一份常量就不会再出现这种「复制粘贴走形」的错。
+_PY_START = SHARED.index('Function FindPython()')
+PY_FINDER = SHARED[_PY_START:]
+SHARED = SHARED[:_PY_START]
+
+
+SHORTCUT_BODY = r'''Option Explicit
+' 创建/修复桌面快捷方式（双击即用，没有命令行窗口）。
+' 真正的活在同目录的 创建快捷方式.py 里；这里只负责找到 python.exe，
+' 以窗口样式 0 跑它并加 --interactive（做完弹框告知成功还是失败）。
+'
+' ⚠ 必须是 UTF-16 带 BOM（由 _tools/生成vbs.py 写出）。WSH 对无 BOM 的
+'   文件按 ANSI 解码，中文提示会变成乱码，且乱码还能破坏语法。
+Dim sh, fso, script, py, rc
+Set sh = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+' 本 vbs 放在套件根目录，脚本在 _tools 子目录里 —— 少写一级就永远找不到。
+script = fso.GetAbsolutePathName( _
+    fso.GetParentFolderName(WScript.ScriptFullName) & "\_tools\创建快捷方式.py")
+
+If Not fso.FileExists(script) Then
+    sh.Popup "找不到 _tools\创建快捷方式.py。" & vbCrLf & vbCrLf & _
+             "请确认本工具目录完整（直接解压的压缩包，不要只拷一部分文件）。", _
+             0, "物化实验报告工具", 48
+    WScript.Quit 1
+End If
+
+py = FindPython()
+If py = "" Then
+    sh.Popup "在这台电脑上没有找到 Python 3。" & vbCrLf & vbCrLf & _
+             "1) 先安装 Python 3.10+（安装时勾选 Add python.exe to PATH）；" & vbCrLf & _
+             "2) 再双击根目录的 安装依赖.cmd 装好依赖；" & vbCrLf & _
+             "3) 然后重新双击本入口。", _
+             0, "物化实验报告工具", 48
+    WScript.Quit 1
+End If
+
+' 窗口样式 0 = 隐藏；True = 等它跑完，这样弹框顺序正常、失败也能拿到退出码。
+' Run 在可执行文件不存在时会抛异常（80070002）而不是返回非 0，必须 On Error。
+On Error Resume Next
+rc = sh.Run("""" & py & """ """ & script & """ --interactive", 0, True)
+If Err.Number <> 0 Then
+    Err.Clear
+    On Error Goto 0
+    sh.Popup "创建快捷方式失败：找不到 Python。" & vbCrLf & vbCrLf & _
+             "请双击根目录的 安装依赖.cmd 重新安装依赖。", _
+             0, "物化实验报告工具", 48
+    WScript.Quit 1
+End If
+On Error Goto 0
+WScript.Quit rc
+'''
+
+SHORTCUT = SHORTCUT_BODY + PY_FINDER
+
+
 def write(rel, text):
     path = os.path.join(ROOT, rel)
     with io.open(path, 'w', encoding='utf-16') as fh:
@@ -139,9 +198,13 @@ def write(rel, text):
     print('written', rel)
 
 
-write(r'_tools\hidden-launch.vbs', SHARED)
+# SHARED 在上面被切掉了 FindPython 那一段（PY_FINDER 共用），
+# 写文件时必须拼回去 —— 漏了就是 hidden-launch.vbs 调一个不存在的函数，
+# 双击启动直接弹「Variable is undefined: 'FindPython'」。
+write(r'_tools\hidden-launch.vbs', SHARED + PY_FINDER)
 write(r'启动入口.vbs', ENTRY)
 write(r'停止服务.vbs', STOP)
+write(r'创建桌面快捷方式.vbs', SHORTCUT)
 
 # 只管理本套件 11 个工具 + 入口页的 启动.vbs。
 #

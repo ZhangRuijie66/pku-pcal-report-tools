@@ -66,6 +66,22 @@ def _side_values(stats, n=3):
     return vals + [''] * (n - len(vals))
 
 
+def _water_plate_text(an):
+    """吊片法纯水逐次读数，用 / 分隔。
+
+    导出的数据表要能**原样回读**（见 importdata.py）：只留均值会把
+    σ(γ) 的重复性那部分丢掉，回读后不确定度会平白变小。
+    """
+    p = an.get('plate') or {}
+    st = p.get('water') or {}
+    raw = st.get('values')
+    # ⚠ numpy 数组不能用 `or` 判真假（同 _side_values 的注释）
+    vals = [float(v) for v in list(raw)] if raw is not None else []
+    if not vals:
+        return ''
+    return ' / '.join('%.2f' % v for v in vals)
+
+
 # ---------------------------------------------------------------- 表结构
 def _sheet_info(an):
     cfg = an.get('config') or {}
@@ -79,8 +95,11 @@ def _sheet_info(an):
             ['组别 / 组号', '%s / %s' % (cfg.get('group') or '', cfg.get('group_no') or '')],
             ['实验日期', cfg.get('date') or ''],
             ['气泡法温度 /℃', _num(b['temperature'], 2)],
+            ['吊片法温度 /℃', _num(an['plate']['temperature'], 2)],
             ['γ_w /(mN·m⁻¹)', _num(b['gamma_water'], 3)],
             ['单次读数 σ_h /cm', _num(b['sigma_read'], 3)],
+            ['吊片法单次读数 σ_γ /(mN·m⁻¹)', _num(an['plate']['sigma_inst'], 3)],
+            ['纯水 γ(吊片法) /(mN·m⁻¹)', _water_plate_text(an)],
             ['液柱读数方式', mode_txt],
             ['两臂高度总和 S /cm', _num(hi.get('sum'), 3)],
             ['S 的来源', {'manual': '手填', 'estimated': '由两侧读数估计'}.get(

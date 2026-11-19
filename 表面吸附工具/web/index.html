@@ -104,6 +104,18 @@ td input.auto:focus{outline:none;border-color:var(--line)}
         <button class="btn" id="btnXlsx">导出数据表 .xlsx</button>
         <button class="btn" id="btnCsv">导出 .csv</button>
       </div>
+      <div class="field" style="margin-top:10px">
+        <label>回读数据表（把导出的 .xlsx / .csv 读回来接着改）</label>
+        <div class="btnrow" style="margin:0">
+          <button class="btn mini" id="btnImportTable">回读数据表 .xlsx / .csv</button>
+          <input type="file" id="tableInput" accept=".xlsx,.xlsm,.csv"
+                 style="display:none">
+        </div>
+        <p class="hint" style="margin:6px 0 0" id="tableHint">
+          导出的数据表带全部原始读数与实验条件，读回来与导出前的计算完全一致
+          （含平行次数、读数方式与两臂高度总和 S）；csv 只有平均值列，
+          读回后每个点按 1 次读数处理。</p>
+      </div>
       <div class="grid2" style="margin-top:8px">
         <div class="field"><label>导入类型</label>
           <select id="importKind">
@@ -119,14 +131,14 @@ td input.auto:focus{outline:none;border-color:var(--line)}
       </div>
       <p class="hint">示例数据来自同一课程 2025 年的报告，仅用于预览流程；正式报告请换成自己的数据。
         数据保存在 <code id="dataFile">—</code>，可随工具一起拷走。</p>
-      <div class="field"><label>数据目录（从文件夹挑 CSV/TXT 导入，可搜索）</label>
+      <div class="field"><label>数据目录（从文件夹挑文件导入，可搜索）</label>
         <div class="btnrow" style="margin:0 0 6px">
           <button class="btn mini" id="btnPickDir">选择文件夹…</button>
           <span class="hint" style="margin:0"><code id="dataDir">—</code></span>
         </div>
         <div id="filePick"></div>
         <p class="hint" style="margin:6px 0 0">选定文件后按上面的「导入类型」走与文件框
-          完全相同的解析路径。</p>
+          完全相同的解析路径；.xlsx 数据表则整表回读。</p>
       </div>
     </section>
 

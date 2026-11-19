@@ -390,6 +390,29 @@ async function fileTextFromDir(rel) {
   return { text: r.text || '', name: r.name || String(rel).split('/').pop() };
 }
 
+/* 数据目录里的 .xlsx 要按字节取（文本端点读它会解出乱码） */
+async function fileFromDir(rel) {
+  const r = await api('/api/fileb64?dir=' + encodeURIComponent(DATA_DIR)
+    + '&rel=' + encodeURIComponent(rel));
+  const bin = atob(r.b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], r.name || String(rel).split('/').pop());
+}
+
+/* 选定文件后按后缀分流：
+ *   .xlsx/.xlsm → 整表回读（/api/import_table，一条通道）
+ *   其余        → 按「导入类型」分列解析（/api/import，另一条通道）
+ * 两条通道的语义完全不同，不能混；见 importTable() 的注释。
+ */
+async function importFromDir(rel) {
+  const low = String(rel || '').toLowerCase();
+  if (low.endsWith('.xlsx') || low.endsWith('.xlsm') || low.endsWith('.xls')) {
+    return importTable(await fileFromDir(rel));
+  }
+  return importFile(await fileTextFromDir(rel));
+}
+
 async function pickDataDir() {
   if (!window.PcalFiles) { toast('文件选择组件未加载'); return; }
   const dir = await PcalFiles.pickFolder(DATA_DIR);
@@ -406,10 +429,10 @@ async function initFiles() {
   try {
     FILE_PICKER = PcalFiles.mount($('filePick'), {
       placeholder: '搜索文件名，如 表面吸附 / 气泡 / 2026-10',
-      exts: ['.csv', '.txt', '.tsv'],
+      exts: ['.csv', '.txt', '.tsv', '.xlsx'],
       onPick: async (rel) => {
         busy(true, '从数据目录读取文件…');
-        try { await importFile(await fileTextFromDir(rel)); }
+        try { await importFromDir(rel); }
         catch (e) { toast('导入失败：' + e.message, 5000); }
         finally { busy(false); }
       },
@@ -584,6 +607,74 @@ async function importFile(picked = null) {
   finally { busy(false); $('fileInput').value = ''; }
 }
 
+/* ---------------------------------------------------------------- 回读数据表
+ * 把本工具导出的 .xlsx / .csv 整表读回来（原始读数 + 实验条件一起）。
+ * 与「导入类型」逐个导入的分列解析是两条独立通道：
+ *   · 那个是课程软件导出的「纯数字」CSV/TXT，一次填一类；
+ *   · 这个是本工具自己导出的带表头数据表，一次恢复整份实验。
+ * 后端 /api/import_table 只解析不落盘，保存仍由「保存数据」负责。
+ */
+function toB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const CHUNK = 0x8000;              // 逐字节拼接在几 MB 文件上会很慢
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+async function importTable(file = null) {
+  const f = file || ($('tableInput').files && $('tableInput').files[0]);
+  if (!f) { toast('先选择一个数据表（.xlsx / .csv）'); return; }
+  busy(true, '回读数据表…');
+  setStatus('回读数据表…');
+  try {
+    const buf = await f.arrayBuffer();
+    const r = await api('/api/import_table', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        b64: toB64(buf), name: f.name,
+        config: readConfig(), data: readData(),
+      }),
+    });
+    // 顺序要紧：先落 DATA 再 fillConfig/fillData，否则渲染用的是旧读数
+    DATA = r.data;
+    fillConfig(r.config || readConfig());
+    fillData(DATA);
+    await recalc();
+    const info = r.info || {};
+    const cnt = info.counts || {};
+    const rep = info.repeat || {};
+    const bits = [];
+    if (cnt.bubble) bits.push('气泡法 ' + cnt.bubble + ' 点');
+    if (cnt.plate) bits.push('吊片法 ' + cnt.plate + ' 点');
+    if (rep.bubble || rep.plate) {
+      bits.push('平行 ' + (rep.bubble || 1) + '/' + (rep.plate || 1) + ' 次');
+    }
+    setStatus('已回读数据表');
+    toast('已回读 ' + f.name + '：' + (bits.join('、') || '无数据'), 5000);
+    const warns = r.warnings || [];
+    if (warns.length) {
+      $('tableHint').textContent = warns.join('；');
+      $('tableHint').style.color = 'var(--err)';
+    } else {
+      $('tableHint').textContent = '数据表已完整回读（读数、实验条件、平行次数'
+        + '与读数方式全部恢复），可以直接继续改。';
+      $('tableHint').style.color = '';
+    }
+  } catch (e) {
+    setStatus('回读失败：' + e.message, 'err');
+    toast('回读失败：' + e.message, 6000);
+    $('tableHint').textContent = '回读失败：' + e.message;
+    $('tableHint').style.color = 'var(--err)';
+  } finally {
+    busy(false);
+    if ($('tableInput')) $('tableInput').value = '';
+  }
+}
+
 /* 导入的数据若是 5 次平行，自动把对应方法的次数下拉调过去 */
 function syncRepeatN(kind, lengths) {
   const el = $(kind === 'plate' ? 'repeat_n_plate' : 'repeat_n_bubble');
@@ -678,6 +769,8 @@ function bindUI() {
   $('btnCsv').onclick = () => exportTable('csv');
   $('btnSample').onclick = loadSample;
   $('fileInput').onchange = () => importFile();
+  $('btnImportTable').onclick = () => $('tableInput').click();
+  $('tableInput').onchange = () => importTable();
   $('btnPickDir').onclick = pickDataDir;
   $('btnAddBubble').onclick = () => addRow('bubble');
   $('btnAddPlate').onclick = () => addRow('plate');

@@ -462,6 +462,126 @@ class ShortcutScriptTests(unittest.TestCase):
                             '找不到快捷方式时应给出可读提示，实际输出：%r' % out[:300])
 
 
+class DoubleClickShortcutTests(unittest.TestCase):
+    """「创建桌面快捷方式.vbs」——双击即建快捷方式，且不弹命令行窗口。
+
+    这条链路的坑全是**只有真跑才暴露**的（编辑器里看代码完全正常）：
+      · vbs 必须是 UTF-16 带 BOM，否则中文提示乱码、还可能破坏语法；
+      · vbs 在根目录、脚本在 _tools/，路径少写一级就永远找不到文件；
+      · FindPython 复制粘贴时引号走形 → VBScript 报「缺少 ')'」，
+        而报错行（sh.Run 里那句 python.exe 探测）看起来毫无问题。
+    所以这里既查静态结构，也真调一次 cscript 做语法解析。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = REPO_ROOT
+        cls.vbs = cls.root / '创建桌面快捷方式.vbs'
+        cls.gen = cls.root / '_tools' / '生成vbs.py'
+        cls.script = cls.root / '_tools' / '创建快捷方式.py'
+
+    def _vbs_text(self):
+        raw = self.vbs.read_bytes()
+        self.assertEqual(raw[:2], b'\xff\xfe',
+                         'vbs 必须是 UTF-16LE 带 BOM：WSH 对无 BOM 文件按 '
+                         'ANSI 解码，中文提示会乱码并可能破坏语法')
+        return raw.decode('utf-16').replace('\r\n', '\n')
+
+    def test_vbs_exists_and_is_utf16(self):
+        self.assertTrue(self.vbs.is_file(),
+                        '缺少根目录的 创建桌面快捷方式.vbs')
+        text = self._vbs_text()
+        self.assertIn('创建快捷方式.py', text)
+
+    def test_vbs_points_into_tools_dir(self):
+        """vbs 在根目录，脚本在 _tools/ —— 路径必须带 _tools 这一级。"""
+        text = self._vbs_text()
+        self.assertIn('_tools\\创建快捷方式.py', text,
+                      'vbs 里脚本路径要含 _tools\\，否则永远找不到文件')
+
+    def test_vbs_passes_interactive(self):
+        text = self._vbs_text()
+        self.assertIn('--interactive', text,
+                      '双击路径要带 --interactive，做完弹框告知结果')
+        self.assertIn(', 0, True)', text,
+                      '要以隐藏窗口(0)等待(True)方式运行，否则弹框顺序错乱')
+
+    def test_find_python_shared_not_duplicated(self):
+        """FindPython 只能有一份（拼接同一常量），不许各模板各抄一份。
+
+        2026-11-19 我复制这段时把三引号写成了四个，VBScript 报
+        「缺少 ')'」——报错行看着完全正常，很难查。
+        """
+        src = self.gen.read_text(encoding='utf-8')
+        self.assertIn('PY_FINDER', src,
+                      '生成器应把 FindPython 抽成共用常量 PY_FINDER')
+        # 生成器里 SHARED 原文出现一次、索引常量 _PY_START 里出现一次，
+        # 这是同一处定义的两种用法，不是复制；关键是**没有第二份函数体**。
+        self.assertEqual(
+            src.count('_PY_START = SHARED.index'),
+            1, 'FindPython 应从 SHARED 里切一次出来共用，而不是各写一份')
+        text = self._vbs_text()
+        self.assertEqual(text.count('Function FindPython()'), 1,
+                         '生成的 vbs 里 FindPython 只能有一份')
+
+    def test_generated_vbs_parses(self):
+        """用 cscript //X 之外的方式做真实语法检查：跑一遍不出编译错误。
+
+        这里只验证**能启动**（rc 是 0 或业务失败码），不验证它写了桌面文件：
+        给 PCAL_NO_ALERT=1 让它不弹模态框——消息框没人点会永久阻塞，
+        测试会挂死（这是本项目已经踩过的坑）。
+        """
+        import shutil
+        import subprocess
+        cscript = shutil.which('cscript')
+        if not cscript:
+            self.skipTest('没有 cscript（非 Windows）')
+        # 用 cscript 做纯语法解析：把 FindPython 之类跑到也不会真的建快捷方式，
+        # 因为 --target 没给时会写桌面；所以只取「编译阶段」是否报错：
+        # cscript 的编译错误码是 1 且输出含「缺少」「语法错误」「Microsoft VBScript」。
+        r = subprocess.run(
+            [cscript, '//NoLogo', '//E:vbscript',
+             str(self.root / '_tools' / 'hidden-launch.vbs')],
+            capture_output=True, timeout=60)
+        out = _decode_console((r.stdout or b'') + (r.stderr or b''))
+        self.assertNotIn('Microsoft VBScript', out,
+                         'hidden-launch.vbs 有语法错误：%s' % out[:400])
+        # 快捷方式 vbs 只检查编译：真实执行由 test_runs_without_console 覆盖
+        r2 = subprocess.run(
+            ['cscript', '//NoLogo', '//E:vbscript', str(self.vbs)],
+            capture_output=True, timeout=120,
+            env=dict(__import__('os').environ, PCAL_NO_ALERT='1'))
+        out2 = _decode_console((r2.stdout or b'') + (r2.stderr or b''))
+        self.assertNotIn('Microsoft VBScript', out2,
+                         '创建桌面快捷方式.vbs 有语法错误：%s' % out2[:400])
+
+    def test_script_supports_interactive_flag(self):
+        src = self.script.read_text(encoding='utf-8')
+        self.assertIn("'--interactive'", src,
+                      '创建快捷方式.py 要支持 --interactive（双击入口用）')
+        self.assertIn('PCAL_NO_ALERT', src,
+                      '要留 PCAL_NO_ALERT 让测试能跳过模态框')
+
+    def test_no_console_window_when_double_clicked(self):
+        """双击那一刻不许闪出命令行窗口（用户 2026-11-19 明确要求过）。"""
+        import os
+        import shutil
+        import subprocess
+        wscript = shutil.which('wscript')
+        if not wscript:
+            self.skipTest('没有 wscript（非 Windows）')
+        r = subprocess.run([wscript, '//NoLogo', str(self.vbs)],
+                           capture_output=True, timeout=120,
+                           env=dict(os.environ, PCAL_NO_ALERT='1'))
+        # wscript 自己不创建控制台；这里验证它跑通（rc=0）且没有 WSH 错误框
+        out = _decode_console((r.stdout or b'') + (r.stderr or b''))
+        self.assertNotIn('Microsoft VBScript', out, 'vbs 运行报错：%s' % out[:400])
+        self.assertEqual(r.returncode, 0,
+                         '双击入口应正常结束（rc=0），实际 %s：%s'
+                         % (r.returncode, out[:400]))
+
+
+
 class FrontendBootTests(unittest.TestCase):
     """每个模块的 web/app.js 必须能在最小 DOM 环境里真跑起来。
 

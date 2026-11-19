@@ -118,18 +118,35 @@ class DeclaredExtsAreSane(unittest.TestCase):
                             '%s 的 PcalFiles.mount 没写 exts，列表会列出'
                             '点不动的文件' % tool)
 
-    def test_surface_adsorption_reads_text_only(self):
-        """表面吸附只读 CSV/TXT/TSV，所以 exts 里不该出现 xlsx。"""
+    def test_surface_adsorption_two_channels(self):
+        """表面吸附有两条读取通道，exts 要覆盖两者且各自的后端白名单要对得上。
+
+        · 纯文本读数（课程软件导出的 CSV/TXT/TSV）→ /api/filetext
+        · 本工具导出的数据表（.xlsx）→ /api/fileb64（按字节取，文本端点解不了）
+
+        2026-11-19 加「回读数据表」时这里挂过一次：断言写的是
+        「exts 必须正好等于 {csv,txt,tsv}」，把新加的通路判成了 bug。
+        正确的检查是「每条声明出来的后缀，后端都有对应通道」。
+        """
         tool = '表面吸附工具'
         declared = _declared_exts(tool)
         self.assertTrue(declared)
         flat = {e.lower() for group in declared for e in group}
-        self.assertEqual(flat, {'.csv', '.txt', '.tsv'},
-                         '表面吸附的 exts 与后端 /api/filetext 的白名单不符')
+        self.assertEqual(flat, {'.csv', '.txt', '.tsv', '.xlsx'},
+                         '表面吸附的 exts 应覆盖文本通道与 xlsx 回读通道')
         srv = (support.REPO_ROOT / tool / 'pcal' / 'server.py').read_text(
             encoding='utf-8')
+        # 文本通道的白名单
         self.assertIn("('.csv', '.txt', '.tsv')", srv,
                       '后端 /api/filetext 的白名单变了，前端的 exts 要跟着改')
+        # 字节通道必须存在，否则 .xlsx 声明了也点不开
+        self.assertIn("'/api/fileb64'", srv,
+                      '声明了 .xlsx 就必须有 /api/fileb64（文本端点读 xlsx 会乱码）')
+        app = (support.REPO_ROOT / tool / 'web' / 'app.js').read_text(
+            encoding='utf-8')
+        self.assertIn('fileFromDir', app,
+                      '前端要有按字节取文件的 helper，并把 xlsx 分流到回读通道')
+        self.assertIn('importTable', app, '前端要有整表回读入口')
 
     def test_dual_liquid_reads_json(self):
         """双液系只读 .json（数据快照）。"""

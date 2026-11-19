@@ -9,6 +9,11 @@
     python _tools/创建快捷方式.py --all-user   # 建到「所有用户」桌面（需权限）
     python _tools/创建快捷方式.py --target D:\\某处\\x.lnk
     python _tools/创建快捷方式.py --remove     # 删掉快捷方式
+    python _tools/创建快捷方式.py --interactive # 双击用：做完弹框告知结果
+
+**给非程序员用的入口是根目录的「创建桌面快捷方式.vbs」**：双击即可，
+没有命令行窗口，做完弹一个框说明成功还是失败。vbs 只是把本脚本以
+``--interactive`` 隐藏窗口跑一遍（见 _tools/生成vbs.py 的 SHORTCUT）。
 
 也可以用 ``python _tools/创建快捷方式.py --check`` 只回读现有快捷方式做核对。
 
@@ -57,6 +62,28 @@ def default_link_path(all_user=False):
     else:
         base = os.path.join(os.path.expanduser('~'), 'Desktop')
     return os.path.join(base, LINK_NAME + '.lnk')
+
+
+def _alert(text, error=False):
+    """弹一个原生消息框（双击入口用）。非 Windows / 调用失败时安静降级。
+
+    用 MessageBoxW 而不是 tkinter：tkinter 要额外起一个 Tk 主循环，
+    在隐藏窗口的进程里容易留下僵尸窗口；MessageBoxW 是系统原生控件，
+    自己按 DPI 缩放，也不需要 Python 侧的窗口管理。
+
+    ``PCAL_NO_ALERT=1`` 时不弹框只打印（自动化测试用）——
+    消息框是**模态**的，没人点它永不返回，测试会一直挂在那里。
+    """
+    if os.environ.get('PCAL_NO_ALERT'):
+        print('[alert] %s' % str(text).replace('\n', ' '))
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0, str(text), '物化实验报告工具',
+            0x10 if error else 0x40)          # 0x10 错误 / 0x40 信息
+    except Exception:                          # noqa: BLE001
+        pass
 
 
 def check_prerequisites():
@@ -200,6 +227,8 @@ def main(argv):
     ap.add_argument('--check', action='store_true',
                     help='只回读现有快捷方式，不修改')
     ap.add_argument('--json', action='store_true', help='以 JSON 输出结果')
+    ap.add_argument('--interactive', action='store_true',
+                    help='双击入口用：结束（无论成败）弹一个原生消息框')
     args = ap.parse_args(argv)
 
     link = args.target or default_link_path(args.all_user)
@@ -220,11 +249,20 @@ def main(argv):
             print('  图标是否正确：%s' % ('是' if ok_icon else '否（会显示默认蓝图标）'))
         else:
             print('读不到快捷方式：%s' % info)
+        if args.interactive:
+            if ok:
+                _alert('当前快捷方式：\n\n%s\n\n目标：%s\n图标：%s'
+                       % (link, info.get('Target'), info.get('Icon')))
+            else:
+                _alert('读不到快捷方式：\n\n%s\n\n%s'
+                       % (link, info), error=True)
         return 0 if ok else 1
 
     if args.remove:
         ok, msg = remove(link)
         print(msg)
+        if args.interactive:
+            _alert(msg, error=not ok)
         return 0 if ok else 1
 
     problems = check_prerequisites()
@@ -236,6 +274,10 @@ def main(argv):
         print(result)
         print('\n提示：本脚本依赖 Windows 自带的 PowerShell 与 WScript.Shell。'
               '在非 Windows 系统上无法创建 .lnk。')
+        if args.interactive:
+            _alert('创建快捷方式失败：\n\n%s\n\n'
+                   '排查方法：先在文件夹里双击「启动入口.vbs」，'
+                   '确认工具本身能起来，再回来双击本入口。' % result, error=True)
         return 1
 
     if args.json:
@@ -253,6 +295,11 @@ def main(argv):
     if os.path.isfile(STOP_VBS):
         print('收摊：双击桌面/文件夹里的「停止服务.vbs」，'
               '或在入口页点「停止全部服务」。')
+    if args.interactive:
+        _alert('已创建桌面快捷方式：\n\n%s\n\n'
+               '现在可以双击桌面上的「%s」启动工具；'
+               '用完双击文件夹里的「停止服务.vbs」收摊。'
+               % (link, LINK_NAME))
     return 0
 
 
