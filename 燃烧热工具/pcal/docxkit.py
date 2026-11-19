@@ -973,9 +973,9 @@ class ReportBuilder:
                 'widths_cm 有 %d 个，表头是 %d 列（数量必须一致）'
                 % (len(widths_cm), len(headers)))
         t = self.doc.add_table(rows=1 + len(rows), cols=len(headers))
-        t.style = self._grid_style()
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
         t.autofit = False
+        self._three_line(t)
         self._set_cell_margins(t, cell_margin_mm)
         tblpr = t._tbl.tblPr
         layout = tblpr.find(qn('w:tblLayout'))
@@ -1010,6 +1010,29 @@ class ReportBuilder:
                         if ppr.find(qn('w:keepNext')) is None:
                             _ppr_insert(ppr, parse_xml('<w:keepNext %s/>' % W_NS))
         return t
+
+    @staticmethod
+    def _three_line(table):
+        """三线表（课程模板口径）：顶/底线 1.5 pt（sz=12）、表头下线 0.75 pt
+        （sz=6），无竖线、无其余横线。线宽反解自旧报告数据表的
+        tblBorders / tcBorders；直接格式化六条边全写，不依赖表格样式。
+        """
+        _tblpr_insert(table._tbl.tblPr, parse_xml(
+            '<w:tblBorders %s>'
+            '<w:top w:val="single" w:sz="12" w:space="0" w:color="auto"/>'
+            '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+            '<w:bottom w:val="single" w:sz="12" w:space="0" w:color="auto"/>'
+            '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+            '<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+            '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+            '</w:tblBorders>' % W_NS))
+        for cell in table.rows[0].cells:
+            tcpr = cell._tc.get_or_add_tcPr()
+            if tcpr.find(qn('w:tcBorders')) is None:
+                tcpr.append(parse_xml(
+                    '<w:tcBorders %s>'
+                    '<w:bottom w:val="single" w:sz="6" w:space="0" w:color="auto"/>'
+                    '</w:tcBorders>' % W_NS))
 
     @staticmethod
     def _row_props(table):
@@ -1143,9 +1166,6 @@ class ReportBuilder:
             return
         # 纯文本单元格：支持 m_{Ni-1}/g 这种真下标写法，不再使用公式对象
         add_rich_text(p, '' if value is None else str(value), {'size': font_size})
-
-    def _grid_style(self):
-        return 'Table Grid'
 
     # ------------------------------------------------------------ 保存
     def save(self, path):
