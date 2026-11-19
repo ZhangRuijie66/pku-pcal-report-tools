@@ -107,9 +107,31 @@ details.note summary{cursor:pointer;font-weight:600;color:var(--ink)}
   animation:cardSpin .8s linear infinite}
 @keyframes cardSpin{to{transform:rotate(360deg)}}
 .foot .elapsed{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums}
+
+/* ---- 更新强提醒 -------------------------------------------------------
+   有可用更新时固定在视口顶部的红条：折叠面板里的弱提醒曾经整个学期
+   没人点开过。「稍后提醒」只在本会话内有效（sessionStorage），
+   下次打开入口页还会再提醒。 */
+#updStrong{position:fixed;top:0;left:0;right:0;z-index:99;
+  background:linear-gradient(90deg,#b42318,#d92d20);color:#fff;
+  box-shadow:0 2px 12px rgba(180,35,24,.35)}
+#updStrong .inner{max-width:1080px;margin:0 auto;padding:9px 18px;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13.5px}
+#updStrong .btn{background:#fff;border-color:#fff;color:#b42318;font-weight:600}
+#updStrong .btn.ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.65)}
+#updStrong .btn:hover{filter:brightness(.96)}
+#updatePanel summary.hot::after{content:"　● 有新版本";color:#b42318;font-weight:700}
 </style>
 </head>
 <body>
+<div id="updStrong" hidden>
+  <div class="inner">
+    <span id="updStrongText">发现新版本</span>
+    <span class="spacer"></span>
+    <button class="btn" id="updStrongGo">查看并安装更新</button>
+    <button class="btn ghost" id="updStrongLater">稍后提醒</button>
+  </div>
+</div>
 <div class="hero">
   <div class="inner">
     <h1>物化实验报告工具</h1>
@@ -465,6 +487,7 @@ function renderUpdate(data) {
     $('updNotesBox').hidden = true;
     $('btnUpdCheck').disabled = true;
     if (!UPD_HOLD) updSay(st.error || '更新模块不可用，暂时不能检查更新。', true);
+    strongUpdate(null);
     return;
   }
   UPD = st;
@@ -518,7 +541,27 @@ function renderUpdate(data) {
     else if (st.checked_at) updSay(available ? '' : '已经是最新版本。');
     else updSay('');
   }
+  strongUpdate(available ? st : null);
   updButtons();
+}
+
+/* 更新强提醒：固定红条，每次打开入口页都出现，直到装完或本会话点「稍后提醒」。 */
+const UPD_DEFER_KEY = 'pcal-upd-defer';
+function strongUpdate(st) {
+  const bar = $('updStrong');
+  const sum = document.querySelector('#updatePanel summary');
+  if (!st) {
+    bar.hidden = true;
+    document.body.style.paddingTop = '';
+    if (sum) sum.classList.remove('hot');
+    return;
+  }
+  if (sum) sum.classList.add('hot');
+  if (sessionStorage.getItem(UPD_DEFER_KEY) === String(st.latest)) return;
+  $('updStrongText').textContent = '发现新版本 v' + st.latest + '（当前 v'
+    + (st.current || '—') + '），建议更新后再导出报告。';
+  bar.hidden = false;
+  document.body.style.paddingTop = bar.offsetHeight + 'px';
 }
 
 async function postJson(path, payload) {
@@ -633,6 +676,16 @@ async function rollbackUpdate() {
 $('btnUpdCheck').addEventListener('click', checkUpdate);
 $('btnUpdApply').addEventListener('click', applyUpdate);
 $('btnUpdRollback').addEventListener('click', rollbackUpdate);
+$('updStrongGo').addEventListener('click', () => {
+  const panel = $('updatePanel');
+  panel.open = true;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  strongUpdate(null);
+});
+$('updStrongLater').addEventListener('click', () => {
+  if (UPD && UPD.latest) sessionStorage.setItem(UPD_DEFER_KEY, String(UPD.latest));
+  strongUpdate(null);
+});
 
 async function loadReports() {
   const j = await api('/api/reports');
