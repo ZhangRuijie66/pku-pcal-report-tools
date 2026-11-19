@@ -295,3 +295,26 @@
     mount: mount,
   };
 }(window));
+
+/* ---------------------------------------------------------------- 数字输入保护
+ * 实验读数一律手敲：去掉 number 输入框自带的上下箭头（spinner），
+ * 并禁止鼠标悬停在已聚焦的数字框上时滚轮改值——滚动页面经常顺手
+ * 把读数改掉，而且毫无提示。键盘上下键与直接输入不受影响。
+ * 这段随 files.js 同步到全部 11 个模块（都在 app.js 之前加载）。
+ */
+(function () {
+  'use strict';
+  var css = 'input[type=number]::-webkit-outer-spin-button,'
+    + 'input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}'
+    + 'input[type=number]{-moz-appearance:textfield;appearance:textfield}';
+  var style = document.createElement('style');
+  style.textContent = css;
+  (document.head || document.documentElement).appendChild(style);
+  document.addEventListener('wheel', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'INPUT' && t.type === 'number'
+        && document.activeElement === t) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+}());

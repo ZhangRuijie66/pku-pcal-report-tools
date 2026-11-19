@@ -238,9 +238,11 @@ def _normalize_data(data):
     out = dict(data)
     for key in ('temperature_bubble', 'temperature_plate', 'gamma_water',
                 'sigma_read', 'sigma_plate'):
-        if key in out and out[key] not in (None, ''):
+        if key in out:
             value = num(out[key], None)
-            if value is not None:
+            if value is None:
+                out.pop(key)        # 空值交给内核的默认值，float(None) 会崩
+            else:
                 out[key] = value
     for key in ('zero', 'water_bubble'):
         if isinstance(out.get(key), dict):

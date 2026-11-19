@@ -56,6 +56,10 @@ td input[type=number]:focus{outline:2px solid rgba(31,111,235,.16);border-color:
 td input[type=checkbox]{transform:scale(1.05)}
 td input.auto{background:#f1f3f5;color:var(--sub);border-style:dashed;cursor:default}
 td input.auto:focus{outline:none;border-color:var(--line)}
+td input.hwarn,.field input.hwarn{background:#fff3bf;border-color:#d9a400}
+td input.hwarn:focus,.field input.hwarn:focus{outline:2px solid rgba(217,164,0,.3);border-color:#d9a400}
+.btn.clear{color:var(--err);border-color:#f0c4bf}
+.btn.clear:hover{background:#fff5f5;border-color:#e5a49d}
 .scroll{overflow-x:auto}
 .pill{display:inline-block;padding:1px 8px;border-radius:999px;background:#eef4ff;color:var(--accent2);font-size:12px}
 .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
@@ -96,6 +100,7 @@ td input.auto:focus{outline:none;border-color:var(--line)}
 
 <main>
   <aside class="panel">
+    <div class="msg" id="heightWarn" style="display:none"></div>
     <section class="card">
       <h2>数据</h2>
       <div class="btnrow">
@@ -103,6 +108,7 @@ td input.auto:focus{outline:none;border-color:var(--line)}
         <button class="btn" id="btnSaveData">保存数据</button>
         <button class="btn" id="btnXlsx">导出数据表 .xlsx</button>
         <button class="btn" id="btnCsv">导出 .csv</button>
+        <button class="btn clear" id="btnClearAll">清空数据</button>
       </div>
       <div class="field" style="margin-top:10px">
         <label>回读数据表（把导出的 .xlsx / .csv 读回来接着改）</label>
@@ -143,7 +149,9 @@ td input.auto:focus{outline:none;border-color:var(--line)}
     </section>
 
     <section class="card">
-      <h2>实验条件</h2>
+      <h2>实验条件
+        <button class="btn mini clear" id="btnClearCond" style="float:right">清空数值</button>
+      </h2>
       <div class="grid2">
         <div class="field"><label>气泡法温度 /℃</label><input type="number" step="0.01" id="temperature_bubble"></div>
         <div class="field"><label>气泡法平行次数</label>
@@ -225,6 +233,10 @@ td input.auto:focus{outline:none;border-color:var(--line)}
 
     <section class="card">
       <h2>压力计零点 / 纯水</h2>
+      <div class="btnrow" style="margin:0 0 6px">
+        <button class="btn mini clear" id="btnClearZero">清空零点</button>
+        <button class="btn mini clear" id="btnClearWater">清空纯水</button>
+      </div>
       <div class="scroll"><table id="zeroTable"></table></div>
       <p class="hint">每个格填一次读数；零点与纯水各 3 次平行。</p>
       <div class="scroll"><table id="waterTable"></table></div>
@@ -235,6 +247,7 @@ td input.auto:focus{outline:none;border-color:var(--line)}
       <div class="scroll"><table id="bubbleTable"></table></div>
       <div class="btnrow">
         <button class="btn mini" id="btnAddBubble">+ 添加一行</button>
+        <button class="btn mini clear" id="btnClearBubble">清空</button>
         <span class="hint" style="margin:0">勾选「拟合」的浓度参与线性区拟合。</span>
       </div>
     </section>
@@ -244,7 +257,8 @@ td input.auto:focus{outline:none;border-color:var(--line)}
       <div class="scroll"><table id="plateTable"></table></div>
       <div class="btnrow">
         <button class="btn mini" id="btnAddPlate">+ 添加一行</button>
-        <span class="hint" style="margin:0">离群点取消勾选「拟合」即可排除。</span>
+        <button class="btn mini clear" id="btnClearPlate">清空</button>
+        <span class="hint" style="margin:0">首行为纯水（c = 0）；离群点取消勾选「拟合」即可排除。</span>
       </div>
     </section>
   </aside>

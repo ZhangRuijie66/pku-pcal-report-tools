@@ -140,6 +140,7 @@ function fillData(d) {
   renderRows('bubble');
   renderRows('plate');
   updateSumPlaceholder();
+  checkHeights();
 }
 
 function readTrio(kind) {
@@ -194,7 +195,35 @@ function readData() {
   d.water_bubble = readTrio('water');
   d.bubble = readRows('bubble');
   d.plate = readRows('plate');
+  const wp = [];
+  document.querySelectorAll('#plateTable input[data-f="wgamma"]').forEach((inp) => {
+    if (inp.value !== '') wp.push(Number(inp.value));
+  });
+  d.water_plate = wp;
   return d;
+}
+
+/* ---------------------------------------------------------------- 高度合理性
+ * U 型压差计读数一般在十几到几十 cm；>100 cm 多半是把 mm 记成了 cm
+ * 或小数点错位。输入即时标黄 + 顶部横幅提醒，重算后内核也会给同样的警告。
+ */
+const HEIGHT_SEL = '#zeroTable input[data-side], #waterTable input[data-side], '
+  + '#bubbleTable input[data-f="left"], #bubbleTable input[data-f="right"]';
+function checkHeights() {
+  let n = 0;
+  document.querySelectorAll(HEIGHT_SEL).forEach((inp) => {
+    const v = Number(inp.value);
+    const big = !inp.disabled && inp.value !== '' && isFinite(v) && v > 100;
+    inp.classList.toggle('hwarn', big);
+    inp.title = big
+      ? '高度大于 100 cm，数据可能有误（检查单位是否记成 mm，或小数点错位）' : '';
+    if (big) n += 1;
+  });
+  const el = $('heightWarn');
+  if (!el) return;
+  el.style.display = n ? '' : 'none';
+  el.textContent = '有 ' + n + ' 个液柱高度读数大于 100 cm，数据可能有误'
+    + '（请检查单位是否记成了 mm，或小数点错位）。';
 }
 
 /* ---------------------------------------------------------------- 表格渲染 */
@@ -263,6 +292,12 @@ function renderRows(kind) {
     html = '<thead><tr><th>#</th><th>c / (mol·dm⁻³)</th>' +
       range(n).map((j) => '<th>γ' + (j + 1) + '</th>').join('') +
       '<th>拟合</th><th></th></tr></thead><tbody>';
+    const wvals = (DATA && DATA.water_plate) || [];
+    html += '<tr data-water="1"><td>水</td><td>0</td>' +
+      range(n).map((j) => '<td><input type="number" step="any" data-f="wgamma"' +
+        ' data-i="' + j + '" value="' +
+        (wvals[j] == null ? '' : esc(wvals[j])) + '"></td>').join('') +
+      '<td class="hint">—</td><td></td></tr>';
     rows.forEach((r, i) => {
       const gamma = r.gamma || [];
       html += '<tr data-row="' + i + '"><td>' + (i + 1) + '</td>' +
@@ -299,6 +334,7 @@ function refreshTables() {
   renderRows('bubble');
   renderRows('plate');
   updateSumPlaceholder();
+  checkHeights();
 }
 
 /* ---------------------------------------------------------------- 结果 */
@@ -759,6 +795,45 @@ async function persistConfig() {
   } catch (e) { /* 静默 */ }
 }
 
+/* ---------------------------------------------------------------- 清空数据
+ * 整体清空保留封面与处理设置（横轴/零点口径/读数方式/平行次数）；
+ * 各小块只清自己那一块。都只改内存，点「保存数据」才落盘。
+ */
+const CLEAR_LABELS = {
+  cond: '实验条件里的全部数值',
+  zero: '压力计零点读数',
+  water: '纯水（气泡法）读数',
+  bubble: '最大气泡压力法的全部数据行',
+  plate: '吊片法的全部数据行（含纯水行）',
+};
+async function clearBlock(kind) {
+  if (!STATE) { toast('页面还在初始化，稍候再试'); return; }
+  if (!confirm('确定清空' + CLEAR_LABELS[kind] + '？\n（点「保存数据」前不会改动磁盘上的数据文件）')) return;
+  const d = readData();
+  if (kind === 'cond') DATA_FIELDS.forEach((k) => { d[k] = null; });
+  else if (kind === 'zero') d.zero = { left: [], right: [] };
+  else if (kind === 'water') d.water_bubble = { left: [], right: [] };
+  else if (kind === 'bubble') d.bubble = [];
+  else if (kind === 'plate') { d.plate = []; d.water_plate = []; }
+  DATA = d;
+  fillData(DATA);
+  await recalc();
+  toast('已清空' + CLEAR_LABELS[kind]);
+}
+async function clearAll() {
+  if (!STATE) { toast('页面还在初始化，稍候再试'); return; }
+  if (!confirm('确定清空全部实验数据？\n（报告封面与处理设置保留；点「保存数据」前不会改动磁盘上的数据文件）')) return;
+  DATA = {
+    temperature_bubble: null, temperature_plate: null, gamma_water: null,
+    sigma_read: null, sigma_plate: null,
+    zero: { left: [], right: [] }, water_bubble: { left: [], right: [] },
+    bubble: [], water_plate: [], plate: [],
+  };
+  fillData(DATA);
+  await recalc();
+  toast('已清空全部实验数据');
+}
+
 /* ---------------------------------------------------------------- 绑定 */
 function bindUI() {
   $('btnCalc').onclick = recalc;
@@ -768,6 +843,12 @@ function bindUI() {
   $('btnXlsx').onclick = () => exportTable('xlsx');
   $('btnCsv').onclick = () => exportTable('csv');
   $('btnSample').onclick = loadSample;
+  $('btnClearAll').onclick = clearAll;
+  $('btnClearCond').onclick = () => clearBlock('cond');
+  $('btnClearZero').onclick = () => clearBlock('zero');
+  $('btnClearWater').onclick = () => clearBlock('water');
+  $('btnClearBubble').onclick = () => clearBlock('bubble');
+  $('btnClearPlate').onclick = () => clearBlock('plate');
   $('fileInput').onchange = () => importFile();
   $('btnImportTable').onclick = () => $('tableInput').click();
   $('tableInput').onchange = () => importTable();
@@ -794,7 +875,9 @@ function bindUI() {
   };
   document.addEventListener('input', (e) => {
     const t = e.target;
-    if (!t.matches || !t.matches('input[data-side], input[data-f="left"], input[data-f="right"]')) return;
+    if (!t.matches) return;
+    if (t.matches(HEIGHT_SEL)) checkHeights();
+    if (!t.matches('input[data-side], input[data-f="left"], input[data-f="right"]')) return;
     if (t.disabled) return;
     const row = t.closest('tr');
     if (row) syncDerivedInRow(row);

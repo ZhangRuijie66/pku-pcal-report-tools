@@ -586,6 +586,23 @@ def analyze(data, cfg=None):
         warnings.append('压力计零点差 %.2f cm 偏大，确认零点读数是否正确'
                         % bubble['zero']['dh'])
 
+    big_heights = 0
+    groups = [data.get('zero'), data.get('water_bubble')]
+    groups += list(data.get('bubble') or [])
+    for obj in groups:
+        if not isinstance(obj, dict):
+            continue
+        for side in ('left', 'right'):
+            for v in obj.get(side) or []:
+                try:
+                    if float(v) > 100.0:
+                        big_heights += 1
+                except (TypeError, ValueError):
+                    continue
+    if big_heights:
+        warnings.append('最大气泡压力法：%d 个液柱高度读数大于 100 cm，数据可能有误'
+                        '（检查单位是否记成了 mm，或小数点错位）' % big_heights)
+
     hi = bubble.get('height') or {}
     if hi.get('need') and not hi.get('sum'):
         warnings.append('有 %d 组液柱只填了一侧，但没能确定两臂高度之和 S：'

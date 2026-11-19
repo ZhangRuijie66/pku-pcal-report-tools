@@ -364,6 +364,15 @@ def _unfit_split(m):
 
 def _plate_raw_table(rb, m):
     rows = []
+    w = m['water']
+    has_water = w['n'] > 0 and np.isfinite(w['mean'])
+    if has_water:
+        wvals = list(w['values'])
+        while len(wvals) < 3:
+            wvals.append(float('nan'))
+        rows.append(['0（水）'] +
+                    [k(v, 2) if np.isfinite(v) else '—' for v in wvals[:3]] +
+                    [pm(w['mean'], w['sigma'])])
     for it in m['rows']:
         vals = list(it['stats']['values'])
         while len(vals) < 3:
@@ -371,7 +380,9 @@ def _plate_raw_table(rb, m):
         rows.append([_c(it['c'])] +
                     [k(v, 2) if np.isfinite(v) else '—' for v in vals[:3]] +
                     [pm(it['gamma'], it['sigma_gamma'])])
-    rb.caption('表6  吊片法测得的不同浓度正丁醇溶液的表面张力')
+    rb.caption('表6  吊片法测得的%s表面张力'
+               % ('纯水与不同浓度正丁醇溶液的' if has_water
+                  else '不同浓度正丁醇溶液的'))
     rb.table(['c / (mol·dm^{-3})', 'γ_{1} / (mN·m^{-1})',
               'γ_{2} / (mN·m^{-1})', 'γ_{3} / (mN·m^{-1})',
               '平均 γ / (mN·m^{-1})'], rows,
@@ -588,10 +599,13 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
     p_n = int(m.get('repeat_n', 3) or 3)
     measure_txt = ('每个样品只测量一次' if p_n == 1
                    else '每个样品平行测量%s次' % cn_num(p_n))
+    has_water = m['water']['n'] > 0 and np.isfinite(m['water']['mean'])
+    table_txt = ('纯水与各浓度溶液的结果列于表6（纯水一行 c = 0）'
+                 if has_water else '结果列于表6')
     rb.para([
-        '吊片法在 %.1f ℃ 下测量。%s，结果列于表6。'
+        '吊片法在 %.1f ℃ 下测量。%s，%s。'
         '表面张力仪的读数为 mN·m^{-1}（1 mN·m^{-1} = 10^{-3} J·m^{-2}）。'
-        % (m['temperature'], measure_txt),
+        % (m['temperature'], measure_txt, table_txt),
         excl_txt,
     ])
     _plate_raw_table(rb, m)
