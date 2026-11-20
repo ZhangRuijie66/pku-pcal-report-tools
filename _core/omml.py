@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from xml.sax.saxutils import escape
 
@@ -51,16 +52,39 @@ RELATION_OPS = set('=<>≤≥≠≈≡∝→←⇒+-±∓⋅×÷')
 BINARY_FUNCS = ('sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'log', 'lg', 'ln', 'exp',
                 'sinh', 'cosh', 'tanh', 'lim', 'max', 'min')
 
-# 公式里的正斜体：拉丁字母与小写希腊字母是变量（斜体，走 Word 数学区默认），
-# 大写希腊字母按 ISO 80000-2 用正体（Δ、Σ 不斜）。
+# 公式里的正斜体（GB 3102 / ISO 80000-2，口径 2026-11-20 由用户与课程材料核定）：
+#
+#   · 拉丁字母、**量符号用的大小写希腊字母** → 斜体
+#   · 数字、运算符、单位、函数名        → 正体
+#   · **算子**（∂ 偏导、∑ 求和、∏ 连乘、Δ 差分算子）→ 正体
+#
+# ⚠ 原来这里写的是「大写希腊字母一律正体」，把 Λ 也一并正体化了。
+#   但 Λ（摩尔电导率）是**物理量符号**，不是算子，必须斜体：
+#     - 课程参照报告（2300012602-李晨曦-电导率.docx）：Λ 斜体 92 次，无一处正体
+#     - 讲义：Λ 斜体 7 次（另有 56 次正体，是老师手工漏改，不作依据）
+#   真正的算子正体要求只对 ∂/∑/∏/Δ 成立——用户 2026-11-20 明确
+#   「偏微分号应该是正体」，与讲义里 ∂ 正体 40 次一致。
+#
+#   所以这里改成**白名单**：只有列在 _UPRIGHT_OPERATORS 里的才正体，
+#   其余希腊字母（含大写）按量符号走斜体。
 _GREEK_UPPER = set('ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ')
+
+#: 必须正体的数学算子（不是量符号）。∂ 偏导、∑ 求和、∏ 连乘、Δ 差分。
+_UPRIGHT_OPERATORS = set('∂∑∏∐Δ∇')
 
 
 def _math_sty(c):
     """数学 run 的字体样式：'i'（斜体，即不写 m:sty，用 Word 默认）/ 'p'（正体）。"""
+    if c in _UPRIGHT_OPERATORS:
+        return 'p'
+    if unicodedata.combining(c):
+        # 组合附加符（U+0304 上划线 m̄、U+0302 x̂ …）必须跟**基字符**同体，
+        # 否则会印成「斜体 m + 正体 ̄」，两者错位像两个字符。
+        # 组合符自身 isalpha() 是 False，会被下面判成正体——所以提前返回斜体。
+        return 'i'
     if not c.isalpha():
         return 'p'
-    return 'p' if c in _GREEK_UPPER else 'i'
+    return 'i'
 
 # ---------------------------------------------------------------- 化学式
 # 元素符号（长的放前面，保证贪婪匹配正确）
@@ -867,7 +891,14 @@ class _Parser:
         if name == r'\right':
             return _Node('', is_atom=True)
         if name in GREEK:
-            return _Node(_mrun(GREEK[name], 'i' if name[1:].islower() else 'p'),
+            # 样式**按替换出来的字符**判，不按命令名大小写判。
+            # 原来写的是 `'i' if name[1:].islower() else 'p'`，即
+            # "命令名首字母大写的希腊字母一律正体"——于是 \Lambda（Λ 摩尔
+            # 电导率，是量符号）被排成正体。参照报告里 Λ 斜体 92 次、
+            # 无一处正体，说明这条判据是错的。改为统一走 _math_sty，
+            # 只有 ∂/∑/∏/Δ 这类**算子**才正体。
+            ch = GREEK[name]
+            return _Node(_mrun(ch, _math_sty(ch)),
                          is_atom=True, is_op=False)
         if name in SYMBOLS:
             val = SYMBOLS[name]

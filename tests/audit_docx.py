@@ -26,6 +26,16 @@ from docx.oxml.ns import qn
 M_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/math}'
 UNICODE_SCRIPTS = set('⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺₀₁₂₃₄₅₆₇₈₉₋₊')
 
+#: 直角引号「」：中文报告里不应用（用户 2026-11-20 明确「引号不能用直角引号」）。
+#: 大陆排版规范里直角引号多用于港台/竖排，简体中文报告用「“”」。
+CORNER_QUOTES = set('「」『』')
+
+#: 公式里必须**斜体**的量符号（不是算子）。用于抓「大写希腊字母一律正体」
+#: 这类规则误伤——2026-11-20 就是 Λ 被排成正体才暴露的问题。
+MATH_ITALIC_REQUIRED = set('Λ')          # Λ 摩尔电导率
+#: 公式里必须**正体**的算子（∂ 偏导、∑ 求和、∏ 连乘、Δ 差分）
+MATH_UPRIGHT_REQUIRED = set('∂∑∏Δ')
+
 
 @dataclass
 class Issue:
@@ -229,6 +239,62 @@ def _check_body_fonts(doc, issues):
                 break
 
 
+def _check_quotes(doc, issues):
+    """直角引号「」不该出现在中文报告里（用户 2026-11-20 明确要求）。"""
+    def scan(text, where):
+        bad = sorted(set(text) & CORNER_QUOTES)
+        if bad:
+            # 只报一次，给出上下文，避免一页报十条
+            i = min(text.find(ch) for ch in bad if text.find(ch) >= 0)
+            issues.append(Issue(
+                'ERROR', 'text.corner_quote',
+                '用了直角引号「%s」，应改成弯引号“” ：%s'
+                % (''.join(bad), text[max(0, i - 15):i + 25]),
+                where))
+
+    for p in doc.paragraphs:
+        scan(p.text or '', '')
+    for tb in doc.tables:
+        for row in tb.rows:
+            for cell in row.cells:
+                scan(cell.text or '', '表格')
+
+
+def _check_math_styles(doc, issues):
+    """公式里的正斜体：Λ 必须斜体，∂/∑/∏/Δ 必须正体。
+
+    ⚠ 这条检查是 2026-11-20 加的：`check_italic.py` 只看**正文 run**，
+    完全不看 `m:oMath` 里的 `m:r`，所以公式里的正斜体错了它一律报「共 0 处」。
+    实际当时 Λ 在 25 处公式里全被排成正体（omml.py 的「大写希腊字母
+    一律正体」判据误伤），audit 和 check_italic 都没拦住。
+    """
+    for p in doc.paragraphs:
+        for r in p._p.iter(M_NS + 'r'):
+            text = ''.join(t.text or '' for t in r.iter(M_NS + 't'))
+            if not text.strip():
+                continue
+            rpr = r.find(M_NS + 'rPr')
+            sty = 'i'
+            if rpr is not None:
+                s = rpr.find(M_NS + 'sty')
+                if s is not None:
+                    sty = s.get(M_NS + 'val') or s.get('val')
+            upright = (sty == 'p')
+            for ch in text:
+                if ch in MATH_ITALIC_REQUIRED and upright:
+                    issues.append(Issue(
+                        'ERROR', 'math.italic',
+                        '公式里的量符号 %s 被排成正体，应为斜体：%s'
+                        % (ch, text.strip()[:30])))
+                    break
+                if ch in MATH_UPRIGHT_REQUIRED and not upright:
+                    issues.append(Issue(
+                        'WARN', 'math.upright',
+                        '公式里的算子 %s 被排成斜体，应为正体：%s'
+                        % (ch, text.strip()[:30])))
+                    break
+
+
 def audit_docx(path):
     doc = docx.Document(str(path))
     issues = []
@@ -236,6 +302,8 @@ def audit_docx(path):
     _check_captions(doc, issues)
     _check_text(doc, issues)
     _check_body_fonts(doc, issues)
+    _check_quotes(doc, issues)
+    _check_math_styles(doc, issues)
     return issues
 
 

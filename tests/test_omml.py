@@ -86,6 +86,59 @@ class OmmlCoreTests(unittest.TestCase):
         self.assertTrue(_upright(runs, 'Δ'), runs)
         self.assertFalse(_upright(runs, 'T'), runs)
 
+    def test_uppercase_greek_quantity_is_italic(self):
+        """Λ（摩尔电导率）是**量符号**，必须斜体，不能因为是大写希腊字母就正体。
+
+        ⚠ 2026-11-20 用户反馈「正斜体和上下标有严重问题」时查出的真 bug：
+        omml.py 原判据是「希腊字母命令名首字母大写 → 正体」，于是
+        `\\Lambda_{m}` 里的 Λ 被排成正体。依据：
+
+          · 课程参照报告（2300012602-李晨曦-电导率.docx）：Λ 斜体 92 次、
+            无一处正体
+          · 讲义：Λ 斜体 7 次（另有 56 次正体，是老师手工漏改，不作依据）
+
+        「大写希腊字母正体」这条只对**算子**成立（∂ 偏导、∑ 求和、
+        ∏ 连乘、Δ 差分），不对量符号成立。
+        """
+        for latex in (r'\Lambda_{m}', r'\Lambda_{m}^{\infty}',
+                      r'\sigma_{\Lambda_{m}^{\infty}}'):
+            runs = omml_runs(self.body(latex))
+            self.assertFalse(_upright(runs, 'Λ'),
+                             '「%s」里的 Λ 被排成正体了：%r' % (latex, runs))
+
+    def test_operators_are_upright(self):
+        """算子必须正体：∂ 偏导、∑ 求和、∏ 连乘。
+
+        用户 2026-11-20 明确「偏微分号应该是正体」，与讲义里 ∂ 正体
+        40 次一致。（参照报告把 ∂ 排成斜体 8 次，属学生报告的疏漏，
+        以用户要求 + 讲义为准。）
+        """
+        runs = omml_runs(self.body(
+            r'\frac{\partial K^{\ominus}}{\partial \Lambda_{m}^{\infty}}'))
+        self.assertTrue(_upright(runs, '∂'), runs)
+        # 同一式子里 Λ 仍必须是斜体——两者不能一起被规则带走
+        self.assertFalse(_upright(runs, 'Λ'), runs)
+
+        for latex, sym in ((r'\sum_{i=1}^{n}', '∑'),
+                           (r'\prod_{i}', '∏')):
+            runs = omml_runs(self.body(latex))
+            self.assertTrue(_upright(runs, sym), (latex, runs))
+
+    def test_mean_value_m_is_not_upright(self):
+        """式中的平均值 m̄ 是量符号，不能用 \\mathrm{} 强成正体。
+
+        ⚠ 原来 report.py 写的是 `\\mathrm{m}^{\\ominus}`，与同一段正文
+        「带下标 m 的量表示各瓶 K⊖ 的平均值」自相矛盾。
+
+        ⚠ 判据要按**字符**而不是按 run：Unicode 组合符（上划线 U+0304）
+        会和基字符分成两个 m:r，`_upright(runs, 'm̄')` 找不到它。
+        """
+        runs = omml_runs(self.body(r'\left(K_{i}^{\ominus}-m̄^{\ominus}\right)'))
+        # m 与它上面的组合符都必须是斜体
+        for text in ('m', '\u0304'):
+            self.assertFalse(_upright(runs, text),
+                             '%r 被排成正体：%r' % (text, runs))
+
     def test_left_right_delimiter(self):
         xml = self.body(r'\left( \frac{a}{b} \right)')
         delim = find_one(xml, 'd')

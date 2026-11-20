@@ -202,7 +202,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     }
     missing = [key for key, v in cover.items() if not str(v or '').strip()]
     if missing:
-        log('⚠ 封面缺字段：%s（请在界面左侧「报告封面」里填上）' % '、'.join(missing))
+        log('⚠ 封面缺字段：%s（请在界面左侧“报告封面”里填上）' % '、'.join(missing))
     rb.set_cover(cover, title_size=22.0)
     rb.set_header_title(TITLE)
 
@@ -647,7 +647,7 @@ def _sec_first_order(rb, analysis, groups, png, num):
             ('t', 'R^{2}', ITALIC), ' 最低（%s），%s'
             % (k(worst_r2, 4), spread),
             '这可能与该组反应较快、初始读数偏低以及反应后期可能偏离一级有关；'
-            '若该组某些数据点明显偏离，可在界面中把这些点的序号填入「剔除」框，'
+            '若该组某些数据点明显偏离，可在界面中把这些点的序号填入“剔除”框，'
             '重新拟合后再生成报告。',
         ])
     excluded = [g for g in groups if g['exclude']]

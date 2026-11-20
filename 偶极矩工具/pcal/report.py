@@ -99,7 +99,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     }
     missing = [key for key, v in cover.items() if not str(v or '').strip()]
     if missing:
-        log('⚠ 封面缺字段：%s（请在界面左侧「报告封面」里填上）' % '、'.join(missing))
+        log('⚠ 封面缺字段：%s（请在界面左侧“报告封面”里填上）' % '、'.join(missing))
     rb.set_cover(cover, title_size=18.0)
     rb.set_header_title(title)
 
@@ -164,7 +164,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
              '称取此时的总质量 ', ('t', 'm_{2}', ITALIC),
              '，用于计算正丁醇摩尔分数。'])
     rb.heading('2.2.2 介电常数（电容）的测定', 3)
-    rb.para(["打开测量仪预热 20 min。拔下「电容池座」屏蔽线插头，按「校零」"
+    rb.para(["打开测量仪预热 20 min。拔下“电容池座”屏蔽线插头，按“校零”"
              "按钮使仪器读数为 000.00。插上插头，此时显示值为 ",
              ('t', "C'_{空}", ITALIC), '。取下电容池上盖，将电容池白色容器中'
              '加入环己烷溶液至满池，盖上上盖，读取此时显示值 ',
