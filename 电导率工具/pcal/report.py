@@ -153,6 +153,18 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     if kfit:
         fig_kfit = save(plotting.make_kfit_figure(analysis), 'fig6_kfit.png')
 
+    # ---- 附录图（只在读了共享数据表时才画）
+    appendix_pngs = {}
+    shared = getattr(analysis, 'shared', None)
+    if shared and (shared.get('group') or {}).get('n', 0) >= 2:
+        log('绘制附录图…')
+        appendix_pngs['scatter'] = save(
+            plotting.make_group_scatter_figure(shared), 'fig7_group_scatter.png')
+        appendix_pngs['kappa'] = save(
+            plotting.make_group_kappa_figure(shared), 'fig8_group_kappa.png')
+        appendix_pngs['kpair'] = save(
+            plotting.make_kpair_figure(shared), 'fig9_kpair.png')
+
     # ================================================================ 摘要
     log('撰写摘要…')
     f_na = fits['NaCl']
@@ -251,9 +263,105 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             'Regression Analysis[M]. Hoboken: John Wiley & Sons, 2021.',
             indent_chars=0)
 
+    # ================================================================ 附录
+    # 附录放在参考文献之后（正文引用链在参考文献处收尾，附录属补充材料）。
+    # 图号接着正文往后排（图7~图9），因为 docxkit 的题注不自动编号，
+    # 而 tests/audit_docx.py 会检查图号必须从 1 开始且连续。
+    if appendix_pngs:
+        _sec_appendix(rb, analysis, appendix_pngs)
     log('写入 docx…')
     rb.save(out_path)
     return out_path
+
+
+def _sec_appendix(rb, an, pngs):
+    """附录：组内分析的三张图（图7~图9）。
+
+    正文 4.2 节只给结论与数值（表10~表13），图放附录。理由是这三张图
+    都是「一人一点」的分布图，信息密度低于同页的统计表；正文若插三张，
+    4.2 节会从两页涨到四页，把讨论挤散。附录里图文并列，需要核对细节时
+    翻到最后即可。
+
+    ⚠ 图号必须接着正文排（正文到图6），否则 audit_docx 的
+    caption.gap 会报「图6 → 图7」以外的跳号。
+    """
+    shared = getattr(an, 'shared', None) or {}
+    group = shared.get('group') or {}
+    members = shared.get('members') or []
+    n = group.get('n') or 0
+
+    rb.heading('附录  共享数据的组内分析图', page_break_before=True)
+    who = _me_name(shared, members)
+    if who:
+        # 认领成功：直接写名字。若是两人合做一台仪器、表里填的是对方名字，
+        # 这里如实印出「对应共享表中登记为 XX 的那一份」，不冒充成本人自测。
+        rb.para(['本附录给出 4.2 节所用组内分析的三张图。图中：空心圆为组内每人，'
+                 '红色实心为本人数据（对应共享表中登记为 %s 的那一份），'
+                 '橙 × 为 Grubbs 检验判出的离群点，蓝带为 ±1 倍标准差范围，'
+                 '绿色虚线为 CRC 离子加和的理论值。共 %d 位同学参与统计。'
+                 % (who, n)])
+    else:
+        # 没认领到：不猜，也不把任何一个人标成"本人"
+        rb.para(['本附录给出 4.2 节所用组内分析的三张图。图中：空心圆为组内每人，'
+                 '橙 × 为 Grubbs 检验判出的离群点，蓝带为 ±1 倍标准差范围，'
+                 '绿色虚线为 CRC 离子加和的理论值。共 %d 位同学参与统计。'
+                 '（尚未指定「我的数据」，故图中未标出本人。）' % n])
+
+    # ---- 图7
+    # 附录三张图纵向排：总高约 24 cm + 文字 6.5 cm，超过一页的 24.7 cm，
+    # 必然跨两页。为了不让第二页只剩一张图，把**图9 的说明合并进图9 之前**
+    # 的三段说明之后，并让图9 与前两图保持同一横向比例（1.53），
+    # 这样第二页至少是「图9 + 完整说明」，不会出现孤零零一张图加半页空白。
+    rb.figure(pngs['scatter'],
+              caption='图7  各物种极限摩尔电导率的组内散点',
+              width_cm=plotting.ps.FIG_W_CM)
+    hac = (group.get('lam_hac') or {}).get('describe') or {}
+    nacl = ((group.get('species') or {}).get('NaCl') or {}).get('lam_inf') or {}
+    nac = ((group.get('species') or {}).get('NaAc') or {}).get('lam_inf') or {}
+    hcl = ((group.get('species') or {}).get('HCl') or {}).get('lam_inf') or {}
+    rb.para(['图7 显示各物种 Λm∞ 在组内的散布。三个强电解质的相对标准偏差'
+             '依次为 NaCl %.2f%%、NaAc %.2f%%、HCl %.2f%%，HAc 为 %.2f%%。'
+             'NaAc 的一致性最好，HCl 与 HAc 最差；这与 H⁺ 迁移数大、'
+             '对浓度配制与温度波动更敏感相符。各组的组内均值都略低于'
+             '绿色虚线（CRC 理论值），系统性偏低 1~2%%，原因见 4.1 节。'
+             % (nacl.get('rsd', float('nan')), nac.get('rsd', float('nan')),
+                hcl.get('rsd', float('nan')), hac.get('rsd', float('nan')))])
+
+    # ---- 图8
+    rb.figure(pngs['kappa'],
+              caption='图8  各成员校正电导率 κ_{corrected} 相对组内均值的偏差',
+              width_cm=plotting.ps.FIG_W_CM)
+    rb.para(['图8 把各人的校正电导率–c 曲线画成「相对组内均值的偏差」。之所以不直接'
+             '叠加原始校正电导率，是因为它与 c 近似线性、各人绝对值只差 1~3%，'
+             '原始曲线会完全重合而看不出差别；取相对偏差后，每人的系统性'
+             '高低才显现出来。可以看出偏差主要出现在低浓度端（左端），'
+             '高浓度端各人几乎重合——这是 4.1 节所述「极稀溶液信噪比低」'
+             '的直接证据。'])
+
+    # ---- 图9
+    rb.figure(pngs['kpair'],
+              caption='图9  两种方法所得 K° 的配对连线',
+              width_cm=plotting.ps.FIG_W_CM)
+    km = group.get('k_methods') or {}
+    paired = km.get('paired') or {}
+    rb.para(['图9 中每人用一条线连接「求平均法」与「拟合直线法」所得的 K°。'
+             '配对比较的要点就在这里：把同一个人的两个结果相连，'
+             '浓度配制、温度等共同因素相互抵消，剩下的才是方法本身的差异。'
+             '配对 t 检验结果为 Δ = %.2f×10⁻⁷、t = %.2f、p = %.3f（自由度 %d），'
+             '%s。'
+             % (paired.get('mean_diff', float('nan')) / 1e-7,
+                paired.get('t', float('nan')), paired.get('p', float('nan')),
+                paired.get('df', 0),
+                '两法存在系统性差异' if paired.get('significant')
+                else '两法未检出系统性差异')])
+
+
+def _me_name(shared, members):
+    """本人姓名（认领失败时不显示别人的名字）。"""
+    idx = (shared.get('match') or {}).get('index')
+    if idx is not None and 0 <= idx < len(members):
+        return members[idx].get('name')
+    return None
 
 
 # ---------------------------------------------------------------- 配制表
@@ -319,7 +427,7 @@ def _sec_qualitative(rb, an, fig_kc):
              ('t', 'c', ITALIC), '），由此作出 κ_{corrected}–c 曲线，'
              '如图2所示。'])
     rb.figure(fig_kc, caption='图2  NaCl、HCl 和 HAc 的电导率-浓度关系曲线',
-              width_cm=12.5)
+              width_cm=plotting.ps.FIG_W_CM)
     rb.para(['可以看出对于强电解质，电导率随浓度增加而显著增加，且接近线性。'
              '观察电导率公式：'])
     rb.equation(r'\kappa=\Lambda_{m}\times c')
@@ -383,7 +491,7 @@ def _sec_strong(rb, an, fit_pngs):
         rb.figure(fit_pngs[key],
                   caption='图%d  %s 的 Λ_{m}–√c 拟合直线'
                           % (idx, conduct.SPECIES_LABEL[key]),
-                  width_cm=11.5)
+                  width_cm=plotting.ps.FIG_W_CM)
         sign = '-' if f['k'] < 0 else '+'
         rb.equation(r'\Lambda_{m}=(%(b)s)%(s)s(%(k)s)\times\sqrt{c}'
                     % {'b': pm(f['lam_inf'], f['sigma_inf']), 's': sign,
@@ -664,7 +772,7 @@ def _sec_weak(rb, an, fig_kfit):
              ' 的值即可求出 ', ('t', 'K^{⊖}', ITALIC), '，拟合结果如图6所示。'])
     rb.figure(fig_kfit,
               caption='图6  HAc 的 (c/c^{⊖})Λ_{m}–1/Λ_{m} 拟合直线',
-              width_cm=11.5)
+              width_cm=plotting.ps.FIG_W_CM)
     rb.equation(r'(c/c^{\ominus})\Lambda_{m}=(%s)\frac{1}{\Lambda_{m}}-(%s)'
                 % (sci_pm(kfit['k'], kfit['sigma_k'], -8),
                    sci_pm(kfit['b'], kfit['sigma_b'], -6)))
@@ -762,7 +870,8 @@ def _sec_shared(rb, an):
              '的离散程度，再用统计检验判断本人数据与组内水平是否一致。'
              '共享数据由各人独立测得，仪器序号、电导池常数与去离子水电导率'
              '都不同，因此组内离散反映的是操作与配制层面的差异，'
-             '而不只是仪器误差。'
+             '而不只是仪器误差。各步对应的分布图放在附录图7~图9，'
+             '正文只给数值结论。'
              % (n, '、'.join(m['name'] for m in members))])
 
     # ---- 4.2.1 组内一致性
@@ -770,12 +879,17 @@ def _sec_shared(rb, an):
     rb.para(['把每位同学各自算出的 ', ('t', 'Λ_{m}^{∞}', ITALIC),
              ' 汇集起来，计算组内平均值 ', ('t', 'x̄', ITALIC),
              '、样本标准偏差 ', ('t', 's', ITALIC),
-             '（自由度 ' + str(n - 1) + '）与相对标准偏差 ',
-             ('t', 'RSD', ITALIC), ' = ', ('t', 's/x̄', ITALIC),
-             '。这里 ', ('t', 'RSD', ITALIC),
+             '（自由度 ' + str(n - 1) + '）与相对标准偏差 RSD = ',
+             ('t', 's', ITALIC), '/', ('t', 'x̄', ITALIC),
+             '。这里 RSD'
              ' 直接衡量「不同同学做同一个实验能差多少」，'
              '是比单次测量的不确定度更贴近实际的精度指标。'])
-    _SHARED_HEAD = ['物种', '组内平均 Λ_{m}^{∞}', 's', 'RSD', 'Grubbs G',
+    # 表头里 RSD / Grubbs 是**缩写**，必须正体（check_italic 会抓）。
+    # 但 _write_header 的默认规则是「含拉丁字母即视为量符号 → 斜体」，
+    # 所以对这两列要显式给片段列表、指定 italic=False。
+    _UP = {'italic': False}
+    _SHARED_HEAD = ['物种', '组内平均 Λ_{m}^{∞}', 's',
+                    [('RSD', _UP)], [('Grubbs G', _UP)],
                     '判定']
     rows = []
     grubbs_hits = []
@@ -882,7 +996,10 @@ def _sec_shared(rb, an):
         rb.heading('4.2.3 本人数据与组内水平的比较', 3)
         rb.para(['把本人的结果与其余 %d 位同学的平均值比较。'
                  '采用 t 检验：' % (n - 1)])
-        rb.equation(r't=\frac{x_{me}-\bar{x}_{others}}'
+        # ⚠ 这个 OMML 转换器**不支持 \\bar**：写 \\bar{x} 会在正文里残留一个
+        # 反斜杠（audit_docx 报 text.backslash）。改用 Unicode 组合字符 x̄，
+        # 与本节前文「组内平均值 x̄」的写法一致。
+        rb.equation(r't=\frac{x_{me}-x̄_{others}}'
                     r'{s_{others}\sqrt{1+1/n_{others}}}')
         rb.para(['分母里多出的 ', ('t', '√(1 + 1/n)', ITALIC),
                  ' 项是因为「其余同学的平均值」本身也是从有限样本估出来的，'
@@ -969,7 +1086,7 @@ def _sec_shared(rb, an):
                  '温度等共同因素被抵消，剩下的才是方法本身的差异。' % n])
         p = km['paired']
         rb.caption('表13  两种方法所得 K° 的组内统计（n = %d）' % n)
-        rb.table(['方法', '组内平均 K^{⊖}', 's', 'RSD'],
+        rb.table(['方法', '组内平均 K^{⊖}', 's', [('RSD', _UP)]],
                  [['求平均法', _sci_or_dash(km['mean']['mean']),
                    _sci_or_dash(km['mean']['sd']),
                    '%.2f%%' % km['mean']['rsd']],

@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "files": {
-    "version.py": "3410a0b029fae2489846c7e3c1c36b248bd6c417a34ce53d419ab39b2c122986",
+    "version.py": "6b8d8fe3f1601c85a414440312424da9b4fa691ca83d52f1e1d1d4fe4f528e3e",
     "omml.py": "9e2157e5091c78475bee005ec0d004ae32bdcbcfc7792a190fddb73d04038424",
     "docxkit.py": "7e608b97b5e1a434c90ee67bc80477ab672d9223e066a78c0a7f4f790fcda94e",
     "sigfig.py": "90582e2858ff7066bf92bd6d211f7a91673baf86e05b8a1619a29f62401a9bc8",
