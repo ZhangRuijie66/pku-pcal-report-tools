@@ -143,13 +143,26 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             save(plotting.make_fit_figure(m), 'fit_%s.png' % m['key']),
         )
 
-    # ---- 图/表编号：图1 固定给引言占位；缺数据的液体不占号，后面顺延
+    # ---- 图/表编号：按**文档里出现的先后**逐张分配，缺一张就不占号
+    # 每支液体的表依次是：大气压沸点（没有就不印）→ 原始数据 →（未参与拟合的
+    # 读数，没有就不印）→ 最终数据。写死「每支 3 张」会在少一张时跳号，
+    # 而 audit_docx 要求表号从 1 开始连续。
     tbl_no, fig_no = {}, {}
     n_tbl, n_fig = 0, 1
     for m in liquids:
-        tbl_no[m['key']] = (n_tbl + 1, n_tbl + 2, n_tbl + 3)
+        slots = {}
+        if m.get('atm'):
+            n_tbl += 1
+            slots['atm'] = n_tbl
+        n_tbl += 1
+        slots['series'] = n_tbl
+        if m.get('rejected'):
+            n_tbl += 1
+            slots['drop'] = n_tbl
+        n_tbl += 1
+        slots['final'] = n_tbl
+        tbl_no[m['key']] = slots
         fig_no[m['key']] = (n_fig + 1, n_fig + 2)
-        n_tbl += 3
         n_fig += 2
     tbl_summary = n_tbl + 1 if liquids else None
 
@@ -301,31 +314,64 @@ def _final_table(rb, m, no):
              widths_cm=[2.2, 4.4, 4.4], keep_together=False)
 
 
+def _rejected_note(rb, m, tbl_no):
+    """把「采集软件记了 N 行、表里只有 M 点」这件事交代清楚。
+
+    采集软件是连续记录 + 按 Hold 取点的（见《饱和蒸气压实验在线采集操作说明》）：
+    抽真空检漏、液体还没沸腾、结束通大气前后记下的读数，都不是气液平衡数据。
+    判据是「平衡点必在同一条 ln(p/p⊖)–1/T 直线上」，偏离多少写在表里。
+
+    没有这些行时**什么也不写**，不要凭空添一段话。
+    ``tbl_no`` 是这张新表自己的编号（由 build_report 按实际内容分配）。
+    """
+    dropped = m.get('rejected') or []
+    if not dropped or not tbl_no:
+        return
+    rb.para('原始记录中另有 %d 个读数没有进入上述数据表：这些点与其余数据不在'
+            '同一条 ln(p/p⊖)–1/T 直线上，是抽真空检漏、液体尚未沸腾或结束通大气'
+            '前后记录的，不构成气液平衡数据，故未参与拟合。逐行说明见表%d。'
+            % (len(dropped), tbl_no))
+    rows = []
+    for i, r in enumerate(dropped):
+        resid = '—' if r.get('resid') is None else '%.2f' % r['resid']
+        rows.append([str(i + 1), k(r['p'], 2), k(r['t'], 2), resid])
+    rb.caption('表%d  %s未参与拟合的读数' % (tbl_no, m['name']))
+    rb.table(['编号', 'p / kPa', 't / ℃', '偏离平衡线 / ln p'],
+             rows, widths_cm=[2.0, 3.2, 3.2, 4.6], keep_together=True)
+
+
 def _sec_liquid(rb, m, p1, idx, tbls, figs, pngs):
+    """``tbls`` 是 {atm/series/drop/final: 表号}，缺的那几张键不存在。"""
     f = m['fit']
     name = m['name']
     atm_n = len(m['atm'])
     n_total = len(f['points'])
     direction = _direction(m)
+    t_atm = tbls.get('atm')
+    t_series = tbls['series']
+    t_drop = tbls.get('drop')
+    t_final = tbls['final']
 
     rb.heading('3.%d %s' % (idx, m['section']), 2)
     # ---- 3.x.1 原始数据
     rb.heading('3.%d.1 原始数据记录' % idx, 3)
     atm_txt = ('（平行测定 %d 次，取平均参与拟合）' % atm_n) if atm_n > 1 else ''
-    rb.para([
-        '大气压下%s的沸点数据如表%d所示%s，%s过程中%s的温度、压力原始数据'
-        '如表%d所示。为后续计算方便，将温度换算为开尔文温度：'
-        % (name, tbls[0], atm_txt, direction, name, tbls[1]),
-    ], keep_next=True)
+    if t_atm:
+        lead = ['大气压下%s的沸点数据如表%d所示%s，%s过程中%s的温度、压力原始数据'
+                '如表%d所示。' % (name, t_atm, atm_txt, direction, name, t_series)]
+    else:
+        lead = ['%s过程中%s的温度、压力原始数据如表%d所示（本次没有单独记录'
+                '大气压下的沸点读数）。' % (direction, name, t_series)]
+    rb.para(lead + ['为后续计算方便，将温度换算为开尔文温度：'], keep_next=True)
     rb.equation(r'\frac{T}{\mathrm{K}}=\frac{T}{°\mathrm{C}}+273.15')
-    if m['atm']:
-        _atm_table(rb, m, tbls[0])
-    _series_table(rb, m, tbls[1])
+    if t_atm:
+        _atm_table(rb, m, t_atm)
+    _series_table(rb, m, t_series)
+    _rejected_note(rb, m, t_drop)
 
     # ---- 3.x.2 光滑曲线
     rb.heading('3.%d.2 蒸气压-温度光滑曲线' % idx, 3)
-    src = ('表%d和表%d' % (tbls[0], tbls[1])) if m['atm'] \
-        else ('表%d' % tbls[1])
+    src = ('表%d和表%d' % (t_atm, t_series)) if t_atm else ('表%d' % t_series)
     rb.para('根据%s的 %d 个数据点，拟合出%s的蒸气压-温度光滑曲线如图%d所示。'
             % (src, n_total, name, figs[0]))
     rb.figure(pngs[0], caption='图%d  %s的蒸气压-温度光滑曲线' % (figs[0], name),
@@ -337,17 +383,19 @@ def _sec_liquid(rb, m, p1, idx, tbls, figs, pngs):
             '压力和温度存在如下关系：', keep_next=True)
     rb.equation(r'\ln\frac{p}{p^{⊖}}=-\frac{\Delta_{vap}H_{m}}{R}'
                 r'\cdot\frac{1}{T}+C')
+    merge_txt = ('将表%d与表%d的数据合并' % (t_atm, t_series)) if t_atm \
+        else ('将表%d的数据' % t_series)
     rb.para([
         '其中 ', ('t', 'p^{⊖}', ITALIC), ' 是为了消除量纲加入的，取 ',
         ('t', 'p^{⊖}', ITALIC), ' = 100 kPa。据此对 ',
     ] + SEG_LNPP + [
         '–', ('t', '1/T', ITALIC),
-        ' 作线性回归。将表%d与表%d的数据合并，处理后的结果如表%d所示，'
-        '其中数据按 ' % (tbls[0] if m['atm'] else tbls[1], tbls[1], tbls[2]),
+        ' 作线性回归。%s，处理后的结果如表%d所示，其中数据按 '
+        % (merge_txt, t_final),
         ('t', '1/T', ITALIC), ' 从小到大排布。',
     ])
-    _final_table(rb, m, tbls[2])
-    rb.para('表%d的线性拟合结果如图%d所示。' % (tbls[2], figs[1]))
+    _final_table(rb, m, t_final)
+    rb.para('表%d的线性拟合结果如图%d所示。' % (t_final, figs[1]))
     rb.figure(pngs[1], caption='图%d  %s的 ln(p/p^{⊖})–1/T 拟合直线'
               % (figs[1], name), width_cm=11.0)
     rb.para('曲线的拟合结果如下：', keep_next=True)

@@ -218,7 +218,7 @@ class EndToEndTests(unittest.TestCase):
         import re
         import zipfile
         rpt = support.load_module(TOOL, 'report')
-        srv = support.load_module(TOOL, 'server')
+        srv = support.load_module_isolated(TOOL, 'server')
         tmp = tempfile.mkdtemp(prefix='uvcal_')
         out = os.path.join(tmp, 'r.docx')
         rpt.build_report(an, an.cfg, out, os.path.join(tmp, 'figs'),
@@ -235,7 +235,7 @@ class CacheKeyTests(unittest.TestCase):
     """改标定必须触发重算（缓存键要覆盖它）。"""
 
     def test_analysis_cache_key_includes_calibration(self):
-        srv = support.load_module(TOOL, 'server')
+        srv = support.load_module_isolated(TOOL, 'server')
         import inspect
         src = inspect.getsource(srv._analysis)
         # 缓存键的字典里必须出现这两个键名
@@ -246,7 +246,7 @@ class CacheKeyTests(unittest.TestCase):
 
     def test_coerce_cleans_calibrations(self):
         """前端传上来的自定义条目要清洗（非法 key 不能进槽位名）。"""
-        srv = support.load_module(TOOL, 'server')
+        srv = support.load_module_isolated(TOOL, 'server')
         cfg = srv._coerce(srv.default_config(), {'config': {
             'calibrations': [dict(key='bad key', file='a.txt'),
                              dict(key='ok', file='b.txt')],

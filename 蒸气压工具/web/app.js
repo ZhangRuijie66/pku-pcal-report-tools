@@ -115,14 +115,22 @@ function readData() {
 function renderAtm(key) {
   const el = $(key + 'AtmTable');
   const rows = (DATA && DATA[key] && DATA[key].atm) || [];
-  let html = '<thead><tr><th>组别</th><th>p₀ /kPa</th><th>t /℃</th></tr></thead><tbody>';
-  for (let i = 0; i < 3; i += 1) {
+  // ⚠ 行数必须跟着数据走。原来写死 `for (let i = 0; i < 3; i += 1)`：
+  // 环己烷那份日志记了 **12** 个大气压附近的读数，界面只渲染前 3 个，
+  // 于是只要点一次「重新计算」，readData() 回传的就成了前 3 个读数的平均
+  // （80.87 ℃ 而不是 81.85 ℃），ΔvapH 静默地从 32.29 变成 32.81 kJ·mol⁻¹
+  // （+1.6%）。不会报错，报告里也看不出异常 —— 只有把 atm 行数打出来才发现。
+  const n = Math.max(rows.length, 1);
+  let html = '<thead><tr><th>组别</th><th>p₀ /kPa</th><th>t /℃</th><th></th></tr></thead><tbody>';
+  for (let i = 0; i < n; i += 1) {
     const r = rows[i] || [];
-    html += '<tr><td>' + (i + 1) + '</td>' +
+    html += '<tr data-atmrow="' + i + '"><td>' + (i + 1) + '</td>' +
       '<td><input type="number" step="any" data-r="' + i + '" data-c="0" value="' +
       (r[0] == null ? '' : esc(r[0])) + '"></td>' +
       '<td><input type="number" step="any" data-r="' + i + '" data-c="1" value="' +
-      (r[1] == null ? '' : esc(r[1])) + '"></td></tr>';
+      (r[1] == null ? '' : esc(r[1])) + '"></td>' +
+      '<td><button class="btn mini" data-delatm="' + key + '" data-i="' + i +
+      '">删</button></td></tr>';
   }
   el.innerHTML = html + '</tbody>';
 }
@@ -187,6 +195,45 @@ function renderWarnings(s) {
   $('warns').innerHTML = list.map((w) => '<div class="msg">' + esc(w) + '</div>').join('');
 }
 
+/* ---------------------------------------------------------------- 导入诊断
+ * 「csv 有 15 行，报告里怎么只有 11 个点」必须能一眼答上来。
+ * 后端 classify_rows 给出逐行原因（偏离平衡线多少）与每支曲线的判据。
+ */
+function renderRejected(s) {
+  const card = $('rejectCard');
+  if (!card) return;
+  const rows = s.rejected || [];
+  const notes = s.import_notes || [];
+  const lines = s.lines || [];
+  if (!rows.length && !notes.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  let html = '';
+  if (lines.length) {
+    html += '<p class="hint" style="margin:0 0 6px">识别到的平衡线：' +
+      lines.map((l) => esc(NAME_CN[l.key] || l.key) + ' ' + l.n + ' 点' +
+        (l.tb != null ? '，外推常压沸点 ' + num(l.tb, 2) + ' K' : '') +
+        (l.r2 != null ? '，R² ' + num(l.r2, 5) : '')).join('；') + '</p>';
+  }
+  if (rows.length) {
+    html += '<div class="scroll"><table><thead><tr>' +
+      '<th>#</th><th>p /kPa</th><th>t /℃</th><th>被判归</th><th>原因</th>' +
+      '</tr></thead><tbody>' +
+      rows.map((r, i) => '<tr><td>' + (i + 1) + '</td>' +
+        '<td>' + num(r.p, 2) + '</td><td>' + num(r.t, 2) + '</td>' +
+        '<td>' + esc(r.key ? NAME_CN[r.key] : '—') + '</td>' +
+        '<td style="text-align:left">' + esc(r.why || '') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    html += '<p class="hint" style="margin:6px 0 0">这些读数没有进入拟合。' +
+      '气液平衡点必然落在同一条 ln(p/p⊖)–1/T 直线上；偏离过大的多半是' +
+      '抽真空检漏时、液体还没沸腾时，或者结束通大气前后记录的，不构成平衡数据。</p>';
+  }
+  if (notes.length) {
+    html += notes.map((w) => '<div class="msg">' + esc(w) + '</div>').join('');
+  }
+  $('rejectBody').innerHTML = html;
+}
+
 function renderState(s) {
   STATE = s;
   fillConfig(s.config);
@@ -197,6 +244,7 @@ function renderState(s) {
   setStatus('数据文件：' + (s.data_file || '—'));
   renderResults(s);
   renderWarnings(s);
+  renderRejected(s);
   drawChart();
 }
 
@@ -309,6 +357,7 @@ async function recalc() {
     fillData(s.data);
     renderResults(s);
     renderWarnings(s);
+    renderRejected(s);
     drawChart();
     setStatus('已重新计算');
     toast('计算完成');
@@ -392,10 +441,22 @@ async function importFile(f = $('fileInput').files[0]) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ b64: btoa(binary), name: f.name }),
     });
+    // 服务端会把这次导入**合并**到已有数据上（水、环己烷通常来自两个文件），
+    // 所以一律用返回的 water/cyclo 整体渲染，不要只替换自己猜的那一支。
     DATA = { water: r.water, cyclo: r.cyclo };
     fillData(DATA);
     await recalc();
-    toast('已从 ' + f.name + ' 读到 ' + r.count + ' 行并自动分两支');
+    const got = [];
+    if (r.water && (r.water.atm.length || r.water.series.length)) {
+      got.push('水 ' + (r.water.atm.length + r.water.series.length) + ' 点');
+    }
+    if (r.cyclo && (r.cyclo.atm.length || r.cyclo.series.length)) {
+      got.push('环己烷 ' + (r.cyclo.atm.length + r.cyclo.series.length) + ' 点');
+    }
+    const rej = (r.rejected || []).length;
+    toast('已从 ' + f.name + ' 读到 ' + r.count + ' 行 → ' +
+      (got.join('、') || '没有可用点') +
+      (rej ? '（' + rej + ' 行未进入拟合，见「被排除的读数」）' : ''), 6500);
   } catch (e) { toast('导入失败：' + e.message, 5000); }
   finally { busy(false); $('fileInput').value = ''; }
 }
@@ -434,6 +495,20 @@ function deleteRow(key, i) {
   renderSeries(key);
 }
 
+function addAtmRow(key) {
+  const d = readData();
+  d[key].atm.push([null, null]);
+  DATA = d;
+  renderAtm(key);
+}
+
+function deleteAtmRow(key, i) {
+  const d = readData();
+  d[key].atm.splice(i, 1);
+  DATA = d;
+  renderAtm(key);
+}
+
 /* ---------------------------------------------------------------- 绑定 */
 function bindUI() {
   $('btnCalc').onclick = recalc;
@@ -446,9 +521,13 @@ function bindUI() {
   $('btnPaste').onclick = importPaste;
   $('btnAddWater').onclick = () => addRow('water');
   $('btnAddCyclo').onclick = () => addRow('cyclo');
+  $('btnAddAtmWater').onclick = () => addAtmRow('water');
+  $('btnAddAtmCyclo').onclick = () => addAtmRow('cyclo');
   $('chartKind').onchange = drawChart;
   document.querySelectorAll('table').forEach((tbl) => {
     tbl.addEventListener('click', (e) => {
+      const delAtm = e.target.closest('button[data-delatm]');
+      if (delAtm) { deleteAtmRow(delAtm.dataset.delatm, Number(delAtm.dataset.i)); return; }
       const btn = e.target.closest('button[data-del]');
       if (btn) deleteRow(btn.dataset.del, Number(btn.dataset.i));
     });

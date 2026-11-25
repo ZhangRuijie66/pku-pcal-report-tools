@@ -35,7 +35,8 @@ from pcal.analysis import (default_config, default_config_with_saved,  # noqa: E
                            load_data, save_data, PERSIST_KEYS)
 
 SETTINGS_FILE = os.path.join(ROOT, 'settings.json')
-STATE = {'analysis': None, 'config': None, 'data': None, 'key': None}
+STATE = {'analysis': None, 'config': None, 'data': None, 'key': None,
+         'diag': None, 'diag_key': None}
 LOCK = threading.Lock()
 PREVIEW_LOCK = threading.Lock()   # matplotlib 不是线程安全的
 EXPORT_LOCK = threading.Lock()    # 导出串行：并发 / 连点两下时不能算出同一个文件名
@@ -178,15 +179,53 @@ def _current_data():
     return vapor.sample_data()
 
 
-def _analysis(cfg, data=None, force=False):
+def _data_key(data):
+    """数据的指纹。诊断信息（哪些行被排除）只跟**数据**有关，与配置无关——
+
+    早先把它挂在「cfg + data」的 key 上，于是用户在界面上改了日期/室温再点
+    重算，key 一变诊断就丢了，「被排除的读数」卡片突然空掉，看起来像数据好了。
+    """
+    return json.dumps(_normalize_data(data), sort_keys=True, default=str)
+
+
+def _is_sample_data(data):
+    """这份数据是不是内置的示例（2025 那批）。
+
+    对示例数据的比对按「两支的读数完全一致」判断，不比 float 的位模式，
+    免得 JSON 往返之后精度抖动导致判不出来。示例只是占位，不能与用户的
+    真实读数混在一份报告里。
+    """
+    try:
+        sample = vapor.normalize_data(vapor.sample_data())
+        cur = vapor.normalize_data(data)
+    except (ValueError, TypeError):
+        return False
+    for key in ('water', 'cyclo'):
+        for part in ('atm', 'series'):
+            a = [list(map(float, r)) for r in sample[key][part]]
+            b = [list(map(float, r)) for r in cur[key][part]]
+            if len(a) != len(b):
+                return False
+            for ra, rb in zip(a, b):
+                if abs(ra[0] - rb[0]) > 1e-9 or abs(ra[1] - rb[1]) > 1e-9:
+                    return False
+    return True
+
+
+def _analysis(cfg, data=None, force=False, diag=None):
     data = _normalize_data(data if data is not None else _current_data())
     key = json.dumps({'cfg': {k: cfg.get(k) for k in PERSIST_KEYS},
                       'data': data}, sort_keys=True, default=str)
+    dkey = _data_key(data)
     with LOCK:
         if not force and STATE['key'] == key and STATE['analysis'] is not None:
             return STATE['analysis']
-        an = vapor.analyze(data, cfg)
-        STATE.update(analysis=an, config=cfg, data=data, key=key)
+        # 诊断只跟着「这份数据」活着：同一份数据重算要能取回来，换数据就作废。
+        if diag is None and STATE.get('diag_key') == dkey:
+            diag = STATE.get('diag')
+        an = vapor.analyze(data, cfg, diag=diag)
+        STATE.update(analysis=an, config=cfg, data=data, key=key,
+                     diag=diag, diag_key=dkey if diag is not None else None)
         return an
 
 
@@ -241,6 +280,10 @@ def _summary(an):
         'trouton': an['trouton'],
         'p1': an['p1'],
         'warnings': an['warnings'],
+        # 导入诊断：哪些原始读数没进拟合、为什么（界面「被排除的读数」用）
+        'rejected': an.get('rejected') or [],
+        'import_notes': an.get('import_notes') or [],
+        'lines': an.get('lines') or [],
         'out_dir': OUT_DIR,
         'template': TEMPLATE,
         'report_name': _report_filename(cfg),
@@ -339,8 +382,75 @@ def _export_locked(cfg, data):
 
 
 # ---------------------------------------------------------------- 导入
+def _absorb_import(out, payload):
+    """把一次导入并进当前数据与诊断，返回**合并后**的两支（供前端直接渲染）。
+
+    这个实验要导两次文件（水 / 环己烷），旧实现每次整体替换，第二次导入会把
+    第一支抹掉。这里改成按液体合并：
+
+      · ``payload['replace']`` 指定只换哪一支（``water`` / ``cyclo``），
+        缺省 ``auto`` = 新数据里非空的那一支；
+      · 另一支沿用 STATE 里现有的数据；
+      · **当前数据若是内置示例（占位），第一次导入直接整份替换**，不与示例混合。
+        否则「导入 水.csv」会把 2025 示例的环己烷留在界面上，报告里就出现
+        「别人的环己烷 + 我的水」这种最不该发生的情况；
+      · 诊断（rejected / notes / lines）按液体累积，并按 data 指纹挂到 STATE，
+        后续 /api/calc 能取回来（诊断与配置无关，见 _data_key）。
+    """
+    with LOCK:
+        base = STATE.get('data')
+        prev_diag = (STATE.get('diag') or {}) if STATE.get('diag_key') == \
+            _data_key(base) else {}
+    if base is None:
+        base = _normalize_data(_current_data())
+    if _is_sample_data(base):
+        # 占位示例不是用户的实验数据：整份替换，也不要沿用它的分支
+        base = {'water': {'atm': [], 'series': []},
+                'cyclo': {'atm': [], 'series': []}}
+        prev_diag = {}
+    merged, replaced = vapor.merge_classified(
+        base, {'water': out.get('water'), 'cyclo': out.get('cyclo')},
+        target=str(payload.get('replace') or 'auto'))
+
+    # ---- 诊断按液体累积
+    rejected = list(prev_diag.get('rejected') or [])
+    notes = list(prev_diag.get('notes') or [])
+    lines = list(prev_diag.get('lines') or [])
+    if replaced:
+        rejected = [r for r in rejected
+                    if r.get('key') not in replaced] + \
+                   list(out.get('rejected') or [])
+        lines = [l for l in lines if l.get('key') not in replaced] + \
+                list(out.get('lines') or [])
+        notes = notes + list(out.get('notes') or [])
+    diag = {'rejected': rejected, 'notes': notes, 'lines': lines}
+
+    with LOCK:
+        STATE['diag'] = diag
+        STATE['diag_key'] = _data_key(merged)
+        # 也让下一次 _analysis 立刻用上合并后的数据
+        STATE['data'] = merged
+        STATE['key'] = None            # 强制重算
+
+    out = dict(out)
+    out['water'] = merged['water']
+    out['cyclo'] = merged['cyclo']
+    out['replaced'] = replaced
+    out['rejected'] = diag['rejected']
+    out['notes'] = diag['notes']
+    out['lines'] = diag['lines']
+    return out
+
+
 def _import(kind, payload):
-    """kind=file：整个 xlsx/csv 自动分两支；kind=water/cyclo：粘贴的 p,t 文本。"""
+    """kind=file：整个 xlsx/csv 自动分两支；kind=water/cyclo：粘贴的 p,t 文本。
+
+    返回体里除两支数据外，还带 ``classify_rows`` 的诊断：
+      · ``rejected``  哪些读数没进任何一支，偏离多少、为什么；
+      · ``notes``     分类过程中的判断说明（合并两支、伪直线被排除等）；
+      · ``lines``     每支曲线自己的点数、外推常压沸点、R²。
+    界面把这些逐行显示出来，用户才能核对「csv 有 15 行，报告里怎么只有 11 点」。
+    """
     if kind == 'file':
         raw = base64.b64decode(payload.get('b64') or '')
         fname = str(payload.get('name') or '')
@@ -348,16 +458,24 @@ def _import(kind, payload):
         if fname.lower().endswith(('.xlsx', '.xlsm', '.xls')):
             rows = vapor.parse_workbook(io.BytesIO(raw))
         if rows is None:
+            # 采集软件导出的 csv 是 GBK（`temperature(°C)` 里的 ° 在 cp936 里
+            # 是单字节 A1 E6），按 utf-8 解会直接失败；反过来也先试 utf-8-sig。
             try:
                 text = raw.decode('utf-8-sig')
             except UnicodeDecodeError:
                 text = raw.decode('gbk', 'replace')
             rows = vapor.parse_numeric_rows(text)
         if not rows:
-            return dict(ok=False, error='没有从文件里读到 (p, t) 数据行')
-        water, cyclo = vapor.split_branches(rows)
+            return dict(ok=False, error='没有从文件里读到 (p, t) 数据行'
+                                        '（已尝试按表头认 pressure/temperature 列、'
+                                        '并跳过第一列的时间）')
+        try:
+            c = vapor.classify_rows(rows)
+        except ValueError as exc:
+            return dict(ok=False, error=str(exc), rows=len(rows))
         return dict(ok=True, kind='file', count=len(rows),
-                    water=water, cyclo=cyclo)
+                    water=c['water'], cyclo=c['cyclo'],
+                    rejected=c['rejected'], notes=c['notes'], lines=c['lines'])
     if kind in ('water', 'cyclo'):
         rows = vapor.parse_numeric_rows(payload.get('text') or '')
         return dict(ok=True, kind=kind, rows=rows, count=len(rows))
@@ -489,7 +607,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/import':
                 kind = (q.get('kind') or ['file'])[0]
                 body = self._body()
-                return self._json(_import(kind, body))
+                out = _import(kind, body)
+                if out.get('ok') and kind == 'file':
+                    out = _absorb_import(out, body)
+                return self._json(out)
             return self._json({'ok': False, 'error': 'not found: ' + u.path}, 404)
         except BodyTooLarge as exc:
             return self._json({'ok': False, 'error': str(exc)}, 413)

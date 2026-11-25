@@ -24,7 +24,23 @@ R_GAS = 8.314            # J·mol⁻¹·K⁻¹
 P_STD = 100.0            # p⊖ / kPa，ln(p/p⊖) 的基准
 P_NORM = 101.3           # 常压沸点定义压强 / kPa
 ATM_NEAR = 1.5           # 与分支最高压强相差多少 kPa 以内算「大气压沸点」
+#: 「大气压沸点」的**绝对**下限 /kPa。只靠「与最高压强相差 ≤ATM_NEAR」是不够的：
+#: 若这份数据只测到 70 kPa（没测到大气压），最高压强那一点会被当成大气压沸点，
+#: 平均值就成了假的大气压沸点。加一条绝对判据后，这种数据只会得到系列点。
+ATM_FLOOR = 95.0
 SPLIT_DROP = 10.0        # 温度骤降超过这么多 ℃ 视为换了一种液体
+
+#: 判「某一行是不是在气液平衡态上」的残差容差，单位 ln(p/p⊖)。
+#:
+#: 实测两批数据（2026-11 的 水.csv / 环己烷.csv）：真正的平衡点残差 ≤0.063，
+#: 而「检漏阶段没沸腾」「结束通大气后」的读数残差 0.74~2.43，两者差一个量级。
+#: 取 0.10 落在空隙里：内点余量 1.6 倍、外点余量 7 倍，都不会误判。
+RESID_TOL = 0.10
+#: 共识点至少要占全部读数的这个比例，否则**不作剔除、只告警**。
+#: 防止「整批数据都不靠谱」时把大半读数当离群点剔掉、还装作算出了结果。
+MIN_INLIER_FRAC = 0.6
+#: 判「这份数据是哪一支液体」时允许的最大偏差 / K（两支液体沸点相差 19 K 以上）
+LIQUID_GUESS_TOL = 12.0
 
 LIQUIDS = (
     {'key': 'water', 'name': '水', 'method': '动态法',
@@ -62,30 +78,113 @@ def sample_data():
 
 
 # ---------------------------------------------------------------- 数据解析
-def parse_numeric_rows(text):
-    """从粘贴的文本里读 (p, t) 数值对：逗号/制表符/空白分隔都认。"""
+#: 采集软件导出的 csv 第一列是**时间**（`13:27:11.033`、`53:03.0`）。
+#: 《饱和蒸气压实验在线采集操作说明》原话：「每个数据显示的内容为采集时间，
+#: 压力和温度」。旧解析器把这列当第一个数值、`float()` 一失败就 break，
+#: 整行被丢掉 —— 2026-11-25 的两份真实 csv（水 / 环己烷）都被读成 **0 行**。
+_TIME_RE = re.compile(r'^\d{1,2}:\d{1,2}(?::\d{1,2})?(?:\.\d+)?$')
+
+#: 表头识别：认得 `pressure(KPa)` / `temperature(°C)` / `p /kPa` / `压力` 等写法。
+_P_COL_RE = re.compile(r'press|压力|压强|\bp\s*(?:/|\(|$)', re.IGNORECASE)
+_T_COL_RE = re.compile(r'temp|温度|℃|°\s*c', re.IGNORECASE)
+_KELVIN_RE = re.compile(r'/\s*k\b|开尔文|kelvin', re.IGNORECASE)
+
+#: 两点枚举做共识拟合时最多取多少个锚点（防上千行时 O(n³)）。
+MAX_ANCHOR = 60
+#: 认定为「一支液体」所需的最小温度展布 / K。真实系列从 50 kPa 测到大气压，
+#: 温度跨度 18~22 K；几个挤在同一温度的噪声点展布不足 1 K，靠这条挡掉。
+MIN_SPREAD_T = 10.0
+#: 被排除的读数占比超过这个值时补一条提示（只提示，不拦截）。
+WARN_REJECT_FRAC = 0.4
+
+
+def _num(cell):
+    try:
+        v = float(str(cell).strip())
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _column_roles(cells):
+    """从一行表头里认出（压强列, 温度列）的下标；认不出返回 None。"""
+    texts = [str(c if c is not None else '').strip() for c in cells]
+    i_p = i_t = None
+    for i, s in enumerate(texts):
+        if i_t is None and _T_COL_RE.search(s) and not _KELVIN_RE.search(s):
+            i_t = i
+        if i_p is None and _P_COL_RE.search(s):
+            i_p = i
+    if i_t is None:                        # 只有 `t /℃` 这种纯符号表头
+        for i, s in enumerate(texts):
+            if re.match(r'^t\s*(?:/|\(|$)', s, re.IGNORECASE) \
+                    and not _KELVIN_RE.search(s):
+                i_t = i
+                break
+    if i_p is None or i_t is None:
+        return None
+    return i_p, i_t
+
+
+def _parse_table(matrix):
+    """把「一行行单元格」解析成 ``[[p_kPa, t_℃], …]``。
+
+    三条判据（都是被真实文件逼出来的）：
+
+      1. 有表头就按表头认列（``time, pressure(KPa), temperature(°C)``）；
+      2. 没有表头时**跳过时间列**（``13:27:11.033`` 不是数值），取前两个数——
+         这是 2025 那批「无表头 p t」xlsx 与粘贴文本的走法；
+      3. 认不出的行（表头、空行、说明文字）逐行跳过，不因为一行坏掉就丢掉
+         后面全部数据（旧实现是 ``break``，一列时间就全军覆没）。
+    """
     rows = []
+    roles = None
+    for cells in matrix:
+        cells = list(cells or ())
+        if not any(str(c if c is not None else '').strip() for c in cells):
+            continue
+        if roles is None:
+            found = _column_roles(cells)
+            if found is not None:
+                roles = found
+                continue
+        p = t = None
+        if roles is not None and len(cells) > max(roles):
+            p, t = _num(cells[roles[0]]), _num(cells[roles[1]])
+        if p is None or t is None:
+            vals = []
+            for c in cells:
+                if _TIME_RE.match(str(c).strip()):
+                    continue               # 时间列，不是实验量
+                v = _num(c)
+                if v is not None:
+                    vals.append(v)
+            if len(vals) < 2:
+                continue
+            p, t = vals[0], vals[1]
+        rows.append([float(p), float(t)])
+    return rows
+
+
+def parse_numeric_rows(text):
+    """从文本里读 (p, t)：逗号/制表符/分号/空白分隔，带不带表头、带不带时间列都认。"""
+    matrix = []
     for line in (text or '').splitlines():
         line = line.strip()
         if not line:
             continue
-        parts = re.split(r'[,;\t]| {2,}| ', line)
-        vals = []
-        for p in parts:
-            p = p.strip()
-            if not p:
-                continue
-            try:
-                vals.append(float(p))
-            except ValueError:
-                break
-        if len(vals) >= 2 and all(math.isfinite(v) for v in vals[:2]):
-            rows.append([vals[0], vals[1]])
-    return rows
+        matrix.append([p for p in re.split(r'[,;\t]| {2,}| ', line) if p != ''])
+    return _parse_table(matrix)
 
 
 def parse_workbook(path_or_bytes):
-    """读 xlsx（蒸发热数据处理.xlsx 的 5 列格式只取前两列 p、t）。"""
+    """读 xlsx：优先按表头里的 pressure / temperature 列认。
+
+    无表头时退回「跳过时间列取前两个数」，兼容 2025 那批
+    ``p /kPa, t /℃, T /K, ln(p/100), 1/T`` 的五列处理表（只取前两列）。
+    采集软件导出的 excel 第一列是时间（可能是 Excel 时间序列号），
+    只能靠**表头**认列，否则时间戳会被当成压强。
+    """
     import openpyxl
     if isinstance(path_or_bytes, (bytes, bytearray)):
         wb = openpyxl.load_workbook(io.BytesIO(path_or_bytes), data_only=True)
@@ -93,43 +192,306 @@ def parse_workbook(path_or_bytes):
         wb = openpyxl.load_workbook(path_or_bytes, data_only=True)
     rows = []
     for ws in wb.worksheets:
-        for row in ws.iter_rows(values_only=True):
-            vals = [v for v in row if isinstance(v, (int, float))
-                    and not isinstance(v, bool)]
-            if len(vals) >= 2 and all(math.isfinite(float(v)) for v in vals[:2]):
-                rows.append([float(vals[0]), float(vals[1])])
+        rows.extend(_parse_table([list(r) for r in ws.iter_rows(values_only=True)]))
     return rows
 
 
-def split_branches(rows):
-    """把一列 (p, t) 数据切成水/环己烷两支。
+# --------------------------------------------- 把一列读数切成「两支液体」
+def _x_y(rows):
+    """[p, t] → (1/T, ln(p/p⊖))。非法值让残差变 nan，由调用方过滤。"""
+    p = np.array([r[0] for r in rows], float)
+    T = np.array([r[1] for r in rows], float) + 273.15
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return 1.0 / T, np.log(p / P_STD)
 
-    判据：温度比上一行骤降超过 SPLIT_DROP ℃ 的行开始是第二种液体
-    （水在大气压附近约 100 ℃，环己烷约 80 ℃，同压下温差远大于 10 ℃）。
-    每支内部再分出「大气压沸点」（与该支最高压强相差 ≤ ATM_NEAR kPa 的行）。
+
+def _consensus(rows, tol=RESID_TOL):
+    """在这些读数里找**最一致的那条直线**（两点枚举 + 内点计数 + 重拟合）。
+
+    为什么不用「迭代剔最大残差」：那会把真实曲线的两端一点点削掉
+    （实测水的 49.92/80.54 与 70.08/89.46 都被判成离群，最后只剩中间五点，
+    ΔvapH 从 41.3 掉到 7.8 kJ·mol⁻¹）。真实数据的形态是
+    **一条主曲线 + 若干根本不在曲线上的读数**（检漏、未沸腾、通大气），
+    两点枚举找最大共识集才对得上。
+
+    返回 ``(mask, {'m','b','r2','A','B','n'})``；找不到返回 ``(None, None)``。
     """
-    pts = [[float(p), float(t)] for p, t in rows if p and t is not None]
+    n = len(rows)
+    if n < 3:
+        return None, None
+    x, y = _x_y(rows)
+    good = np.isfinite(x) & np.isfinite(y)
+    idx = np.arange(n)
+    if int(good.sum()) < 3:
+        return None, None
+    if n > MAX_ANCHOR:                      # 防 O(n³)：按 x 均匀抽锚点
+        order = idx[good][np.argsort(x[good])]
+        pick = np.unique(np.linspace(0, order.size - 1, MAX_ANCHOR)
+                         .round().astype(int))
+        idx = order[pick]
+    valid = [(i, x[i], y[i]) for i in idx if good[i]]
+    best = None
+    for a in range(len(valid)):
+        ia, xa, ya = valid[a]
+        for b in range(a + 1, len(valid)):
+            ib, xb, yb = valid[b]
+            if xa == xb:
+                continue
+            m = (yb - ya) / (xb - xa)
+            c = ya - m * xa
+            resid = y - (m * x + c)
+            inl = np.abs(resid) <= tol
+            k = int(inl.sum())
+            if k < 3:
+                continue
+            score = (k, -float(np.abs(resid[inl]).sum()))
+            if best is None or score > best[0]:
+                best = (score, inl)
+    if best is None:
+        return None, None
+    mask = best[1] & good
+    if int(mask.sum()) < 3:
+        return None, None
+    ols = _ols(x[mask], y[mask])
+    if ols is None:
+        return None, None
+    return mask, {'m': ols['m'], 'b': ols['b'], 'r2': ols['r2'],
+                  'A': -ols['m'], 'B': ols['b'], 'n': int(mask.sum())}
+
+
+def _tb_of(params, p1=P_NORM):
+    """由直线参数外推常压沸点；分母/斜率不正则返回 None（不硬造一个负温度）。"""
+    if not params:
+        return None
+    d = params['B'] - math.log(p1 / P_STD)
+    if d <= 0 or params['A'] <= 0:
+        return None
+    tb = params['A'] / d
+    return tb if math.isfinite(tb) and tb > 0 else None
+
+
+def _split_atm(points):
+    """一支液体内部：摘出「大气压沸点」平台，其余是变压系列。"""
+    if not points:
+        return [], []
+    p_max = max(p for p, _ in points)
+    atm, series = [], []
+    for r in points:
+        if p_max - r[0] <= ATM_NEAR and r[0] >= ATM_FLOOR:
+            atm.append(r)
+        else:
+            series.append(r)
+    return atm, series
+
+
+def classify_rows(rows, tol=RESID_TOL, lit=None):
+    """把一列 (p, t) 读数分成「水」「环己烷」两支，并逐行说明哪些被排除。
+
+    判定不看「温度有没有骤降」—— 那套在真实数据上完全失效：水的第一段是
+    20 ℃ 左右**未沸腾**的检漏读数，温度是上升的；环己烷末尾通大气那一行
+    温度骤降 22 ℃，会被误判成换液体。改成：
+
+      1. **共识直线**：气液平衡点必然落在同一条 ln(p/p⊖)–1/T 直线上，
+         两点枚举找内点最多的那条（容差 RESID_TOL）；
+      2. **物理校验**：有效蒸气压曲线必须 A = −斜率 > 0（蒸发吸热）、
+         温度展布 ≥ MIN_SPREAD_T K、点数 ≥ 3；
+      3. 从剩下的读数里再找**第二条**曲线（另一支液体）；
+      4. 两条曲线常压沸点相差 < LIQUID_GUESS_TOL K 时视为同一种液体测了两遍，
+         合并成一支（否则 cyclo 那格会装进水的数据）；
+      5. 剩下的读数全进 ``rejected``，带残差与原因，界面逐行显示。
+
+    返回 ``{'water': {atm, series}, 'cyclo': {…}, 'rejected': [...],
+    'notes': [...], 'lines': [...]}``。
+    """
+    pts = []
+    for r in rows or ():
+        try:
+            p, t = float(r[0]), float(r[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if math.isfinite(p) and math.isfinite(t):
+            pts.append([p, t])
     if not pts:
         raise ValueError('没有读到可用的 (p, t) 数据行')
-    cut = len(pts)
-    for i in range(1, len(pts)):
-        if pts[i][1] < pts[i - 1][1] - SPLIT_DROP:
-            cut = i
-            break
-    branches = [pts[:cut], pts[cut:]] if cut < len(pts) else [pts]
 
-    out = []
-    for branch in branches:
-        if not branch:
-            out.append({'atm': [], 'series': []})
+    lit = lit or DEFAULT_LIT
+    out = {'water': {'atm': [], 'series': []},
+           'cyclo': {'atm': [], 'series': []},
+           'rejected': [], 'notes': [], 'lines': []}
+    rest = list(range(len(pts)))
+    groups = []
+    # 一轮最多处理 len(pts) 次：每次要么认下一支液体（groups +1），要么把这簇
+    # 读数从 rest 里摘掉继续找。没有这个上限，「认不出」的分支若忘了推进 rest
+    # 就会死循环（这类修法最容易引入的死循环）。
+    budget = len(pts) + 2
+    while len(groups) < 2 and len(rest) >= 3 and budget > 0:
+        budget -= 1
+        sub = [pts[i] for i in rest]
+        mask, params = _consensus(sub, tol)
+        if mask is None:
+            break
+        keep = [i for i, ok in zip(rest, mask) if ok]
+        removed = set(keep)
+        remaining = [i for i in rest if i not in removed]
+
+        # ---- 物理校验 1：斜率必须为负（ΔvapH > 0）
+        if params['A'] <= 0:
+            out['notes'].append(
+                '有一簇 %d 个读数拟合出的斜率非负（A = %.1f K），不是气液平衡'
+                '数据，已排除。' % (len(keep), params['A']))
+            rest = remaining
             continue
-        p_max = max(p for p, _ in branch)
-        atm = [r for r in branch if p_max - r[0] <= ATM_NEAR]
-        series = [r for r in branch if p_max - r[0] > ATM_NEAR]
-        out.append({'atm': atm, 'series': series})
-    if len(out) == 1:                       # 只有一支时环己烷留空
-        out.append({'atm': [], 'series': []})
-    return out[0], out[1]
+        # ---- 物理校验 2：温度要拉得开
+        spread = max(pts[i][1] for i in keep) - min(pts[i][1] for i in keep)
+        if spread < MIN_SPREAD_T:
+            out['notes'].append(
+                '有 %d 个读数只分布在 %.1f K 的温区内（不足 %.0f K），'
+                '不构成一支蒸气压系列，已排除。'
+                % (len(keep), spread, MIN_SPREAD_T))
+            rest = remaining
+            continue
+        # ---- 物理校验 3：外推的常压沸点必须落在某支液体的文献值附近
+        # 只靠「共线 + 斜率为负 + 温区够宽」挡不住伪直线：环己烷那份数据里
+        # 「抽真空到 47.6 kPa 时的 3 个室温检漏读数 + 末尾通大气 1 行」恰好
+        # 共线（r2 = 0.99999），外推出的常压沸点却是 333 K —— 与水和环己烷
+        # 的 373/354 K 都差 20 K 以上。真实液体的 tb 不会有这么大偏差。
+        tb = _tb_of(params)
+        if tb is None:
+            out['notes'].append(
+                '有一簇 %d 个读数外推不出正的常压沸点，已排除。' % len(keep))
+            rest = remaining
+            continue
+        mid = (float(lit['water']['tb']) + float(lit['cyclo']['tb'])) / 2.0
+        near = 'water' if tb > mid else 'cyclo'
+        gap = abs(tb - float(lit[near]['tb']))
+        if gap > LIQUID_GUESS_TOL:
+            out['notes'].append(
+                '有 %d 个读数虽然共线，但外推的常压沸点为 %.1f K，'
+                '与水和环己烷的 %.1f/%.1f K 都不符，'
+                '判为未达平衡的读数（多半是检漏或通大气前后的点），已排除。'
+                % (len(keep), tb, float(lit['water']['tb']),
+                   float(lit['cyclo']['tb'])))
+            # ⚠ 这里必须是 continue 而不是 break：容差放大时，最大的一簇完全
+            # 可能是一组伪直线（检漏 + 通大气恰好共线）。break 会直接放弃、
+            # 把整份数据判成「找不到直线」，而真正的蒸气压曲线还留在 rest 里。
+            rest = remaining
+            continue
+        groups.append({'idx': keep, 'params': params, 'tb': float(tb),
+                       'spread': float(spread)})
+        rest = remaining
+
+    if not groups:
+        detail = ('；'.join(out['notes'][:2]) if out['notes'] else
+                  '没有任何一簇读数同时满足「斜率为负、温区 ≥ %.0f K、'
+                  '外推沸点接近水和环己烷」' % MIN_SPREAD_T)
+        raise ValueError('这些读数里找不到一条像样的 ln(p/p⊖)–1/T 直线。'
+                         '判据：至少 3 个点、温度跨度 %.0f K 以上、'
+                         '外推的常压沸点接近水（%.1f K）或环己烷（%.1f K）。'
+                         '本次读数的诊断：%s'
+                         % (MIN_SPREAD_T, float(lit['water']['tb']),
+                            float(lit['cyclo']['tb']), detail))
+
+    # ---- 同一种液体测了两遍 → 合并
+    if len(groups) == 2:
+        t1, t2 = groups[0]['tb'], groups[1]['tb']
+        if (t1 is not None and t2 is not None
+                and abs(t1 - t2) < LIQUID_GUESS_TOL):
+            out['notes'].append(
+                '两簇读数的常压沸点只差 %.1f K（< %.0f K），判为同一种液体测了'
+                '两遍，已合并到同一支。' % (abs(t1 - t2), LIQUID_GUESS_TOL))
+            groups = [{'idx': sorted(groups[0]['idx'] + groups[1]['idx']),
+                       'params': groups[0]['params'], 'tb': t1,
+                       'spread': max(groups[0]['spread'], groups[1]['spread'])}]
+
+    # ---- 用常压沸点判这是哪一支（水 373 K / 环己烷 354 K）
+    mid = (float(lit['water']['tb']) + float(lit['cyclo']['tb'])) / 2.0
+    for g in groups:
+        if g['tb'] is not None:
+            key = 'water' if g['tb'] > mid else 'cyclo'
+        else:                              # 外推不出沸点：退用平均温度
+            temps = [pts[i][1] for i in g['idx']]
+            key = 'water' if float(np.mean(temps)) + 273.15 > mid else 'cyclo'
+        if out[key]['atm'] or out[key]['series']:
+            key = 'cyclo' if key == 'water' else 'water'
+        g['key'] = key
+        out['lines'].append({'key': key, 'n': len(g['idx']), 'tb': g['tb'],
+                             'spread': g['spread'],
+                             'r2': g['params']['r2']})
+        atm, series = _split_atm([pts[i] for i in g['idx']])
+        out[key]['atm'] = atm
+        out[key]['series'] = series
+
+    # ---- 没进任何一支的读数：逐行给出偏离量与原因
+    used = set()
+    for g in groups:
+        used.update(g['idx'])
+    x, y = _x_y(pts)
+    for i in range(len(pts)):
+        if i in used:
+            continue
+        best = None
+        for g in groups:
+            prm = g['params']
+            r = abs(float(y[i] - (prm['m'] * x[i] + prm['b'])))
+            if best is None or r < best[0]:
+                best = (r, g['key'])
+        why = '既不在水也不在环己烷的平衡线上'
+        key = None
+        if best is not None:
+            key = best[1]
+            why = ('偏离%s的平衡线 %.2f（ln p 单位，容差 %.2f）'
+                   % ('水' if key == 'water' else '环己烷', best[0], tol))
+        out['rejected'].append({
+            'p': float(pts[i][0]), 't': float(pts[i][1]),
+            # key = 该点最接近哪一支（报告里按液体分别交代取舍时用）
+            'key': key,
+            'resid': (None if best is None else float(best[0])), 'why': why})
+    if out['rejected'] and \
+            len(out['rejected']) / float(len(pts)) > WARN_REJECT_FRAC:
+        out['notes'].append(
+            '共 %d 行里有 %d 行不在平衡线上（%.0f%%），请核对原始读数。'
+            % (len(pts), len(out['rejected']),
+               100.0 * len(out['rejected']) / len(pts)))
+    return out
+
+
+def split_branches(rows, lit=None):
+    """把一列 (p, t) 数据切成水/环己烷两支（只要分支，不看诊断信息）。"""
+    c = classify_rows(rows, lit=lit)
+    return c['water'], c['cyclo']
+
+
+def merge_classified(old, new, target='auto'):
+    """把一次新导入并到已有数据上。
+
+    这个实验天生要导两次文件：`水.csv` 记动态法的水，`环己烷.csv` 记静态法的
+    环己烷。旧实现是**整体替换**，于是第二次导入会把第一支的数据抹掉，
+    界面上另一支突然变成空的，而用户只是按顺序导了两个文件。
+
+    合并口径：
+
+      · ``target='auto'``：新数据里哪一支非空就换成哪一支，另一支保留原样；
+      · ``target='water' / 'cyclo'``：强制只换指定那一支（用户明确指定时）；
+      · 一格都没有的一边不参与合并（别用「空」把已有数据清掉）；
+      · 被排除的读数与判断说明按液体分别累积，重复导入时不会把上一份的
+        诊断记录一起冲掉。
+    """
+    old = normalize_data(old)
+    new = normalize_data(new)
+    out = {'water': {'atm': list(old['water']['atm']),
+                     'series': list(old['water']['series'])},
+           'cyclo': {'atm': list(old['cyclo']['atm']),
+                     'series': list(old['cyclo']['series'])}}
+    replaced = []
+    for key in ('water', 'cyclo'):
+        if target not in ('auto', key):
+            continue
+        src = new[key]
+        if not src['atm'] and not src['series']:
+            continue                       # 新数据里这支是空的，不动旧值
+        out[key] = {'atm': list(src['atm']), 'series': list(src['series'])}
+        replaced.append(key)
+    return out, replaced
 
 
 def normalize_data(data):
@@ -297,8 +659,13 @@ def analyze_liquid(branch, cfg, lit):
     return out
 
 
-def analyze(data, cfg=None):
-    """一次完整计算：两支液体 + 全局提示。"""
+def analyze(data, cfg=None, diag=None):
+    """一次完整计算：两支液体 + 全局提示。
+
+    ``diag`` 是 :func:`classify_rows` 的返回值（可选）。传进来时会把
+    「哪几行没进拟合、为什么」原样带出去，供界面逐行显示——否则用户只看到
+    报告里点数比 csv 少，却不知道少在哪。
+    """
     cfg = cfg or {}
     data = normalize_data(data)
     lit = {
@@ -308,7 +675,10 @@ def analyze(data, cfg=None):
                   'dh': float(cfg.get('lit_dh_cyclo') or DEFAULT_LIT['cyclo']['dh'])},
     }
     result = {'p1': float(cfg.get('p1') or P_NORM), 'trouton': TROUTON,
-              'lit': lit, 'warnings': []}
+              'lit': lit, 'warnings': [],
+              'rejected': list((diag or {}).get('rejected') or []),
+              'import_notes': list((diag or {}).get('notes') or []),
+              'lines': list((diag or {}).get('lines') or [])}
     for spec in LIQUIDS:
         key = spec['key']
         branch = data[key]
@@ -333,7 +703,30 @@ def analyze(data, cfg=None):
         if res['fit'] and res['fit']['r2'] < 0.99:
             result['warnings'].append('%s的拟合 R² = %.4f 偏低，请检查数据'
                                       % (spec['name'], res['fit']['r2']))
+        # 大气压沸点平台散得太开 = 平行测定不稳定，报告里那个平均值不可信
+        atm = res.get('atm') or []
+        if len(atm) > 1:
+            spread = max(t for _, t in atm) - min(t for _, t in atm)
+            if spread > 1.0:
+                result['warnings'].append(
+                    '%s的 %d 次大气压沸点读数相差 %.1f K（> 1 K），'
+                    '平均值可能不代表平衡值，建议核对原始记录'
+                    % (spec['name'], len(atm), spread))
+        if len(res.get('series') or []) and len(res['series']) < 3:
+            result['warnings'].append(
+                '%s的变压系列只有 %d 个点，拟合主要靠大气压沸点撑着，'
+                '结果仅供参考' % (spec['name'], len(res['series'])))
+        # 按液体挂上「被排除的读数」：报告 3.x.1 要写清「原始 N 行里剔了哪几行」
+        res['rejected'] = [r for r in result['rejected'] if r.get('key') == key]
+        res['dropped_total'] = len(res['rejected'])
         result[key] = res
+    for note in result['import_notes']:
+        result['warnings'].append(note)
+    if result['rejected']:
+        result['warnings'].append(
+            '导入的原始数据里有 %d 行没有进入任何一支的拟合（多为检漏、'
+            '未沸腾或通大气前后的读数），明细见「被排除的读数」卡片。'
+            % len(result['rejected']))
     return result
 
 
