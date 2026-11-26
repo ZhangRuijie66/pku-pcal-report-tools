@@ -893,13 +893,13 @@ def _sec_error_sources(rb, analysis, fit, cfg, lit, sub_label):
                     % (Qs0, float(lit), float(lit), pct(dev)))
         ratio = dev / rel_rand if rel_rand else 0.0
         _ratio = ('偏差是随机不确定度的约 %s 倍。' % k(ratio, 0))
-        _tail = ('——重复测量能把 σ 压小，却压不掉这 %s%% 的偏差。'
+        _tail = ('压小，却压不掉这 %s%% 的偏差。'
                  '因此改进方向不应停在“多测几次”，必须去纠正系统项。'
                  % pct(dev))
         rb.para([
             _ratio,
             ('t', '这说明误差的主体不是随机误差，而是系统误差', BOLD),
-            _tail,
+            '——重复测量能把 ', ('t', 'σ', ITALIC), _tail,
         ])
     else:
         rb.para([
@@ -972,8 +972,11 @@ def _sec_error_sources(rb, analysis, fit, cfg, lit, sub_label):
              '降低 A 类的温差项'],
             ['随机误差已较小',
              '保持现有重复次数',
-             'σ 仅 %.1f%%，再加次数收益低'
-             % (s_rand / abs(Qs0) * 100 if Qs0 else 0.0)],
+             # 表格单元格支持片段列表：[('文本', opts), …]。
+             # σ 是量符号必须斜体，写成纯字符串会整段正体（体检查出）。
+             [('σ', {'italic': True}),
+              (' 仅 %.1f%%，再加次数收益低'
+               % (s_rand / abs(Qs0) * 100 if Qs0 else 0.0), {})]],
         ],
         font_size=10.5, widths_cm=[3.5, 6.6, 5.1],
         keep_together=True)

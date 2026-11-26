@@ -376,15 +376,19 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
                  ('t', 'T_{l}', ITALIC), ('t', ' 和 ', {}), ('t', 'T_{r}', ITALIC),
                  ('t', '，故体系的温升值为：', {})])
         rb.equation(r'\Delta T=T_{r}-T_{l}')
-        rb.para([('t', '雷诺校正的基本流程为：分别对过程前（记为 ', {}), ('t', 'A', ITALIC), ('t', '）和过程后（记为 ', {}),
-                 ('t', 'B', ITALIC), ('）的两段平台区作最小二乘线性拟合并将直线外延；'
+        # ⚠ A / B 是**平台代号**（「过程前记为 A」「过程后记为 B」），
+        # 与后面的「B样条」（方法名）同属代号/专名，规范要求**正体**。
+        # 这里原来给 A、B 加了 ITALIC，导致同一段的「记为 B」斜体、
+        # 「以B样条」正体，前后不一致（2026-11-26 体检抓到）。
+        rb.para(['雷诺校正的基本流程为：分别对过程前（记为 A）'
+                 '和过程后（记为 B）的两段平台区作最小二乘线性拟合并将直线外延；'
                  '以B样条平滑曲线拟合介于两平台之间的实测数据；'
                  '作一垂线，若该垂线与平滑曲线和两条拟合直线相交的区域面积相等，'
                  '则该垂线与两条拟合直线的两个交点即为过程前后的温度。'
                        '第%d轮（%s）的雷诺校正图如图%d所示'
                        '（拟合区间取数据点下标 %d~%d 与 %d~%d）。'
                        % (it['index'], it['name'], fig_no, it['points'][0],
-                          it['points'][1], it['points'][2], it['points'][3]))])
+                          it['points'][1], it['points'][2], it['points'][3])])
         rb.figure(it['plot_png'],
                   caption='图%d  第%d轮（%s）的雷诺校正图' % (fig_no, it['index'], it['name']),
                   width_cm=13.5)

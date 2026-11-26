@@ -522,7 +522,7 @@ def _sec_boiling(rb, analysis, rows, azeo, png_phase, fig_no, tbl_no):
                  ' 的放大。文献^{[4]}给出环己烷-乙醇体系的最低恒沸点为 '
                  '%s K，恒沸组成以乙醇摩尔分数 0.4540 计，'
                  '换算成乙醇质量分数为 %s' % (k(lit_T, 2), k(lit_w, 4)),
-                 '（%s 为 %s）。本实验测得恒沸点 %s K 与文献值相差 %s K；'
+                 '（%s为 %s）。本实验测得恒沸点 %s K 与文献值相差 %s K；'
                  '组成 (%s) 较文献 %s 相差 %s%%，'
                  '明显超出不确定度范围，属于系统偏差，其来源在 4.2 节讨论。'
                  % (lit_name, k(lit_x, 4), k(azeo['T_K'], 2),
@@ -557,7 +557,7 @@ def _sec_results(rb, analysis):
             else '乙醇质量分数'
         segs += [
             '体系的最低恒沸点为 ', ('t', 'T', ITALIC), ' = %s K，' % k(azeo['T_K'], 2),
-            '恒沸混合物的 %s 为 (%s)。' % (x_name, pm(azeo['w'], azeo['sigma_w'])),
+            '恒沸混合物的%s为 (%s)。' % (x_name, pm(azeo['w'], azeo['sigma_w'])),
         ]
         if analysis.get('deviation') is not None:
             segs += [
@@ -660,7 +660,7 @@ def _sec_conclusion(rb, analysis):
         x_name = '质量比 m(乙醇)/m(环己烷)' if analysis['mode'] == 'ratio' \
             else '乙醇质量分数'
         segs += [
-            '测得 %s kPa 下体系的最低恒沸点为 %s K，恒沸混合物的 %s 为 (%s)，'
+            '测得 %s kPa 下体系的最低恒沸点为 %s K，恒沸混合物的%s为 (%s)，'
             '并与文献值作了比较、分析了偏差来源。'
             % (k(max(r['p_kpa'] or 0 for r in analysis['rows']), 1),
                k(azeo['T_K'], 2), x_name, pm(azeo['w'], azeo['sigma_w'])),

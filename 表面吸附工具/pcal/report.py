@@ -479,7 +479,7 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
             tail = ' 如表1所示。零点只测量一次，零点差 '
             tail2 = ' 的不确定度只来自仪器读数误差。'
         elif same:
-            tail = ' 如表1所示。由于 %s次读数相同，零点差 ' % cn_num(n)
+            tail = ' 如表1所示。由于%s次读数相同，零点差 ' % cn_num(n)
             tail2 = ' 的不确定度只来自仪器读数误差。'
         else:
             tail = ' 如表1所示。零点差 '
@@ -538,7 +538,7 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
     ])
     _bubble_raw_table(rb, m)
 
-    rb.heading('3.1.2 表面张力 γ 的计算', 3)
+    rb.heading(['3.1.2 表面张力 ', ('t', 'γ', ITALIC), ' 的计算'], 3)
     rb.para([
         '最大气泡压力法不需要知道毛细管半径：在同一支毛细管上分别测纯水和待测液的'
         '最大压力差，由 ', ('t', 'Δp = 2γ/r', ITALIC),
@@ -575,8 +575,9 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
         if m['qc_rows']:
             _qc_table(rb, m, axis, 5)
     else:
-        rb.para('高浓度区可用于拟合的点少于 2 个，本报告未能完成 Γ∞ 的计算；'
-                '请在界面中重新选择线性区。')
+        rb.para(['高浓度区可用于拟合的点少于 2 个，本报告未能完成 ',
+                ('t', 'Γ^{∞}', ITALIC), ' 的计算；'
+                '请在界面中重新选择线性区。'])
 
 
 # ---------------------------------------------------------------- 3.2 吊片法
@@ -592,7 +593,7 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
         parts.append('位于选定线性区之外的 %s mol·dm^{-3}'
                      % '、'.join(_c(c) for c in outside))
     if parts:
-        excl_txt = ('表中 ' + '；'.join(parts) + ' 的点未参与线性拟合，'
+        excl_txt = ('表中' + '；'.join(parts) + ' 的点未参与线性拟合，'
                     '在图4中以空心圆标出。')
     else:
         excl_txt = '全部浓度点均参与线性拟合。'
@@ -623,7 +624,7 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
             side = '偏低' if dev < 0 else '偏高'
             judge = ('二者相差 %s mN·m^{-1}（%s%%），在 1%% 以内，'
                      '说明白金板的润湿状态与仪器零点基本正常；'
-                     '但仪器读数整体%s，使吊片法算得的 γ 同比例%s。'
+                     '但仪器读数整体%s，使吊片法算得的表面张力同比例%s。'
                      % (signed, pct, side, side))
         rb.para([
             '纯水的吊片法读数为 ', pm(m['water']['mean'], m['water']['sigma']),
@@ -652,8 +653,9 @@ def _sec_plate(rb, m, axis, png_curve, png_fit):
         if m['qc_rows']:
             _qc_table(rb, m, axis, 7)
     else:
-        rb.para('高浓度区可用于拟合的点少于 2 个，本报告未能完成 Γ∞ 的计算；'
-                '请在界面中重新选择线性区。')
+        rb.para(['高浓度区可用于拟合的点少于 2 个，本报告未能完成 ',
+                ('t', 'Γ^{∞}', ITALIC), ' 的计算；'
+                '请在界面中重新选择线性区。'])
 
 
 # ---------------------------------------------------------------- 3.3 比较
@@ -762,7 +764,8 @@ def _sec_discussion(rb, analysis):
         '严格比较两种方法时应控制在同一温度。'
         '此外，吊片法要求白金板与液体完全润湿（接触角为零），'
         '若白金板表面被有机物污染或未完全浸入液面，读数会明显偏低，'
-        '从而改变 γ–', ('t', _axis_label(b['axis']), ITALIC), ' 曲线的斜率。',
+        '从而改变 ', ('t', 'γ', ITALIC), ('t', '–', {}),
+        ('t', _axis_label(b['axis']), ITALIC), ' 曲线的斜率。',
     ])
     rb.heading('4.2.2 误差来源', 3)
     rb.para([

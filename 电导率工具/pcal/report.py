@@ -321,7 +321,8 @@ def _sec_appendix(rb, an, pngs):
     nacl = ((group.get('species') or {}).get('NaCl') or {}).get('lam_inf') or {}
     nac = ((group.get('species') or {}).get('NaAc') or {}).get('lam_inf') or {}
     hcl = ((group.get('species') or {}).get('HCl') or {}).get('lam_inf') or {}
-    rb.para(['图7 显示各物种 Λm∞ 在组内的散布。三个强电解质的相对标准偏差'
+    rb.para(['图7 显示各物种 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                ' 在组内的散布。三个强电解质的相对标准偏差'
              '依次为 NaCl %.2f%%、NaAc %.2f%%、HCl %.2f%%，HAc 为 %.2f%%。'
              'NaAc 的一致性最好，HCl 与 HAc 最差；这与 H⁺ 迁移数大、'
              '对浓度配制与温度波动更敏感相符。各组的组内均值都略低于'
@@ -960,28 +961,35 @@ def _sec_shared(rb, an):
             key=lambda k: group['species'][k]['lam_inf']['rsd'],
             default=None)
         if best_key and worst_key:
-            rb.para(['组内一致性差别明显：%s 的 RSD 最小（%.2f%%），%s 最大'
+            # ⚠ 这段有 6 个 % 参数，`%` 只能作用于紧邻的一个字符串字面量，
+            # 片段列表里夹着 ('t', …) 会断掉格式化（实测踩过两次）。
+            # 先把带参数的部分 format 成字符串，再拼片段列表。
+            _seg1 = ('组内一致性差别明显：%s 的 RSD 最小（%.2f%%），%s 最大'
                      '（%.2f%%）。%s 的一致性最好，与它的两个离子都是'
                      '“普通”离子、迁移数接近、水解倾向小相符；%s 的离散'
                      '更大，主要来自 H⁺ 的迁移数极大（约 0.83），'
                      '因而对浓度配制误差与温度波动都更敏感——'
-                     '同样 1%% 的浓度偏差，在 Λm 上的反映会被放大。'
+                     '同样 1%% 的浓度偏差，在 '
                      % (conduct.SPECIES_LABEL[best_key],
                         group['species'][best_key]['lam_inf']['rsd'],
                         conduct.SPECIES_LABEL[worst_key],
                         group['species'][worst_key]['lam_inf']['rsd'],
                         conduct.SPECIES_LABEL[best_key],
-                        conduct.SPECIES_LABEL[worst_key])])
+                        conduct.SPECIES_LABEL[worst_key]))
+            rb.para([_seg1, ('t', 'Λ_{m}', ITALIC),
+                     ' 上的反映会被放大。'])
 
     # ---- 4.2.2 Grubbs
     rb.heading('4.2.2 异常值的统计甄别', 3)
-    rb.para(['对每一列用 Grubbs 检验（'
-             + ('α = 0.05' if True else '') +
-             '）判断是否存在离群值。检验统计量为 ',
+    rb.para(['对每一列用 Grubbs 检验（',
+             ('t', 'α', ITALIC), ' = 0.05）判断是否存在离群值。'
+             '检验统计量为 ',
              ('t', 'G', ITALIC), ' = max|', ('t', 'x_{i} − x̄', ITALIC),
              '|/', ('t', 's', ITALIC),
-             '，临界值由 t 分布换算。n = %d、α = 0.05 时临界值 '
-             % n, ('t', 'G_{crit}', ITALIC), ' = ',
+             '，临界值由 ',
+             ('t', 't', ITALIC), ' 分布换算。', ('t', 'n', ITALIC),
+             ' = %d 时临界值 ' % n,
+             ('t', 'G_{crit}', ITALIC), ' = ',
              ('t', '%.3f' % (group['species'].get(
                  conduct.STRONG_SPECIES[0], {}).get('grubbs', {})
                  .get('g_crit', float('nan'))), {}), '。'])
@@ -1043,12 +1051,14 @@ def _sec_shared(rb, an):
                if ((group.get('tests') or {}).get(k) or {})
                .get('t', {}).get('significant')]
         if sig:
-            rb.para(['在 α = 0.05 水平下，%s 与组内其余同学存在显著差异。'
+            rb.para(['在 ', ('t', 'α', ITALIC),
+                       ' = 0.05 水平下，%s 与组内其余同学存在显著差异。'
                      '结合 4.1 节的分析，这一差异更可能来自该物种对'
                      '浓度配制与温度波动更敏感，而非计算口径不同。'
                      % '、'.join(sig)])
         else:
-            rb.para(['在 α = 0.05 水平下，本人各物种的结果与组内其余同学的'
+            rb.para(['在 ', ('t', 'α', ITALIC),
+                       ' = 0.05 水平下，本人各物种的结果与组内其余同学的'
                      '平均值均无显著差异。这说明本人的测量结果在组内是'
                      '有代表性的，结果之间的差别属于正常的实验分散，'
                      '不是系统性偏差。'])
@@ -1056,7 +1066,8 @@ def _sec_shared(rb, an):
         rb.heading('4.2.4 实验精度的 F 检验', 3)
         rb.para(['t 检验比较的是“结果的高低”，属于准确度；'
                  'F 检验比较的是“拟合残差的大小”，属于精度的重复性。'
-                 '两者是不同的问题：一个人可能每次测得的 Λm∞ 都很接近组内'
+                 '两者是不同的问题：一个人可能每次测得的 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                  ' 都很接近组内'
                  '均值（t 检验不显著），但每条拟合直线的残差都偏大'
                  '（F 检验显著）。F 统计量为本人拟合残差方差与组内其余'
                  '同学合并残差方差之比：'])
