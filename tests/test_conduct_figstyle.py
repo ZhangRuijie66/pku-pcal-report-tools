@@ -180,6 +180,184 @@ class AppendixFigureTests(unittest.TestCase):
             self._render(fn(shared))
 
 
+# ============================================================ 标签不被裁
+def _visible_ticks(ax):
+    """只取真正会画出来的刻度。
+
+    ``get_yticklabels()`` 会连视图范围外的刻度一起返回（matplotlib 保留
+    但不绘制），直接量会把「6 超出 xlim」这种误报成裁切（实测踩到）。
+    """
+    out = []
+    y0, y1 = ax.get_ylim()
+    for v, t in zip(ax.get_yticks(), ax.get_yticklabels()):
+        if y0 - 1e-12 <= v <= y1 + 1e-12 and t.get_text():
+            out.append(('ytick %s' % t.get_text(), t))
+    x0, x1 = ax.get_xlim()
+    for v, t in zip(ax.get_xticks(), ax.get_xticklabels()):
+        if x0 - 1e-12 <= v <= x1 + 1e-12 and t.get_text():
+            out.append(('xtick %s' % t.get_text(), t))
+    return out
+
+
+class AxisLabelClippingTests(unittest.TestCase):
+    """正文图的轴标签必须完整落在画布内（2026-11-26 用户同学实测被裁）。
+
+    ## 这个 bug 长什么样
+
+    图3~5（Λm–√c 拟合）的纵轴标签 ``Λₘ / S·m²·mol⁻¹`` 左边少了一截，
+    用户看到的是「纵坐标不完整」。
+
+    ## 根因
+
+    matplotlib 默认左边距 ``0.125 * figsize`` = 0.57 in ≈ 41 pt，而这个
+    9 pt 的纵轴标签要占 ~44 pt；``report.py`` 又是直接
+    ``fig.savefig(p, dpi=DPI)``（**没有** ``bbox_inches='tight'``），
+    于是标签左半截落在画布外，存出来的 PNG 就是断的。
+    实测修复前该 ylabel 的 ``x0 = -11.8 px``（100 dpi）。
+
+    附录图 7~9 早先调过 ``tight_layout()`` 所以没事，正文图 2~6 一直没调——
+    这就是「只有这张图出问题」的原因。
+
+    ## 为什么不能改成 bbox_inches='tight'
+
+    那会改变输出图片的实际尺寸，画布宽就不再等于 Word 里的插入宽
+    （``FIG_W_CM = 11.5``），``fontsize=9`` 也就不再是印刷真字号，
+    v1.4.1 立的那套规范整体失效。只能在**固定画布内部**重排边距。
+    """
+
+    def _an(self):
+        """造一份够画图2~图6 的最小分析结果（数值与真实截图同量级）。"""
+        import numpy as np
+
+        xs = np.array([1.42, 2.24, 2.84, 3.46, 4.98])
+        ys = np.array([0.04167, 0.04156, 0.04095, 0.04122, 0.04046])
+        fit = {'x': list(xs), 'y': list(ys), 'k': -0.00032, 'b': 0.04222}
+
+        class _An:
+            pass
+
+        an = _An()
+        an.fits = {'NaCl': dict(fit), 'HCl': dict(fit), 'NaAc': dict(fit)}
+        an.kfit = {'x': [24.3, 22.1, 20.0, 18.4, 17.2],
+                   'y': [0.01412, 0.01548, 0.01704, 0.01843, 0.01968],
+                   'k': -0.0007, 'b': 0.0311}
+        an.tables = {
+            'NaCl': [{'c': 50.0, 'kappa_corr': 0.0012},
+                     {'c': 100.0, 'kappa_corr': 0.0024}],
+            'HCl': [{'c': 50.0, 'kappa_corr': 0.0041},
+                    {'c': 100.0, 'kappa_corr': 0.0082}],
+            'HAc': [{'c': 50.0, 'kappa_corr': 0.00021}],
+        }
+        return an
+
+    def _assert_inside(self, fig, name):
+        """所有会画出来的文本都必须落在画布矩形内。"""
+        import matplotlib.pyplot as plt
+        fig.canvas.draw()
+        r = fig.canvas.get_renderer()
+        W, H = fig.bbox.width, fig.bbox.height
+        ax = fig.axes[0]
+        targets = [('ylabel', ax.yaxis.label), ('xlabel', ax.xaxis.label)]
+        targets += _visible_ticks(ax)
+        problems = []
+        for label, artist in targets:
+            if not artist.get_text():
+                continue
+            bb = artist.get_window_extent(r)
+            if bb.x0 < -0.5:
+                problems.append('%s 左边超出 %.1f px' % (label, -bb.x0))
+            if bb.x1 > W + 0.5:
+                problems.append('%s 右边超出 %.1f px' % (label, bb.x1 - W))
+            if bb.y0 < -0.5:
+                problems.append('%s 下边超出 %.1f px' % (label, -bb.y0))
+            if bb.y1 > H + 0.5:
+                problems.append('%s 上边超出 %.1f px' % (label, bb.y1 - H))
+        plt.close(fig)
+        self.assertEqual(problems, [],
+                         '%s 的轴标签被画布裁掉了（这就是用户看到的'
+                         '「纵坐标不完整」）：%r' % (name, problems))
+
+    def test_body_figures_have_no_clipped_labels(self):
+        """图2~图6 的每一个分支都不许裁标签。"""
+        p = _plotting()
+        an = self._an()
+        self._assert_inside(p.make_kappa_c_figure(an), '图2 κ–c')
+        for key in ('NaCl', 'HCl', 'NaAc'):
+            self._assert_inside(p.make_kohlrausch_figure(an, key),
+                                '图3~5 %s' % key)
+        self._assert_inside(p.make_kfit_figure(an), '图6 HAc 拟合')
+
+    def test_empty_branches_have_no_clipped_labels(self):
+        """「无数据」分支同样不能裁——标签是画在同一张画布上的。"""
+        p = _plotting()
+        an = self._an()
+        an.fits = {}
+        an.kfit = None
+        self._assert_inside(p.make_kohlrausch_figure(an, 'HCl'), '图3~5 无数据')
+        self._assert_inside(p.make_kfit_figure(an), '图6 无数据')
+
+    def test_layout_keeps_canvas_size(self):
+        """修边距不能改变画布尺寸，否则缩放比不再等于 1。"""
+        p = _plotting()
+        ps = _ps()
+        fig = p.make_kohlrausch_figure(self._an(), 'HCl')
+        w, h = fig.get_size_inches()
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+        self.assertAlmostEqual(w, ps.FIG_W, places=3,
+                               msg='画布宽变了，Word 里的缩放比就不再是 1')
+        self.assertAlmostEqual(h, ps.FIG_H, places=3)
+
+    def test_every_figure_lays_out_inside_canvas(self):
+        """源码层面确认：每个 make_* 都做过画布内布局，别再有漏网的。
+
+        ⚠ 这条挡的是「新加一张图忘了调边距」——附录图 7~9 当初调了
+        ``tight_layout(rect=...)`` 所以没坏，正文图 2~6 一直没调，
+        于是只有它出问题。
+
+        判据是**有没有做过布局**，不是「必须调 _layout()」：附录图因为
+        三 panel 并排、纵轴标签很长，需要手工指定 ``rect`` 留左边距，
+        走的是 ``tight_layout(rect=...)`` 这条等价路径。
+
+        ⚠ 只认 ``make_*`` 函数体：``_layout()`` 辅助函数自己结尾就是
+        ``return fig``，``SubFigure`` 之类也各有返回，按行正则全文扫会误报。
+        """
+        import ast
+        src = (REPO_ROOT / TOOL / 'pcal' / 'plotting.py').read_text(encoding='utf-8')
+        tree = ast.parse(src)
+        missing = []
+        checked = []
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if not node.name.startswith('make_'):
+                continue
+            checked.append(node.name)
+            names = set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    fn = sub.func
+                    if isinstance(fn, ast.Name):
+                        names.add(fn.id)
+                    elif isinstance(fn, ast.Attribute):
+                        names.add(fn.attr)
+            has_layout = bool(names & {'_layout', 'tight_layout',
+                                       'constrained_layout'})
+            if not has_layout:
+                missing.append((node.name, node.lineno))
+        self.assertTrue(checked, '没找到 make_* 函数，检查本测试的前提')
+        self.assertEqual(missing, [],
+                         '这些函数没做画布内布局，轴标签会被画布裁掉：%r'
+                         % (missing,))
+
+    def test_savefig_does_not_use_bbox_tight(self):
+        """不许用 bbox_inches='tight' 绕过问题：它会让画布宽 ≠ 插入宽。"""
+        src = (REPO_ROOT / TOOL / 'pcal' / 'report.py').read_text(encoding='utf-8')
+        self.assertNotIn("bbox_inches='tight'", src,
+                         "report.py 用了 bbox_inches='tight'：图的实际尺寸会变，"
+                         '画布宽就不再等于 Word 插入宽，fontsize 不再是印刷真字号')
+
+
 # ============================================================ 正文/附录
 class AppendixSectionTests(unittest.TestCase):
     """附录文字与图号约定。"""

@@ -68,6 +68,24 @@ def msz(factor):
     return ps.MS_DATA * factor
 
 
+def _layout(fig):
+    """在实际图幅内收紧边距，保证轴标签不越出画布。
+
+    ⚠ 为什么必须有这一步（2026-11-26 用户同学的图纵轴标签被裁掉）：
+    matplotlib 默认左边距是 ``0.125 * figsize`` = 0.57 in ≈ 41 pt，
+    而本模块的纵轴标签 ``Λₘ / S·m²·mol⁻¹`` 在 9 pt 下要占 ~44 pt，
+    于是标签左半截直接落在画布外，**保存出来就少了一截**。
+    实测该图 ylabel 的 ``x0 = -11.8 px``（100 dpi）。
+
+    ⚠ 但**不能**用 ``savefig(bbox_inches='tight')`` 解决：
+    那会改变输出图片的实际尺寸，画布宽就不再等于 Word 里的插入宽，
+    ``fontsize=9`` 也就不再是印刷真字号（v1.4.1 定的那套规范会整体失效）。
+    正确做法是在**固定画布**内部重排边距，尺寸不变、标签收进来。
+    """
+    fig.tight_layout()
+    return fig
+
+
 # ---------------------------------------------------------------- 图2
 def make_kappa_c_figure(an):
     """校正电导率–c 关系曲线（NaCl / HCl / HAc）。"""
@@ -95,7 +113,7 @@ def make_kappa_c_figure(an):
         ax.set_ylim(*_pad_lim(min(0.0, min(ys)), max(ys)))
     ax.legend(frameon=False, loc='upper left')
     _style_axes(ax)
-    return fig
+    return _layout(fig)
 
 
 # ---------------------------------------------------------------- 图3~5
@@ -106,7 +124,7 @@ def make_kohlrausch_figure(an, key):
         fig, ax = plt.subplots(figsize=(ps.FIG_W, ps.FIG_H))
         ax.text(0.5, 0.5, '无数据', ha='center', va='center',
                 transform=ax.transAxes)
-        return fig
+        return _layout(fig)
     x = np.array(fit['x'], float)
     y = np.array(fit['y'], float)
     fig, ax = plt.subplots(figsize=(ps.FIG_W, ps.FIG_H))
@@ -124,7 +142,7 @@ def make_kohlrausch_figure(an, key):
     hi = max(y.max(), y_line_lo, y_line_hi)
     ax.set_ylim(*_pad_lim(lo, hi, 0.12))
     _style_axes(ax)
-    return fig
+    return _layout(fig)
 
 
 # ---------------------------------------------------------------- 图6
@@ -135,7 +153,7 @@ def make_kfit_figure(an):
         fig, ax = plt.subplots(figsize=(ps.FIG_W, ps.FIG_H))
         ax.text(0.5, 0.5, '无数据', ha='center', va='center',
                 transform=ax.transAxes)
-        return fig
+        return _layout(fig)
     x = np.array(fit['x'], float)
     y = np.array(fit['y'], float)
     fig, ax = plt.subplots(figsize=(ps.FIG_W, ps.FIG_H))
@@ -151,7 +169,7 @@ def make_kfit_figure(an):
           float(fit['k'] * xhi + fit['b'])]
     ax.set_ylim(*_pad_lim(min(ys), max(ys), 0.15))
     _style_axes(ax)
-    return fig
+    return _layout(fig)
 
 
 # ================================================================ 附录图
