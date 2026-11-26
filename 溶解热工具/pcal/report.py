@@ -238,10 +238,11 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.heading('4 讨论与结论')
     _sec_model(rb, analysis, fit, base)
     _sec_heat_exchange(rb, analysis, ex)
-    _sec_questions(rb, analysis, ex, fit)
+    sigma_dQ = _sec_questions(rb, analysis, ex, fit)
     _sec_error(rb, analysis, fit, cfg, lit, sub_label)
     _sec_error_sources(rb, analysis, fit, cfg, lit, sub_label)
-    _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label)
+    _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label,
+                 sigma_dQ=sigma_dQ)
 
     # ================================================================ 参考文献
     rb.heading('参考文献')
@@ -690,6 +691,10 @@ def _sec_questions(rb, analysis, ex, fit):
         '热交换量就能相互抵消，这也是讲义强调“搅拌应快速、稳定、均匀”'
         '以及“加热功率调到 10 W 左右”的原因。',
     ])
+    # 把本节算出的 ΔQ 合成不确定度（J）返回给 4.6 小结引用，
+    # 免得小结里写死「约 0.1 kJ」——那个数字是本节算出来的，
+    # 换数据就变（实测当前 0.1033 kJ，恰好约 0.1）。
+    return sigma_dQ
 
 
 # ================================================================ 4.4 结果误差分析
@@ -994,7 +999,8 @@ def _sec_error_sources(rb, analysis, fit, cfg, lit, sub_label):
 
 
 # ================================================================ 4.6 小结
-def _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label):
+def _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label,
+                 sigma_dQ=None):
     rounds = analysis.rounds
     Qs0, a = fit['Qs0'], fit['a']
     i200 = list(MARK_N0).index(200)
@@ -1022,8 +1028,18 @@ def _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label):
         ('t', 'q_{d}', ITALIC), ('t', ' = %.3f J·mol⁻¹，' % diff['Qs_n0'][i200]),
         ('t', 'q_{s}', ITALIC), ('t', ' = %.2f kJ·mol⁻¹。' % diff['Qs_n2'][i200]),
     ])
-    rb.para('最后，对经验公式的合理性进行了简单分析，由式(12) 估算了溶解热的平均'
-            '偏差（约 0.1 kJ），并按要求把误差来源逐层分解：先穷举（Level 0），'
+    # ⚠ 「约 0.1 kJ」原来是字面常量。这个值就是 4.3.1 按式(12) 算出的
+    # ΔQ 合成不确定度（当前 0.1033 kJ），换数据就会变 —— 必须引实际值。
+    # sigma_dQ 现在由 _sec_questions 返回；拿不到时退回不含数字的表述，
+    # 不能凭印象写一个数。
+    if sigma_dQ is not None and np.isfinite(sigma_dQ):
+        _dev_txt = ('由式(12) 估算了溶解热的平均偏差（%s kJ）'
+                    % k(sigma_dQ / 1000, 2))
+    else:
+        _dev_txt = '由式(12) 估算了溶解热的平均偏差'
+    rb.para('最后，对经验公式的合理性进行了简单分析，'
+            + _dev_txt +
+            '，并按要求把误差来源逐层分解：先穷举（Level 0），'
             '再用不确定度传播给出各项的定量占比（Level 1、2），'
             '最后据此提出改进方案（Level 3）。'
             '分解结果显示，随机部分只占结果不确定度的极小份额，'

@@ -530,18 +530,49 @@ def _sec_error(rb, m, p1, idx):
              '则测定结果的相对误差为：'], keep_next=True)
     rb.equation(r'E_{r}(T_{b})=\frac{%s-%s}{%s}\times100\%%=%s\%%'
                 % (tb_p, lit_tb, lit_tb, signed_pct(m['rel_tb_p'])[:-1]))
-    rb.para('说明测定结果与真值符合较好。不确定度的计算过程表明其主要来自'
-            '拟合直线斜率和截距的误差，与实验仪器和操作的关系较小。')
-    if m['rel_tb_p'] > 0.2:
+    # ⚠ 这里原来无条件写「说明测定结果与真值符合较好」，只有
+    # `if m['rel_tb_p'] > 0.2` 才补一段说明 —— **只判正值**。
+    # 实测环己烷 rel = −0.207%（353.166 vs 353.9），绝对值已超 0.2%，
+    # 但条件为假 → 整段误差说明被跳过，报告一边印出 −0.21% 的误差
+    # 一边说「符合较好」，且对它没有任何解释（而水的 +0.28% 有一整段）。
+    #
+    # 改成：先按 |rel| 分档给判断，再按**实际方向**给说明。
+    _rel = float(m['rel_tb_p'])
+    _abs_rel = abs(_rel)
+    _dir = '正' if _rel > 0 else '负'
+    #: 认为「符合较好」的阈值（%）——与下面分支用的同一个值
+    _TOL = 0.2
+
+    if _abs_rel <= _TOL:
+        _verdict = ('说明测定结果与真值符合较好'
+                    '（相对误差 %s 在 %.1f%% 以内）。'
+                    % (signed_pct(_rel), _TOL))
+    else:
+        _verdict = ('测定结果与真值的相对误差为 %s，偏%s，'
+                    '超出 %.1f%% 的容差，需要说明来源。'
+                    % (signed_pct(_rel), _dir, _TOL))
+    rb.para(_verdict + '不确定度的计算过程表明其主要来自拟合直线斜率和截距'
+                       '的误差，与实验仪器和操作的关系较小。')
+
+    if _abs_rel > _TOL:
         atm_txt = ''
         if m.get('atm_avg'):
             atm_txt = ('大气压下的沸点（完全由实验直接测得）为 %s K，同样存在'
-                       '正偏差，说明该偏差来自实验本身而不是计算过程。'
-                       % k(m['atm_avg']['t'] + 273.15, 2))
-        rb.para('对于正的相对误差，' + atm_txt +
-                '实验中液体沸腾后温度示数难以立刻稳定（过热效应），但它影响的'
-                '是波动幅度而不是单向偏差；更可能的原因是温度测量系统存在固有'
-                '正偏差，即探头或读数系统未校准导致的系统误差。')
+                       '%s偏差，说明该偏差来自实验本身而不是计算过程。'
+                       % (k(m['atm_avg']['t'] + 273.15, 2), _dir))
+        # 温度偏差方向的物理解释：正偏差来自探头/读数未校准；
+        # 负偏差通常来自沸腾滞后或探头响应不足（示数追不上真实沸点）。
+        if _rel > 0:
+            _mech = ('实验中液体沸腾后温度示数难以立刻稳定（过热效应），'
+                     '但它影响的是波动幅度而不是单向偏差；'
+                     '更可能的原因是温度测量系统存在固有正偏差，'
+                     '即探头或读数系统未校准导致的系统误差。')
+        else:
+            _mech = ('更可能是温度示数偏低：沸腾刚建立时探头尚未跟上体系'
+                     '温度（响应滞后），或读数时液体已停止剧烈沸腾、'
+                     '局部温度回落；也可能是探头校准偏低。'
+                     '这类偏差方向与正偏差相反，同样属于系统误差。')
+        rb.para('对于%s的相对误差，' % _dir + atm_txt + _mech)
         if m['key'] == 'water' and m.get('shift'):
             f2 = m['shift']['fit']
             dh2_p = val(f2['dh_kJ'], f2['sigma_dh_kJ'])
@@ -553,7 +584,7 @@ def _sec_error(rb, m, p1, idx):
                      % (pm(f['dh_kJ'], f['sigma_dh_kJ']),
                         pm(f2['dh_kJ'], f2['sigma_dh_kJ']),
                         '，与文献值更加接近' if better else ''),
-                     '说明蒸发焓的正误差主要来自温度的正偏差。'])
+                     '说明蒸发焓%s误差主要来自温度的%s偏差。' % (_dir, _dir)])
 
     rb.heading('4.%d.2 摩尔蒸发焓' % idx, 3)
     if m['key'] == 'water':
@@ -612,10 +643,65 @@ def _sec_summary(rb, liquids, tbl_no):
             '(%s)' % pm(f['ds'], f['sigma_ds']),
             signed_pct(m['rel_dh_p']),
         ])
-    rb.caption('表%d  水和环己烷的热力学量汇总' % tbl_no)
+    rb.caption('表%d  %s的热力学量汇总'
+               % (tbl_no, '、'.join(m['name'] for m in liquids)))
     rb.table(['液体', 'T_{b} / K', 'Δ_{vap}H_{m} / (kJ·mol^{-1})',
               'Δ_{vap}S_{m} / (J·mol^{-1}·K^{-1})', '蒸发焓相对偏差'],
              rows, widths_cm=[1.6, 3.0, 3.7, 4.2, 2.9], keep_together=True)
-    rb.para('其中环己烷的各热力学量与文献值符合较好；水的常压沸点与蒸发焓存在'
-            '系统性正偏差，主要来自温度测量系统的固有误差。环己烷的摩尔蒸发熵'
-            '与楚顿规则符合较好，水则因氢键网络而显著偏高。')
+
+    # ⚠ 这里原来是一整段**纯字符串**：
+    #     「其中环己烷的各热力学量与文献值符合较好；水的常压沸点与蒸发焓存在
+    #       系统性正偏差……环己烷的摩尔蒸发熵与楚顿规则符合较好，水则因氢键
+    #       网络而显著偏高。」
+    # 三个判断全是写死的：换数据（比如某次水的偏差很小、或扩展成三种液体）
+    # 这句话立刻自相矛盾。现在改成**按实测偏差分档生成**，
+    # 并且「显著偏高」也用实际偏差判断，不再预设水的行为。
+    _by_key = {m['key']: m for m in liquids}
+    _verdicts = []
+    for m in liquids:
+        _f = m['fit']
+        _rdh = abs(float(m['rel_dh_p']))
+        _tab = abs(float(m['rel_tb_p']))
+        # 判据：蒸发焓与沸点的相对偏差都在 1% 以内算「符合较好」
+        if _rdh <= 1.0 and _tab <= 1.0:
+            _v = '%s的热力学量与文献值符合较好（蒸发焓偏差 %s）' % (
+                m['name'], signed_pct(m['rel_dh_p']))
+        else:
+            _bits = []
+            if _tab > 1.0:
+                _bits.append('常压沸点偏差 %s' % signed_pct(m['rel_tb_p']))
+            if _rdh > 1.0:
+                _bits.append('蒸发焓偏差 %s' % signed_pct(m['rel_dh_p']))
+            _v = '%s存在偏差（%s）' % (m['name'], '、'.join(_bits))
+        _verdicts.append(_v)
+
+    # 楚顿规则：|ΔvapSm − 88| / 88 的偏差分档
+    _ent = []
+    for m in liquids:
+        _ds = float(m['fit']['ds'])
+        _dev = abs(_ds - 88.0) / 88.0 * 100
+        if _dev <= 5:
+            _ent.append('%s的摩尔蒸发熵与楚顿规则符合较好（偏差 %.1f%%）'
+                        % (m['name'], _dev))
+        else:
+            _ent.append('%s的摩尔蒸发熵偏离楚顿规则 %.0f%%'
+                        % (m['name'], _dev))
+    rb.para('；'.join(_verdicts) + '。' + '；'.join(_ent) + '。')
+
+    # 偏差来源只在确实存在较大偏差时才写，且按实际方向说。
+    #
+    # ⚠ 方向要按**蒸发焓**判，不能用沸点的方向：两者可以不同向。
+    # 实测环己烷沸点 −0.21%（负）、蒸发焓 +1.1%（正），
+    # 若按沸点方向写就会得到「蒸发焓负偏差」的自相矛盾（踩过一次）。
+    _bad = [m for m in liquids
+            if abs(float(m['rel_dh_p'])) > 1.0 or abs(float(m['rel_tb_p'])) > 1.0]
+    if _bad:
+        _dh_dirs = set('正' if float(m['rel_dh_p']) > 0 else '负' for m in _bad)
+        _dh_txt = _dh_dirs.pop() if len(_dh_dirs) == 1 else '正负不定'
+        rb.para('上述偏差（%s）主要来自温度测量系统的固有偏差'
+                '（蒸发焓呈%s偏差），属于本实验的系统误差。'
+                % ('、'.join(m['name'] for m in _bad), _dh_txt))
+    if any(m['key'] == 'water' for m in liquids):
+        rb.para('水的摩尔蒸发熵相对其他液体更偏离楚顿规则，原因是水分子之间存在'
+                '强烈氢键，氢键网络形成高度有序的三维结构，蒸发时除体积膨胀外'
+                '还要破坏这部分有序结构，额外的熵增使水的蒸发熵明显增大。')

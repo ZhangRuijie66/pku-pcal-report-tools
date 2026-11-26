@@ -125,6 +125,12 @@ class Analysis:
         self.esa = None       # (Λm∞(HAc), σ)
         self.kmean = None
         self.kfit = None
+        # ⚠ `lit_table`（表6 的文献对比表）原来只在 `compute()` 末尾赋值，
+        # 而 `compute()` 在「强电解质数据不齐」时会**提前 return**（L182）。
+        # 于是那份报告里 `an.lit_table` 根本不存在，`report.py` 取它
+        # 直接 AttributeError（实测：删掉 NaAc 的数据 → 生成失败）。
+        # 与 esa/kmean/kfit 一样，这里先给安全的默认值。
+        self.lit_table = []
         # 共享数据的组内统计结果（``analyze_shared`` 挂在这里）；
         # 没读共享表时为 None，报告据此整节省略 4.2。
         self.shared = None

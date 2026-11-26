@@ -124,6 +124,19 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     p = analysis['plate']
     axis = analysis['axis']
 
+    # ⚠ 溶质名一律从配置取，不再写死「正丁醇」（2026-11-27 体检）。
+    # 该实验按讲义是正丁醇，但换成其它醇/表面活性剂时，表题、摘要、
+    # 讨论里十几处「正丁醇」都会变成错的。挂到 analysis 上供各小节读取，
+    # 避免把 cfg 一层层往下传（这些辅助函数都只收 analysis）。
+    _solute = str(cfg.get('solute_name') or '').strip() or '正丁醇'
+    # 起个短名，正文里各处直接引用
+    _so = _solute
+    analysis['solute_name'] = _solute
+    # 各小节函数只收 analysis / m（m 是 analysis 的子字典），
+    # 所以把溶质名也放进两个子字典，省得改每个函数的签名。
+    analysis['bubble']['solute_name'] = _solute
+    analysis['plate']['solute_name'] = _solute
+
     # ---- 封面
     group = str(cfg.get('group') or '').strip()
     group_no = str(cfg.get('group_no') or '').strip()
@@ -169,7 +182,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     log('撰写摘要…')
     abs_segs = [
         {'text': '摘要 ', 'bold': True, 'cjk': '黑体'},
-        '本实验用最大气泡压力法和吊片法测定了不同浓度正丁醇水溶液的表面张力。'
+        '本实验用最大气泡压力法和吊片法测定了不同浓度' + _so + '水溶液的表面张力。'
         '以 ', ('t', 'γ', ITALIC), ' 对 ', ('t', _axis_label(axis), ITALIC),
         ' 作图，并对高浓度线性区作线性拟合，由斜率求得饱和吸附量 ',
         ('t', 'Γ_{∞}', ITALIC), ' 和分子面积 ', ('t', 'q', ITALIC), '。',
@@ -220,7 +233,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
                    {float(it['c']) for it in p['rows']})
     conc_txt = '、'.join(_c(c) for c in concs)
     rb.para([
-        '正丁醇（AR）水溶液，浓度约为 ', conc_txt,
+        '%s（AR）水溶液，浓度约为 ' % analysis.get('solute_name', '正丁醇'), conc_txt,
         ' mol·dm^{-3}；实验用去离子水。最大气泡压力法的测量温度为 ',
         '%.2f ℃，吊片法的测量温度为 %.1f ℃。'
         % (b['temperature'], p['temperature']),
@@ -233,13 +246,17 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
                  else '重复%s次取平均' % cn_num(b_n))
     plate_step = ('每个样品测量一次' if p_n == 1
                   else '每个样品平行测量%s次' % cn_num(p_n))
-    rb.para('最大气泡压力法：调节恒温槽至设定温度，将约 2 mL 待测液装入试管，'
-            '使毛细管尖端与液面刚好接触。读取压力计零点位置，%s。'
-            '用双联球给缓冲瓶加压，调节活塞使气泡从产生到爆裂的时间大于 8 s；'
-            '气泡逸出毛细管尖端时压力计水柱差突然下降，记录下降前左右两侧水柱位置，'
-            '重复 2~3 次。用同样方法依次测定纯水和各浓度正丁醇溶液的液柱高度差，'
-            '每次测量前用新溶液润洗毛细管内壁和试管 2~3 次。'
-            % zero_step)
+    # ⚠ 这段有两个 % 参数（物种名 + zero_step）。`%` 只能作用于紧邻的
+    # 一个字符串字面量，所以先把参数都内联到一个字符串再传，否则会
+    # 出现「invalid syntax: perhaps you forgot a comma」（踩过一次）。
+    _step_txt = ('最大气泡压力法：调节恒温槽至设定温度，将约 2 mL 待测液装入试管，'
+                 '使毛细管尖端与液面刚好接触。读取压力计零点位置，%s。'
+                 '用双联球给缓冲瓶加压，调节活塞使气泡从产生到爆裂的时间大于 8 s；'
+                 '气泡逸出毛细管尖端时压力计水柱差突然下降，记录下降前左右两侧水柱位置，'
+                 '重复 2~3 次。用同样方法依次测定纯水和各浓度%s溶液的液柱高度差，'
+                 '每次测量前用新溶液润洗毛细管内壁和试管 2~3 次。'
+                 % (zero_step, _so))
+    rb.para(_step_txt)
     rb.para('吊片法：接通表面张力仪电源，挂上吊钩，预热稳定 30 min。'
             '用镊子夹取白金板，用去离子水冲洗，再用酒精灯灼烧 20~30 s 至变红，'
             '冷却后挂在吊钩上。用待测液润洗样品皿后加入待测液，置于升降样品台上；'
@@ -320,7 +337,7 @@ def _bubble_raw_table(rb, m):
                      pm(it['left']['mean'], it['left']['sigma']),
                      pm(it['right']['mean'], it['right']['sigma']),
                      pm(it['dh'], it['sigma_dh'])])
-    rb.caption('表3  不同浓度正丁醇溶液的液柱高度')
+    rb.caption('表3  不同浓度%s溶液的液柱高度' % m.get('solute_name', '正丁醇'))
     rb.table(['c / (mol·dm^{-3})', 'h_{left} / cm', 'h_{right} / cm', 'Δh / cm'],
              rows, widths_cm=[3.2, 3.5, 3.5, 3.5], keep_together=False)
 
@@ -331,7 +348,7 @@ def _gamma_table(rb, m, axis):
         x = math.log10(it['c']) if axis == 'lg' else math.log(it['c'])
         rows.append([_c(it['c']), k(x, 4),
                      pm(it['gamma'], it['sigma_gamma'])])
-    rb.caption('表4  不同浓度正丁醇溶液的表面张力')
+    rb.caption('表4  不同浓度%s溶液的表面张力' % m.get('solute_name', '正丁醇'))
     rb.table(['c / (mol·dm^{-3})', _axis_label(axis),
               'γ / (mN·m^{-1})'], rows,
              widths_cm=[3.4, 3.4, 4.4], keep_together=False)
@@ -381,8 +398,9 @@ def _plate_raw_table(rb, m):
                     [k(v, 2) if np.isfinite(v) else '—' for v in vals[:3]] +
                     [pm(it['gamma'], it['sigma_gamma'])])
     rb.caption('表6  吊片法测得的%s表面张力'
-               % ('纯水与不同浓度正丁醇溶液的' if has_water
-                  else '不同浓度正丁醇溶液的'))
+               % ((('纯水与不同浓度%s溶液的' % m.get('solute_name', '正丁醇'))
+                   if has_water else
+                   ('不同浓度%s溶液的' % m.get('solute_name', '正丁醇')))))
     rb.table(['c / (mol·dm^{-3})', 'γ_{1} / (mN·m^{-1})',
               'γ_{2} / (mN·m^{-1})', 'γ_{3} / (mN·m^{-1})',
               '平均 γ / (mN·m^{-1})'], rows,
@@ -533,7 +551,7 @@ def _sec_bubble(rb, m, axis, png_curve, png_fit):
     rb.equation(r'\Delta h=h_{right}-h_{left}-\Delta h_{0}')
     _water_table(rb, m)
     rb.para([
-        '各浓度正丁醇溶液的液柱高度差列于表3，其中 ',
+        '各浓度%s溶液的液柱高度差列于表3，其中 ' % m.get('solute_name', '正丁醇'),
         ('t', 'Δh', ITALIC), ' 已按上式扣除零点。',
     ])
     _bubble_raw_table(rb, m)
@@ -699,7 +717,8 @@ def _sec_results(rb, analysis):
     p = analysis['plate']
     rb.heading('4.1 实验结果', 2)
     segs = [
-        '本实验用两种方法测定了正丁醇水溶液的表面张力。',
+        '本实验用两种方法测定了%s水溶液的表面张力。'
+        % analysis.get('solute_name', '正丁醇'),
     ]
     if np.isfinite(b['gamma_inf']):
         segs += [
@@ -724,8 +743,8 @@ def _sec_results(rb, analysis):
            k(p['fit']['r2'], 4) if p['fit'] else '—',
            pct(abs(analysis['comparison']['rel_gamma']))
            if analysis.get('comparison') else '—'),
-        '与正丁醇分子截面积的文献值（约 %.2f nm^{2}）相比，%s的 '
-        % (q_lit, closer),
+        '与%s分子截面积的文献值（约 %.2f nm^{2}）相比，%s的 '
+        % (analysis.get('solute_name', '正丁醇'), q_lit, closer),
         ('t', 'q', ITALIC), ' 更接近。',
     ]
     rb.para(segs)
@@ -754,8 +773,9 @@ def _sec_discussion(rb, analysis):
         '两种方法测量的都是平衡表面张力，但达到平衡的路径不同：'
         '最大气泡压力法在气泡形成的几秒内读取最大压力差，'
         '界面在测量过程中不断更新；吊片法则是在静止液面上等待读数稳定。',
-        '如果气泡产生过快，溶液中的正丁醇分子来不及扩散到新生成的气液界面，'
-        '测得的将是偏高的动态表面张力，从而影响高浓度区的斜率。',
+        ('如果气泡产生过快，溶液中的%s分子来不及扩散到新生成的气液界面，'
+         % analysis.get('solute_name', '正丁醇'))
+        + '测得的将是偏高的动态表面张力，从而影响高浓度区的斜率。',
     ])
     rb.para([
         '另一方面，两种方法的测量温度不同（%.2f ℃ 与 %.1f ℃）。'
@@ -814,7 +834,8 @@ def _sec_conclusion(rb, analysis):
     b = analysis['bubble']
     p = analysis['plate']
     rb.heading('4.3 实验结论', 2)
-    segs = ['本实验用最大气泡压力法和吊片法测定了正丁醇水溶液的表面张力。']
+    segs = ['本实验用最大气泡压力法和吊片法测定了%s水溶液的表面张力。'
+            % analysis.get('solute_name', '正丁醇')]
     if np.isfinite(b['gamma_inf']):
         segs += [
             '最大气泡压力法得到饱和吸附量 ', ('t', 'Γ_{∞}', ITALIC), ' = ',

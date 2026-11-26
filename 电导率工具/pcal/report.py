@@ -166,26 +166,55 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
             plotting.make_kpair_figure(shared), 'fig9_kpair.png')
 
     # ================================================================ 摘要
+    #
+    # ⚠ 摘要原来直接 fits['NaCl'] / fits['NaAc'] / fits['HCl'] 三次取值，
+    # 任一物种缺数据就 KeyError（实测：删掉 NaAc 的数据 → KeyError: 'NaAc'，
+    # 而 Analysis.compute() 其实已经优雅降级并给了 warning）。
+    # 改成按实际算出来的物种拼句子：物种多就多写、少就少写。
     log('撰写摘要…')
-    f_na = fits['NaCl']
-    f_naac = fits['NaAc']
-    f_hno3 = fits['HCl']
-    rb.para([
-        {'text': '摘要 ', 'bold': True, 'cjk': '黑体'},
-        '本实验测量了不同浓度 NaCl、NaAc、HCl 和 HAc 溶液的电导率。'
-        '通过 Kohlrausch 拟合得强电解质的极限摩尔电导率：NaCl ',
-        ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f_na['lam_inf'], f_na['sigma_inf']), {}),
-        '、NaAc ',
-        ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f_naac['lam_inf'], f_naac['sigma_inf']), {}),
-        '、HCl ',
-        ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f_hno3['lam_inf'], f_hno3['sigma_inf']), {}),
-        '。对于 HAc，由离子独立运动定律得极限摩尔电导率为 ',
-        ('t', '(%s) S·m⁻²·mol⁻¹' % pm(esa['lam_inf'], esa['sigma']), {}),
-        '，再分别通过求平均法和拟合直线法求得其标准电离平衡常数为 ',
-        ('t', sci_pm(kmean['mean'], kmean['sigma']), {}),
-        ' 和 ', ('t', sci_pm(kfit['K'], kfit['sigma_K']), {}),
-        '，并对两种方法进行了比较。',
-    ])
+    _strong = [k for k in conduct.STRONG_SPECIES if k in fits]
+    _lam_segs = []
+    for _i, _k in enumerate(_strong):
+        if _i:
+            _lam_segs.append('、' if _i < len(_strong) - 1 else ' 和 ')
+        _lam_segs.append('%s ' % conduct.SPECIES_LABEL[_k])
+        _f = fits[_k]
+        _lam_segs.append(('t', '(%s) S·m⁻²·mol⁻¹'
+                          % pm(_f['lam_inf'], _f['sigma_inf']), {}))
+    _species_txt = '、'.join(conduct.SPECIES_LABEL[k] for k in _strong)
+    # HAc 的三项（Λm∞ 由组合得出、K° 两法）依赖强电解质全部齐备
+    # （`combo_lambda_inf` 要减掉 sub 项）。缺任何一个时 esa/kmean/kfit
+    # 都是 None —— 这时摘要只报强电解质，并明确说明 HAc 待补，
+    # 不能静默省略（否则读者以为实验只做了强电解质）。
+    _hac_ready = (esa is not None and kmean is not None and kfit is not None)
+    _intro = ('本实验测量了不同浓度 %s 和 %s 溶液的电导率。'
+              % (_species_txt, conduct.SPECIES_LABEL['HAc'])
+              if _strong else
+              '本实验测量了不同浓度 %s 溶液的电导率。'
+              % conduct.SPECIES_LABEL['HAc'])
+    _segs = [{'text': '摘要 ', 'bold': True, 'cjk': '黑体'}, _intro]
+    if _strong:
+        _segs.append('通过 Kohlrausch 拟合得强电解质的极限摩尔电导率：')
+        _segs.extend(_lam_segs)
+        _segs.append('。')
+    if _hac_ready:
+        _segs.extend([
+            '对于 HAc，由离子独立运动定律得极限摩尔电导率为 ',
+            ('t', '(%s) S·m⁻²·mol⁻¹' % pm(esa['lam_inf'], esa['sigma']), {}),
+            '，再分别通过求平均法和拟合直线法求得其标准电离平衡常数为 ',
+            ('t', sci_pm(kmean['mean'], kmean['sigma']), {}),
+            ' 和 ', ('t', sci_pm(kfit['K'], kfit['sigma_K']), {}),
+            '，并对两种方法进行了比较。',
+        ])
+    else:
+        _missing = [conduct.SPECIES_LABEL[k]
+                    for k in conduct.STRONG_SPECIES if k not in fits]
+        _segs.append(
+            '由于缺少%s的测量数据，强电解质结果不齐，'
+            'HAc 的极限摩尔电导率（需由离子独立运动定律从强电解质组合）'
+            '与标准电离平衡常数本次未能求出。'
+            % ('、'.join(_missing) if _missing else '部分物种'))
+    rb.para(_segs)
     rb.para([{'text': '关键词 ', 'bold': True},
              '电导率；极限摩尔电导率；Kohlrausch 定律；离子独立运动定律；标准电离平衡常数'])
     rb.blank()
@@ -236,10 +265,23 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.heading('3 数据与结果')
     log('写定性分析…')
     _sec_qualitative(rb, analysis, fig_kc)
+    # ⚠ 依赖 `an.esa`/`kmean`/`kfit` 的三节必须**按可用性判断后跳过**。
+    # 这三个量要求三个强电解质都齐备（`combo_lambda_inf` 要做加减），
+    # 缺任一物种时它们都是 None。原来直接 `an.esa['combo']` 会
+    # TypeError: 'NoneType' object is not subscriptable（实测缺 NaAc 即崩）。
+    # 这里在入口统一判断，缺数据时写一段明确说明代替整节内容——
+    # 不能静默省略（读者会以为实验只做了强电解质）。
+    _hac_ok = (analysis.esa is not None
+               and analysis.kmean is not None
+               and analysis.kfit is not None)
     log('写强电解质…')
-    _sec_strong(rb, analysis, fit_pngs)
-    log('写弱电解质…')
-    _sec_weak(rb, analysis, fig_kfit)
+    _sec_strong(rb, analysis, fit_pngs, hac_ok=_hac_ok)
+    if _hac_ok:
+        log('写弱电解质…')
+        _sec_weak(rb, analysis, fig_kfit)
+    else:
+        log('弱电解质：强电解质数据不齐，跳过并说明')
+        _sec_weak_skipped(rb, analysis)
 
     # ================================================================ 4 讨论与结论
     rb.heading('4 讨论与结论')
@@ -250,8 +292,14 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     # 或两个小节都叫 4.2）。
     has_shared = _sec_shared(rb, analysis)
     nxt = 3 if has_shared else 2
-    _sec_method_compare(rb, analysis, nxt)
-    _sec_summary(rb, analysis, nxt + 1)
+    # ⚠ `_sec_method_compare` / `_sec_summary` 都依赖 kmean/kfit/esa；
+    # 缺强电解质时为 None，原来会 TypeError。同 `_hac_ok` 一并判断。
+    if _hac_ok:
+        _sec_method_compare(rb, analysis, nxt)
+        _sec_summary(rb, analysis, nxt + 1)
+    else:
+        log('讨论两法比较 / 小结：数据不齐，跳过并说明')
+        _sec_tail_skipped(rb, analysis, nxt)
 
     # ================================================================ 参考文献
     rb.heading('参考文献')
@@ -454,12 +502,18 @@ def _sec_qualitative(rb, an, fig_kc):
 
 
 # ---------------------------------------------------------------- 3.2
-def _sec_strong(rb, an, fit_pngs):
+def _sec_strong(rb, an, fit_pngs, hac_ok=True):
     fits = an.fits
+    _present = [k for k in conduct.STRONG_SPECIES if k in an.tables]
     rb.heading('3.2 强电解质的数据处理', 2)
     rb.heading('3.2.1 原始数据记录及基本数据处理', 3)
-    rb.para('NaCl、NaAc 和 HCl 的不同浓度溶液电导率原始数据及基本数据处理'
-            '分别如表3、表4和表5所示。')
+    # ⚠ 原来写死「NaCl、NaAc 和 HCl … 表3、表4和表5」，缺物种时表号会错位。
+    _sp_txt = '、'.join(conduct.SPECIES_LABEL[k] for k in _present)
+    _tbl_txt = ('、'.join('表%d' % (3 + i) for i in range(len(_present)))
+                if len(_present) > 1 else
+                ('表3' if _present else '（无）'))
+    rb.para('%s 的不同浓度溶液电导率原始数据及基本数据处理分别如%s所示。'
+            % (_sp_txt, _tbl_txt))
     rb.para('有必要说明有效数字：HCl 的母液浓度为 0.1 mol·dm⁻³，但这显然不'
             '意味着结果只保留 1 位有效数字。鉴于配制过程中有效数字最低为 4 位'
             '（25 mL 移液管精度为 25.00 mL），浓度均保留 4 位有效数字；电导率'
@@ -473,7 +527,14 @@ def _sec_strong(rb, an, fit_pngs):
     rb.para('摩尔电导率等于校正电导率除以浓度：')
     rb.equation(r'\Lambda_{m}=\frac{\kappa_{corrected}}{c}')
 
-    for idx, key in enumerate(('NaCl', 'NaAc', 'HCl'), 3):
+    # ⚠ 三处循环必须**数据驱动**：`Analysis.compute()` 在某物种缺数据时会
+# 优雅降级（记 warning 并从 `fits`/`tables` 里去掉它），但如果这里仍按
+# 硬编码三元组去取，`an.tables[key]` / `fits[key]` 会直接 KeyError，
+# 把「优雅降级」变成「生成失败」。实测：删掉 NaAc 的数据后
+#   fits keys: ['NaCl', 'HCl'] → KeyError: 'NaAc'
+    # 所以统一用「实际算出来的」物种列表。
+    present = [k for k in conduct.STRONG_SPECIES if k in an.tables]
+    for idx, key in enumerate(present, 3):
         rows = an.tables[key]
         table_rows = []
         for i, r in enumerate(rows, 1):
@@ -489,10 +550,22 @@ def _sec_strong(rb, an, fit_pngs):
     rb.heading('3.2.2 Kohlrausch极限定律的拟合', 3)
     rb.para('Kohlrausch 极限定律表明，在低浓度下，强电解质的摩尔电导率满足：')
     rb.equation(r'\Lambda_{m}=\Lambda_{m}^{\infty}-B\sqrt{c}')
+    _fit_keys = [k for k in conduct.STRONG_SPECIES if k in fits]
+    # 图号范围也跟着变：3 个物种是「图3~图5」，2 个是「图3~图4」。
+    if len(_fit_keys) > 1:
+        _fig_span = '图3~图%d' % (2 + len(_fit_keys))
+    elif _fit_keys:
+        _fig_span = '图3'
+    else:
+        _fig_span = '（无）'
     rb.para(['故以 ', ('t', 'Λ_{m}', ITALIC), ' 对 ', ('t', '√c', ITALIC),
              ' 作线性拟合，截距即为该物种的极限摩尔电导率 ',
-             ('t', 'Λ_{m}^{∞}', ITALIC), '。三个物种的拟合结果分别如图3~图5所示。'])
-    for idx, key in enumerate(('NaCl', 'NaAc', 'HCl'), 3):
+             ('t', 'Λ_{m}^{∞}', ITALIC),
+             '。%d 个物种的拟合结果如图3所示。' % len(_fit_keys)
+             if len(_fit_keys) == 1 else
+             '。%d 个物种的拟合结果分别如%s所示。'
+             % (len(_fit_keys), _fig_span)])
+    for idx, key in enumerate(_fit_keys, 3):
         f = fits[key]
         rb.figure(fit_pngs[key],
                   caption='图%d  %s 的 Λ_{m}–√c 拟合直线'
@@ -504,19 +577,25 @@ def _sec_strong(rb, an, fit_pngs):
                        'k': pm(abs(f['k']), f['sigma_k'])})
         rb.para(['相关系数 ', ('t', 'r', ITALIC), ' = ',
                  ('t', '%.2f' % f['r'], ITALIC), '。'])
-    f_worst = fits['HCl']
+    # ⚠ 这里原来有一句 `f_worst = fits['HCl']`，**从未被使用**（下面段落
+    # 取最差物种用的是 `_finite_fits` 的 `min()`），而且它在缺 HCl 数据时
+    # 会直接 KeyError。死代码 + 崩溃点，已删除（2026-11-27）。
+    #
     # ⚠ 这段原来写的是“HNO₃ 前两个数据点违背规律、线性特别差”。物种换成
     # HCl 以后那句话**不再成立**：HCl 不易挥发，实测 r 都在 −0.97 附近、
     # 线性良好。所以这里改成**按实际 r 值分档描述**，不再预设某个物种有问题。
     # 报告正文不能断言数据里没有的现象——那是编造。
-    _finite_fits = [(fits[k]['r'], k) for k in ('NaCl', 'NaAc', 'HCl')
+    #
+    # ⚠ 取最差物种也必须**数据驱动**：只遍历 `fits` 里真的算出来的键，
+    # 否则缺物种时 `fits[k]` 直接 KeyError（与上面三处循环同一类问题）。
+    _finite_fits = [(fits[k]['r'], k) for k in _fit_keys
                     if np.isfinite(fits[k]['r'])]
     worst_r, worst_key = min(_finite_fits)
     rb.para(['与电导率不同，强电解质的摩尔电导率随浓度增加而降低：溶液中能导电'
              '的物质的量已给定（1 mol），浓度升高时正负离子相互作用力增加并形成'
              '离子氛，两种效应都阻碍离子在电场下的定向运动。'])
     if worst_r > -0.99:
-        rb.para(['三个物种的拟合线性程度略有差别，其中 ',
+        rb.para(['%d 个物种的拟合线性程度略有差别，其中 ' % len(_fit_keys),
                  ('t', conduct.SPECIES_LABEL[worst_key], {}),
                  ' 的相关系数最低（',
                  ('t', 'r', ITALIC), ' = ',
@@ -526,22 +605,33 @@ def _sec_strong(rb, an, fit_pngs):
                  '电极浸入深度与摆放位置会改变有效电导池面积，这部分对稀溶液'
                  '尤为显著。'])
     else:
-        rb.para(['三个物种的拟合直线线性都相当好（',
+        rb.para(['%d 个物种的拟合直线线性都相当好（' % len(_fit_keys),
                  ('t', 'r', ITALIC), ' 均优于 −0.99），说明在本实验的浓度'
                  '范围内 Kohlrausch 极限定律成立良好。'])
 
     rb.heading('3.2.3 极限摩尔电导率的计算', 3)
-    combo = an.esa['combo']
-    add_names = '+'.join(conduct.SPECIES_LABEL[k] for k in combo['add'])
-    sub_names = '-'.join(conduct.SPECIES_LABEL[k] for k in combo['sub'])
-    rb.para('根据三条拟合直线的截距，得到各强电解质的极限摩尔电导率'
-            '（不确定度为拟合截距的标准误）：')
-    for key in ('NaCl', 'NaAc', 'HCl'):
+    rb.para('根据 %d 条拟合直线的截距，得到各强电解质的极限摩尔电导率'
+            '（不确定度为拟合截距的标准误）：' % len(_fit_keys))
+    for key in _fit_keys:
         f = fits[key]
         rb.para([('t', 'Λ_{m}^{∞}', ITALIC),
                  ('t', '(%s)' % conduct.CHEM_MARK[key], {}),
                  ' = ',
                  ('t', '(%s) S·m⁻²·mol⁻¹' % pm(f['lam_inf'], f['sigma_inf']), {})])
+    # ⚠ 组合式依赖 an.esa，缺强电解质时为 None —— 由 hac_ok 判断，
+    # 缺数据时说明原因并返回，不再往下取 an.esa['combo']（原来会 TypeError）。
+    if not hac_ok or an.esa is None:
+        rb.para(['弱电解质 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                 ' 需由离子独立运动定律从强电解质结果组合求得，'
+                 '而本次强电解质数据不齐（缺 %s），'
+                 '无法完成组合，相关计算与讨论从略。'
+                 % '、'.join(conduct.SPECIES_LABEL[k]
+                            for k in conduct.STRONG_SPECIES
+                            if k not in fits)])
+        return
+    combo = an.esa['combo']
+    add_names = '+'.join(conduct.SPECIES_LABEL[k] for k in combo['add'])
+    sub_names = '-'.join(conduct.SPECIES_LABEL[k] for k in combo['sub'])
     rb.para(['弱电解质不符合 Kohlrausch 经验公式，其极限摩尔电导率由离子独立'
              '运动定律从强电解质结果组合而来。本实验的组合关系为 ',
              # ⚠ Λ 是量符号，必须走片段列表；写进纯字符串会整串正体
@@ -591,6 +681,28 @@ def _sec_strong(rb, an, fit_pngs):
 
 
 # ---------------------------------------------------------------- 3.3
+def _sec_weak_skipped(rb, an):
+    """强电解质数据不齐、`esa`/`kmean`/`kfit` 为 None 时的替代小节。
+
+    ⚠ 不能**静默省略**整个 3.3 节：读者会以为实验只做了强电解质，
+    或者以为报告漏印。必须写清楚「为什么没有」——这正是
+    `Analysis.compute()` 已经给出的 warning，转述到报告里即可。
+    """
+    rb.heading('3.3 弱电解质的数据处理（本次未完成）', 2)
+    missing = [conduct.SPECIES_LABEL[k]
+               for k in conduct.STRONG_SPECIES if k not in an.fits]
+    rb.para(['弱电解质 HAc 的极限摩尔电导率由离子独立运动定律从强电解质结果'
+             '组合求得（', ('t', 'Λ_{m}^{∞}', ITALIC),
+             ('t', '(HAc)', {}), ' = 加项之和 − 减项），'
+             '因此要求三种强电解质的数据齐备。本次缺少 %s 的测量数据，'
+             '组合无法完成，故 HAc 的极限摩尔电导率、'
+             '两种方法的电离平衡常数以及后续的讨论均从略。'
+             % ('、'.join(missing) if missing else '部分物种')])
+    rb.para('补齐上述物种的测量数据后重新生成报告，本节的全部内容会自动恢复。')
+    if an.warnings:
+        rb.para(['本次计算过程记录的提示：' + '；'.join(an.warnings[:6]) + '。'])
+
+
 def _sec_weak(rb, an, fig_kfit):
     esa = an.esa
     kmean = an.kmean
@@ -829,6 +941,22 @@ def _sec_weak(rb, an, fig_kfit):
 # ---------------------------------------------------------------- 4 讨论
 def _sec_error_analysis(rb, an):
     rb.heading('4.1 强电解质极限摩尔电导率误差分析', 2)
+    # ⚠ `lit_table` 在数据不齐时为空（analysis 已给默认值，不再是
+    # AttributeError），此时不能拼出「相对误差都不大（）」这种空括号。
+    if not an.lit_table:
+        rb.para(['本次强电解质数据不齐，缺少与手册值的完整对照，'
+                 '误差分析从略。下面仅对已有的拟合结果作说明。'])
+        for k in conduct.STRONG_SPECIES:
+            if k in an.fits:
+                f = an.fits[k]
+                rb.para(['%s：' % conduct.SPECIES_LABEL[k],
+                         ('t', 'Λ_{m}^{∞}', ITALIC),
+                         ('t', ' = (%s) S·m⁻²·mol⁻¹' 
+                          % pm(f['lam_inf'], f['sigma_inf']), {}),
+                         '，相关系数 ',
+                         ('t', 'r', ITALIC),
+                         ('t', ' = %.3f' % f['r'], ITALIC), '。'])
+        return
     er_txt = '、'.join('%s %s' % (conduct.SPECIES_LABEL[r['key']], pct(r['er']))
                        for r in an.lit_table[:3])
     rb.para('根据表6，各强电解质极限摩尔电导率的相对误差都不大（' + er_txt +
@@ -1193,6 +1321,27 @@ def _sci_or_dash(v, digits=3):
     except (TypeError, ValueError):
         return '—'
     return sci(v, digits)
+
+
+def _sec_tail_skipped(rb, an, num):
+    """数据不齐时替代「两法比较 + 小结」两节。
+
+    同样不能静默省略：读者会以为报告没写完。
+    """
+    rb.heading('4.%d 两种方法比较与小结（本次未完成）' % num, 2)
+    missing = [conduct.SPECIES_LABEL[k]
+               for k in conduct.STRONG_SPECIES if k not in an.fits]
+    rb.para(['弱电解质的两种标准电离平衡常数求解（求平均法与拟合直线法）'
+             '都需要先由强电解质组合出 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+             ('t', '(HAc)', {}),
+             '。本次缺少%s的测量数据，组合无法完成，'
+             '因此两法比较与结论汇总从略。' %
+             ('、'.join(missing) if missing else '部分物种')])
+    rb.para('本次已完成的部分：' + '；'.join(
+        '%s 的 ' % conduct.SPECIES_LABEL[k]
+        + 'Λₘ∞ = (%s) S·m⁻²·mol⁻¹'
+        % pm(an.fits[k]['lam_inf'], an.fits[k]['sigma_inf'])
+        for k in conduct.STRONG_SPECIES if k in an.fits) + '。')
 
 
 def _sec_method_compare(rb, an, num=2):
