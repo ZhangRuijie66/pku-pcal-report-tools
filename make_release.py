@@ -493,7 +493,89 @@ def do_apply(plan):
     print('  tag        %s' % tag)
     print('  远端确认   git ls-remote --tags origin 里已有 refs/tags/%s' % tag)
     print('  更新说明   %s/%s' % (ver.REPO_URL + '/releases/tag', tag))
+    _warn_stale_services(new_version)
     return 0
+
+
+def _stale_service_pids():
+    """找出正在监听入口/模块端口、且是在本版发版前就起来的 python 进程。
+
+    ⚠️ 为什么必须提示（2026-11-26 用户实测撞到）：
+    `portal.py` 的 `APP_VERSION` 是**模块导入时**从 `pcal/version.py` 读进来的
+    常量。发版把磁盘上的 version.py 改成 1.4.5 之后，**已经跑着的入口页进程
+    仍然显示旧版本号**——用户看到「版本：v1.4.3 · 2026-11-25」还以为发版没生效。
+    代码没问题，只是进程没重启。发版脚本必须在收尾时明确提醒。
+    """
+    pids = []
+    try:
+        import subprocess
+        out = subprocess.run(
+            ['powershell', '-NoProfile', '-Command',
+             "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | "
+             "Where-Object { $_.LocalPort -ge 8700 -and $_.LocalPort -le 8900 } | "
+             "Select-Object -ExpandProperty OwningProcess -Unique"],
+            capture_output=True, timeout=25)
+        text = (out.stdout or b'').decode('utf-8', 'replace')
+        for token in text.split():
+            token = token.strip()
+            if token.isdigit():
+                pids.append(int(token))
+    except Exception:                              # noqa: BLE001
+        return []
+    alive = []
+    for pid in set(pids):
+        if _pid_alive(pid):
+            alive.append(pid)
+    return sorted(alive)
+
+
+def _pid_alive(pid):
+    """进程是否还活着。
+
+    ⚠️ 不能用 ``os.kill(pid, 0)`` 探活（2026-11-26 实测踩到）：
+    在 Windows 上它对**不存在的 PID** 抛 ``OSError``，
+    但对某些 PID 会直接抛 ``SystemError: <built-in function kill>
+    returned a result with an exception set``（底层 WinError 87）——
+    那既不是 OSError 也拦不住，整个发版脚本会在收尾时崩掉。
+    改用 OpenProcess + GetExitCodeProcess。
+    """
+    if os.name != 'nt':
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    try:
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                      False, int(pid))
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:                              # noqa: BLE001
+        return False
+
+
+def _warn_stale_services(new_version):
+    pids = _stale_service_pids()
+    if not pids:
+        return
+    print()
+    print('  [注意] 还有 %d 个旧服务进程在跑（PID %s）'
+          % (len(pids), '、'.join(str(p) for p in pids)))
+    print('         它们内存里仍是**发版前**的版本号，入口页会继续显示旧版本。')
+    print('         让界面显示 v%s，请重启一次：' % new_version)
+    print('             python _tools\\launcher.py --restart')
+    print('         或双击根目录「停止服务.vbs」后重新打开入口页。')
 
 
 # --------------------------------------------------------------------------- 入口

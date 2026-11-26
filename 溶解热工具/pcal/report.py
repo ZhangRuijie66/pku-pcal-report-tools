@@ -20,7 +20,8 @@
       4.2 体系与环境热交换的校正
       4.3 思考题
       4.4 结果的误差分析
-      4.5 小结
+      4.5 误差来源的系统分析                            表5 表6 表7 表8
+      4.6 小结
     参考文献
 
 公式一律用 Word 原生公式（OMML）；只示出变量值的写法用普通文本（变量斜体、单位正体）。
@@ -49,6 +50,7 @@ def val(x, u, n=SIG_DIGITS):
     return _val(x, u, n, fallback=1)
 
 ITALIC = {'italic': True}
+BOLD = {'bold': True}
 
 ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets')
 INTRO_PNG = os.path.join(ASSETS, '引言图.jpg')          # 手写预习笔记：目的 / 原理 / 方法
@@ -238,6 +240,7 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     _sec_heat_exchange(rb, analysis, ex)
     _sec_questions(rb, analysis, ex, fit)
     _sec_error(rb, analysis, fit, cfg, lit, sub_label)
+    _sec_error_sources(rb, analysis, fit, cfg, lit, sub_label)
     _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label)
 
     # ================================================================ 参考文献
@@ -748,12 +751,251 @@ def _sec_error(rb, analysis, fit, cfg, lit, sub_label):
     ])
 
 
-# ================================================================ 4.5 小结
+# ================================================================ 4.5 误差来源的系统分析
+#
+# 分层口径（对应课程「实验误差分析」的四级方法）：
+#   Level 0  罗列所有可能因素（系统 / 随机两类）
+#   Level 1  给出半定量量级（哪些是 1% 档、哪些是 0.1% 档）
+#   Level 2  定出主因（用实测数据把 A 类分项排序 + 用与手册值的偏差判系统项）
+#   Level 3  据此提改进方案（不是空写"要仔细操作"）
+#
+# ⚠ 两条不能违反的：
+#   1. **所有百分比都由本轮数据算出**，不许写死「1.2%」这类数字。
+#      分项贡献用 ``ds.sigma_terms``（与 4.3.1 表4 同一套传播公式）。
+#   2. 各分项占比是**方差**占比（平方后归一），因此几项加起来可以 >100%
+#      才对——直接拿 σ 分量除以合成 σ 相加会得到 >100% 的假象，
+#      那是把「平方和」当「线性相加」的错误，正文里必须说清口径。
+def _sec_error_sources(rb, analysis, fit, cfg, lit, sub_label):
+    rounds = analysis.rounds
+    ex = rounds[min(EXAMPLE_ROUND, len(rounds)) - 1]
+    Qs0 = float(fit['Qs0'])
+    s_rand = float(fit['sigma_Qs0'])
+
+    rb.heading('4.5 误差来源的系统分析', 3)
+
+    # ---- Level 0：罗列
+    rb.para([
+        '按课程要求把误差来源先穷举一遍（Level 0）。溶解热由式(12) 给出，'
+        '各输入量都可能带误差，此外还有公式本身的前提假设；'
+        '按性质可分为系统误差与随机误差两类：',
+    ])
+    rb.caption('表5  溶解热测量误差的可能来源（Level 0 罗列）')
+    rb.table(
+        ['类别', '来源', '性质', '作用方式'],
+        [
+            ['理论近似', '稀溶液近似、以浓度代替活度', '系统',
+             '以 c 代 a，高浓度端偏差更大'],
+            ['理论近似', 'ΔH 随温度变化被忽略', '系统',
+             '手册值温度与实测温度不一致'],
+            ['实验操作', '配液浓度（定容、移液）', '系统',
+             '直接影响 n₀，进而影响 Qs'],
+            ['实验操作', '溶质未溶尽 / 飞溅损失', '系统',
+             '使实际溶质偏少'],
+            ['仪器设备', '电流表读数、加热丝电阻', '系统+随机',
+             'I 取平方、R 取一次方'],
+            ['仪器设备', '温差测量（零点、非线性）', '系统+随机',
+             '两个校正温差都受影响'],
+            ['仪器设备', '恒温槽温度波动', '随机',
+             '基线漂移，雷诺校正后残差'],
+            ['数据处理', '雷诺校正取点、线性拟合', '随机',
+             '外推的校正温差有残差'],
+            ['数据处理', '经验公式拟合', '随机',
+             '拟合残差，由 R² 反映'],
+            ['环境因素', '体系与环境热交换', '系统',
+             '溶解段与加热段不对称'],
+        ],
+        font_size=10.5, widths_cm=[2.2, 5.6, 2.0, 5.4],
+        keep_together=True)
+
+    # ---- Level 1 + 2：A 类分项定量排序
+    terms = ds.sigma_terms(ex['current'], ex['R1'], ex['R2'], ex['t1'], ex['t2'],
+                           ex['dT_diss'], ex['dT_heat'])
+    total = float(terms['total'])
+    Q_round = float(terms['Q'])
+    labels = [('I', '电流 I', '电流表允差 / 读数波动'),
+              ('R', '加热丝电阻 R', '万用表测量、接触电阻'),
+              ('t', '通电时间 Δt', '计时起止的判断'),
+              ('d', '溶解温差 ΔTd', '雷诺校正、测温分辨力'),
+              ('h', '加热温差 ΔTh', '雷诺校正、测温分辨力')]
+    entries = []
+    for key, name, why in labels:
+        v = float(terms[key])
+        share = (v ** 2) / (total ** 2) * 100 if total else 0.0
+        # 占比保留 1 位小数：`pct()` 是「2 位有效数字」，会把 48.2% 印成 48%，
+        # 排序后几项都变成整数，读者看不出差别（实测踩到）。
+        entries.append({'key': key, 'name': name, 'why': why,
+                        'v': v, 'share': share})
+    entries.sort(key=lambda e: -e['share'])
+    rows = [[e['name'], e['why'], k(e['v'], 2), '%.1f' % e['share']]
+            for e in entries]
+    _sum_share = sum(e['share'] for e in entries)
+
+    rb.para([
+        'Level 1 半定量。把式(12) 按不确定度传播律展开（即 4.3.1 的式与表4），'
+        '可得各输入量对单轮 ', ('t', 'Δ Q', ITALIC), ' 的贡献。'
+        '以第%d组实验为例，其 ' % ex['index'],
+        ('t', 'Δ Q', ITALIC), ' = %s J，合成标准差 %s J，相对不确定度 %s%%。'
+        % (k(Q_round, 2), k(total, 2), pct(total / abs(Q_round) * 100)),
+    ])
+    rb.caption('表6  单轮 Δ Q 各误差来源的贡献（第%d组实验，按方差占比排序）'
+               % ex['index'])
+    rb.table(['来源', '误差来源说明', '绝对贡献/J', '方差占比/%'],
+             rows + [['合成', '—', k(total, 2), '100']],
+             font_size=10.5, widths_cm=[3.4, 5.6, 3.1, 3.1],
+             keep_together=True)
+    rb.para([
+        '需要说明口径：上表最后一列是',
+        ('t', '方差', BOLD),
+        '占比，即各项贡献平方后归一，'
+        '因此它才可能加和超过 100%%（实际四舍五入后为 %.1f%%）——'
+        '这不表示算错，而是“独立误差按平方和合成、不按线性相加”的直接结果。'
+        % _sum_share,
+    ])
+
+    top2 = entries[:2]
+    rest = entries[2:]
+    # ⚠ 先把带 % 的句子拼成一个字符串再放进片段列表：
+    # 片段列表里夹着 ('t', ...) 元组时，`% (...)` 只能作用于**紧邻的那个
+    # 字符串字面量**，写成 `'...%s...' , ('t',..), '...' % (...)` 会报
+    # “not all arguments converted”或把括号截断成语法错（两种都踩过）。
+    _lead = (' 的随机误差几乎全部来自“%s”（合计约 %.1f%% 的方差），'
+             '而温差与计时两项加起来只占约 %.1f%%。'
+             '这与“温度是最不稳定的量”的直觉相反：'
+             '因为式(12) 里电流以平方进入、电阻直接线性进入，两者的相对误差都被放大，'
+             '而温差是比值 '
+             % ('”与“'.join(e['name'] for e in top2),
+                sum(e['share'] for e in top2),
+                sum(e['share'] for e in rest)))
+    rb.para([
+        'Level 2 确定主因。由上表可见，',
+        ('t', 'Δ Q', ITALIC),
+        _lead,
+        ('t', "Δ Δ T/Δ Δ T'", ITALIC),
+        '，共模部分相互抵消。',
+    ])
+
+    # ---- 随机 vs 系统：用“A 类不确定度”与“与手册值的偏差”对比判据
+    if lit:
+        dev = (Qs0 - float(lit)) / abs(float(lit)) * 100.0
+        rel_rand = s_rand / abs(Qs0) * 100 if Qs0 else 0.0
+        _mid = ('，其相对不确定度仅 %s%%；而手册^{[2]}值 %s kJ·mol⁻¹，两者相差 '
+                % (pct(rel_rand), k(float(lit), 2)))
+        rb.para([
+            '上面的表6 只覆盖',
+            ('t', '随机', BOLD),
+            '（A 类）部分。把量级搬到最终结果上看：本实验测得 ',
+            ('t', 'Q_{s}^{0}', ITALIC),
+            ('t', ' = (%s) kJ·mol⁻¹' % pm(Qs0, s_rand)),
+            _mid,
+            ('t', 'E_{r}', ITALIC), ('t', ' = %s%%。' % pct(dev)),
+        ])
+        rb.equation(r'E_{r}=\frac{%.2f-%.2f}{%.2f}\times100\%%=%s\%%'
+                    % (Qs0, float(lit), float(lit), pct(dev)))
+        ratio = dev / rel_rand if rel_rand else 0.0
+        _ratio = ('偏差是随机不确定度的约 %s 倍。' % k(ratio, 0))
+        _tail = ('——重复测量能把 σ 压小，却压不掉这 %s%% 的偏差。'
+                 '因此改进方向不应停在“多测几次”，必须去纠正系统项。'
+                 % pct(dev))
+        rb.para([
+            _ratio,
+            ('t', '这说明误差的主体不是随机误差，而是系统误差', BOLD),
+            _tail,
+        ])
+    else:
+        rb.para([
+            '本报告未填入手册值，故只给出随机部分：',
+            ('t', 'Q_{s}^{0}', ITALIC),
+            ('t', ' = (%s) kJ·mol⁻¹，相对不确定度 %s%%。'
+                  % (pm(Qs0, s_rand), pct(s_rand / abs(Qs0) * 100 if Qs0 else 0.0))),
+            '若要进一步判断系统误差，需在界面“手册值”一栏填入文献值后重新生成。',
+        ])
+
+    # ---- 系统项逐条定性 + 量级估计
+    t_heat = float(ex.get('t_heat') or (ex['t2'] - ex['t1']))
+    p = ex['points']
+    t = ex['data'].t
+    t_diss = float(t[p[3]] - t[p[1]])
+    rb.para([
+        '对系统项逐条估计量级（Level 1 的后半）：',
+    ])
+    rb.caption('表7  系统误差来源的量级估计')
+    sys_rows = [
+        # ⚠ 每格都要能在给定列宽里**单行排下**（课程模板要求表格不换行）。
+        # 实测列宽 [4.2, 5.0, 3.9, 2.1] cm，第一列可用宽仅约 40 mm ≈ 10 个汉字
+        # ——带括号补注就会折行（实测「稀溶液近似（以 c 代 a）」就折了）。
+        # 所以第一列只写来源名，具体数值一律挪到第二列。
+        ['热交换时间不对称',
+         '%s s vs %s s' % (k(t_heat, 0), k(t_diss, 0)),
+         'ΔΔT′ 偏小更多',
+         '主要'],
+        ['加热丝接触电阻',
+         'R₁−R₂ = %.2f Ω' % abs(ex['R2'] - ex['R1']),
+         'Δ Q 偏大',
+         '较大'],
+        ['溶质未溶尽 / 飞溅',
+         '加料 %s g' % k(ex['solute_mass'], 4),
+         '实际溶质偏少',
+         '次要'],
+        ['稀溶液近似',
+         '以 c 代 a，n₀ ≤ %s' % k(max(r['n0'] for r in rounds), 0),
+         '活度系数 < 1',
+         '次要'],
+        ['密度 / 比热容取定值',
+         '按室温查表',
+         '影响 < 0.1%',
+         '可忽略'],
+    ]
+    rb.table(['系统来源', '本实验的实际取值', '作用方向', '量级判断'],
+             sys_rows, font_size=10.5, widths_cm=[4.2, 5.0, 3.9, 2.1],
+             keep_together=True)
+    rb.para([
+        '结合 4.4 的讨论：加热时间显著长于溶解时间，使两个过程的热交换不对称，'
+        '这是最可能主导系统偏差的一项；电阻测量中的接触电阻次之。'
+        '两者都让 ', ('t', 'Δ Q', ITALIC), ' 系统性偏大，方向与实测偏高一致，'
+        '可以解释偏差的符号。',
+    ])
+
+    # ---- Level 3：改进方案
+    rb.para('Level 3 改进实验方案设计。由上两级的结论，改进应针对系统项而非重复次数：')
+    rb.caption('表8  针对主导误差来源的改进措施')
+    rb.table(
+        ['针对的来源', '具体改进', '预期效果'],
+        [
+            ['热交换时间不对称',
+             '提高加热功率，使两段时长接近',
+             '偏差随之减小即可确认'],
+            ['接触电阻',
+             '改四线法测电阻并复测',
+             '消除 R 的系统性高估'],
+            ['恒温槽波动',
+             '加长平台段，取点改人工复核',
+             '降低 A 类的温差项'],
+            ['随机误差已较小',
+             '保持现有重复次数',
+             'σ 仅 %.1f%%，再加次数收益低'
+             % (s_rand / abs(Qs0) * 100 if Qs0 else 0.0)],
+        ],
+        font_size=10.5, widths_cm=[3.5, 6.6, 5.1],
+        keep_together=True)
+    _pred_head = '判断改进是否有效的'
+    _pred_body = ('：若把加热功率提高到使加热时间与溶解时间'
+                  '大致相等，则热交换的不对称性被消除，%s相对偏差应从当前的 %s%% 明显下降；'
+                  '若偏差几乎不变，则说明主因不是热交换而是电阻项，应转而检查电阻测量方式。'
+                  % (('手册值的' if lit else '结果的'),
+                     (pct((Qs0 - float(lit)) / abs(float(lit)) * 100.0) if lit else '—')))
+    rb.para([
+        _pred_head,
+        ('t', '可检验预测', BOLD),
+        _pred_body,
+    ])
+
+
+# ================================================================ 4.6 小结
 def _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label):
     rounds = analysis.rounds
     Qs0, a = fit['Qs0'], fit['a']
     i200 = list(MARK_N0).index(200)
-    rb.heading('4.5 小结', 3)
+    rb.heading('4.6 小结', 3)
     rb.para([
         '本实验通过电热补偿法测量%s的溶解热。分批次加入溶质，测出每次实验的热效应。'
         '根据先后加入的溶质总量可求出总浓度，而各次热效应总和即为该浓度下的溶解热。'
@@ -777,7 +1019,11 @@ def _sec_summary(rb, analysis, fit, diff, cfg, lit, sub_label):
         ('t', 'q_{d}', ITALIC), ('t', ' = %.3f J·mol⁻¹，' % diff['Qs_n0'][i200]),
         ('t', 'q_{s}', ITALIC), ('t', ' = %.2f kJ·mol⁻¹。' % diff['Qs_n2'][i200]),
     ])
-    rb.para('最后，对经验公式的合理性进行了简单分析，由式(12)估算了溶解热的平均'
-            '偏差（约 0.1 kJ），并对实验结果的不确定度和误差进行了分析。'
-            '分析表明该实验的一个改进方向是增大加热功率，使溶解时间和加热时间'
-            '近似相等。')
+    rb.para('最后，对经验公式的合理性进行了简单分析，由式(12) 估算了溶解热的平均'
+            '偏差（约 0.1 kJ），并按要求把误差来源逐层分解：先穷举（Level 0），'
+            '再用不确定度传播给出各项的定量占比（Level 1、2），'
+            '最后据此提出改进方案（Level 3）。'
+            '分解结果显示，随机部分只占结果不确定度的极小份额，'
+            '而误差主体是热交换时间不对称与接触电阻这两项系统误差，'
+            '因此改进方向不是增加重复次数，而是让加热段与溶解段时长接近、'
+            '并改用更可靠的电阻测量方式。')
