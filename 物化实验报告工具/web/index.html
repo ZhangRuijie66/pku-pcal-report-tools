@@ -617,7 +617,12 @@ async function applyUpdate() {
   updSay(UPD_HOLD);
   updButtons();
   try {
-    const j = await postJson('/api/update/apply', { tag: latest, restart: true });
+    // ⚠️ 这里必须传 tag（带 v），不能传 latest（归一化版本号）。
+    // v1.0.0~v1.4.3 一直传的是 latest，后端拼出 .../refs/tags/1.4.3，
+    // 而仓库打的 tag 是 v1.4.3 → codeload 404，「下载并安装」必然失败。
+    // 后端 updater.canonical_tag() 已能兜住裸版本号，这里再按 tag 优先发一遍。
+    const tag = UPD.tag || latest;
+    const j = await postJson('/api/update/apply', { tag: tag, restart: true });
     if (!j.ok) {
       UPD_HOLD = '';
       UPD_BUSY = false;

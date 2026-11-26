@@ -398,10 +398,56 @@ def check_for_update(force=False, timeout=8):
 
 
 # ---------------------------------------------------------------- 下载 / 解包
+def canonical_tag(tag):
+    """`1.4.3` → `v1.4.3`；本来不是版本号形式的 tag 原样返回。
+
+    ⚠️ 历史坑（2026-11-26 用户实测撞到）：入口页从 v1.0.0 起就把
+    **归一化版本号**（`latest`，没有 `v`）当 tag 发给后端，后端直接拼成
+    `.../zip/refs/tags/1.4.3`，而仓库里打的 tag 是 `v1.4.3` → codeload 回 404，
+    于是「下载并安装」在**每一个已发布版本上**都必然失败，报
+    「下载更新包失败（HTTP 404）：…/refs/tags/1.4.3」。
+
+    因为坏掉的入口页已经随旧版本发出去了，光改前端救不了正在用的旧安装，
+    所以必须在后端把 tag 归一化。
+    """
+    text = str(tag or '').strip()
+    if not text or _version.version_tuple(text) is None:
+        return text
+    return _version.tag_for(text)
+
+
+def _tag_candidates(tag):
+    """按优先级给出要试的 tag：规范形式在前，裸版本号兜底。"""
+    text = str(tag or '').strip()
+    if not text:
+        return []
+    first = canonical_tag(text)
+    out = [first]
+    bare = _version.normalize(text)
+    if _version.version_tuple(text) is not None and bare != first:
+        out.append(bare)                  # 万一仓库打的 tag 没有 v 前缀
+    return out
+
+
 def download_package(tag, dest_zip, progress=None, timeout=180):
     """下载 tag 的源码 zip（codeload），返回本地路径。"""
     if not tag:
         raise UpdateError('没有指定要下载的 tag')
+    last_exc = None
+    for candidate in _tag_candidates(tag):
+        try:
+            return _download_one(candidate, dest_zip, progress=progress,
+                                 timeout=timeout)
+        except _TagNotFound as exc:
+            last_exc = exc               # 换一种 tag 写法再试
+    raise UpdateError(str(last_exc) if last_exc else '没有可用的 tag')
+
+
+class _TagNotFound(UpdateError):
+    """这个 tag 在远端不存在（可能是写法不对）——可以换个写法重试。"""
+
+
+def _download_one(tag, dest_zip, progress=None, timeout=180):
     url = '%s/%s/zip/refs/tags/%s' % (_codeload_base(), _version.REPO_SLUG,
                                       urllib.parse.quote(tag))
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
@@ -436,6 +482,10 @@ def download_package(tag, dest_zip, progress=None, timeout=180):
         os.replace(tmp, dest_zip)
         return dest_zip
     except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # 单独分类：换个 tag 写法可能就存在了（见 canonical_tag 的说明）
+            raise _TagNotFound('下载更新包失败（HTTP 404）：%s\n'
+                               '远端没有这个 tag。' % url)
         raise UpdateError('下载更新包失败（HTTP %d）：%s' % (exc.code, url))
     except urllib.error.URLError as exc:
         raise UpdateError('下载更新包时网络中断（%s）：%s' % (exc.reason, url))
@@ -858,11 +908,20 @@ def update_now(tag=None, expected_version=None, timeout=180, progress=None,
     """检查（或直接用给定 tag）→ 下载 → 解包 → 安装，返回安装结果。
 
     给 `_tools/launcher.py --update --apply` 和测试用；网页走 /api/update/apply。
+
+    ⚠️ `tag` 允许传裸版本号（`1.4.3`）也允许传 `v1.4.3`：入口页从 v1.0.0 起
+    一直传的是裸版本号（见 `canonical_tag` 的说明），已发布的旧安装都改不了，
+    只能在这里兜住。
     """
     if not tag:
         remote = latest_remote_tag(timeout=min(20, max(8, timeout // 10)))
         tag = remote['tag']
         expected_version = expected_version or remote['version']
+    else:
+        tag = canonical_tag(tag)
+        # 前端只给 tag 不给期望版本时，用 tag 自己当版本守门：
+        # `apply_package` 会把包内 APP_VERSION 与它比对，装错包能立刻发现。
+        expected_version = expected_version or _version.normalize(tag)
     work = os.path.join(updates_dir(), 'download')
     os.makedirs(work, exist_ok=True)
     try:
