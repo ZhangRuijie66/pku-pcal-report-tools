@@ -52,6 +52,21 @@ LAMBDA_THEO = {
 PKA_HAC = 4.756               # CRC，25 ℃
 KA_HAC = 10 ** (-PKA_HAC)     # = 1.754×10⁻⁵
 
+#: 25 ℃ 附近各离子的摩尔电导率温度系数 β = (1/Λ)(dΛ/dT)，单位 %/℃。
+#:
+#: 用途：**温度补偿误差**的定量估计。电导率仪按固定的 "2.00 %/℃" 做线性
+#: 补偿（见数据文件 ``compensation``），而真实溶液的 β 随离子种类而变——
+#: H⁺ 的 β 只有约 1.45 %/℃，Ac⁻/Na⁺ 约 2.1 %/℃，所以「用一个 2.00 补偿
+#: 所有溶液」本身就有残差。
+#:
+#: 取自 CRC Handbook「Conductivity of Electrolytes」表中 25 ℃ 附近各离子
+#: 的 dΛ/dT 折算（表列的是 Λ(T) 的一阶系数，单位 S·m²·mol⁻¹·K⁻¹）。
+#: 报告里只作**半定量**量级估计用，不作精确定量依据。
+ION_TEMP_COEFF = {'H': 1.45, 'Na': 2.10, 'Ac': 2.15, 'Cl': 2.05}
+
+#: 实验的**参考温度**：电导率仪一律把读数补偿到 25 ℃（``T_REF_C``）。
+T_REF_C = 25.0
+
 #: 三种强电解质，顺序即报告里的表号顺序（表3/表4/表5、图3/图4/图5）。
 STRONG_SPECIES = ('NaCl', 'NaAc', 'HCl')
 #: 全部物种（含弱电解质），按加和关系组合时也依这个顺序。
@@ -558,3 +573,457 @@ def k_from_fit(rows, lam_inf, sigma_lam_inf):
     fit['x'] = x
     fit['y'] = y
     return fit
+
+
+# ---------------------------------------------------------------- 误差预算
+#
+# 为什么需要这一节：3.3 里报的 σ(K°) 只是 **A 类**（由瓶间离散或读数末位
+# 传播得到），它答不了「K° 的误差到底来自哪几项、各占多少」。课程要求的
+# 误差分析要的是**对最终量的贡献分解**，所以这里按最终量 K° 做一次预算。
+#
+# 口径（三处必须说清，报告里也要印出来）：
+#
+#   1. **灵敏度用一阶解析式**。K° = (c/c°)α²/(1−α)、α = κ_c/(cΛ∞) 给出
+#          |∂lnK/∂lnc| = 1+r,   ∂lnK/∂lnκ_c = ∂lnK/∂(−lnΛ∞) = 2+r,
+#      其中 r = α/(1−α)。α < 0.11 时 r < 0.12，所以两个系数分别在 1.07 和
+#      2.07 附近——**κ 的影响约为浓度的 2 倍**，这不是"两项差不多"。
+#
+#   2. **Λ∞(HAc) 的误差要按组合式传**。Λ∞(HAc)=Λ∞(NaAc)+Λ∞(HCl)−Λ∞(NaCl)，
+#      所以某一物种 Λ∞ 的误差对 K° 的贡献是 (2+r)·w_s·σ(Λ∞_s)/Λ∞(HAc)，
+#      权重 w_s = ±Λ∞_s/Λ∞(HAc)。实测 HAc 中 Λ∞(HCl)=0.0431 远大于其余两项,
+#      于是 w(HCl)=1.09（主导）、w(NaCl)=−0.31、w(NaAc)=0.23——**Λ∞(HCl)
+#      的一个小误差会被放大 1.09 倍传进 K°**，而它自身的相对不确定度只有
+#      0.65%，在三个物种里最小。按「谁自己相对误差大谁就最重要」来排序会
+#      得到相反结论。这里按**权重×自身误差**算，不按自身误差排序。
+#
+#   3. **温度补偿在 K° 里一阶抵消**。因为 Λ∞(HAc) 由同一批离子加和得到，
+#      与 HAc 溶液自身的电导率**同源**：补偿系数整体偏一点，κ(HAc) 与
+#      Λ∞(HAc) 按同一比例变，比值不变，K° 就不变。实测：|25−T|=1.5 K、
+#      各物种 β 与设定 2.00 差 −0.44~+0.12 %/℃，代入后 ΔK°/K° = −0.005%。
+#      所以温度补偿对 **K°** 是 0.0% 档，但对 **表6 的 Λ∞ 绝对值**是
+#      O(0.7%) 档——两件事不能混为一谈，报告里必须分开说。
+#
+# 合成口径：各项均折算成 **ΔK°/K° 的相对量**后按方和根合成（相互独立）。
+# 「共同项」（拟合、温度补偿、母液/容量瓶）对每瓶同向，不随瓶数下降；
+# 「独立项」（逐瓶读数、逐瓶移液管、逐瓶温度波动）随瓶数按 1/√n 下降。
+
+#: 容量允差（GB/T 12807 A 类，mL）。键是标称容量，值是允差。
+PIPETTE_TOL_ML = {0.5: 0.010, 1.0: 0.007, 2.0: 0.010, 5.0: 0.015,
+                  10.0: 0.020, 25.0: 0.030, 50.0: 0.050}
+FLASK_TOL_ML = {50.0: 0.06, 100.0: 0.10, 250.0: 0.15}
+FLASK_VOLUME_ML = 100.0        # 讲义配制表：一律定容到 100 mL
+#: 母液浓度的相对不确定度（%）。母液由老师配制并标定，学生不参与，
+#: 只能按「大致的四位数浓度」估；这是**估计值**，报告里要标明。
+STOCK_REL_PCT = 0.5
+#: 读数期间的恒温槽温度波动（℃）。讲义要求恒温，实际波动按 ±0.2 K 估。
+TEMP_FLUCT_K = 0.2
+#: 三角分布换算成标准不确定度的除数（容量允差是「最大允许误差」，按三角分布）
+_TOL_DIVISOR = np.sqrt(3.0)
+
+
+def pipette_for(volume_ml):
+    """取能一次性放出 ``volume_ml`` 的**最小**标称吸量管，返回 (标称, 允差)。
+
+    讲义配制表用的量取体积是 10/4/2/1/0.5 mL，而移液管只有 1/2/5/10/25 mL
+    这些标称规格（0.5 mL 用 1 mL 分度管估读）。所以 4 mL 实际是用 5 mL
+    移液管放到 4 mL 刻度——允差按**标称 5 mL 的允差**算，相对不确定度因此
+    是 0.015/4 = 0.375% 而不是 0.015/5 = 0.3%。这一步容易写错。
+    """
+    for nom in sorted(PIPETTE_TOL_ML):
+        if volume_ml <= nom + 1e-9:
+            return float(nom), float(PIPETTE_TOL_ML[nom])
+    nom = max(PIPETTE_TOL_ML)
+    return float(nom), float(PIPETTE_TOL_ML[nom])
+
+
+def species_temp_coeff(key):
+    """某电解质的电导率温度系数 β（%/℃），由离子值按 Λ 加权。
+
+    κ = Λm·c 而 Λm∞ 是各离子之和，所以盐的 β 是离子 β 按**离子摩尔电导率**
+    加权（不是算术平均）：β_salt = Σ(λ_i·β_i)/Σ(λ_i)。
+    """
+    ions = {'NaCl': ('Na', 'Cl'), 'NaAc': ('Na', 'Ac'),
+            'HCl': ('H', 'Cl'), 'HAc': ('H', 'Ac')}.get(key)
+    if not ions:
+        return float('nan')
+    lam = [LAMBDA_ION[i] for i in ions]
+    tot = sum(lam)
+    if tot <= 0:
+        return float('nan')
+    return sum(l * ION_TEMP_COEFF[i] for l, i in zip(lam, ions)) / tot
+
+
+def _lambda_weights(fits, lam_hac, combo):
+    """组合式里各物种的**相对权重** w_s（加项为正、减项为负）。
+
+    Λ∞(HAc) = Σ_add Λ∞_s − Σ_sub Λ∞_s，所以
+        ∂Λ∞(HAc)/∂Λ∞_s = ±1
+    写成相对形式：εΛ(HAc) = Σ w_s·εΛ_s，w_s = ±Λ∞_s / Λ∞(HAc)。
+    """
+    out = {}
+    if not lam_hac:
+        return out
+    for k in combo.get('add', []):
+        out[k] = float(fits[k]['lam_inf']) / lam_hac
+    for k in combo.get('sub', []):
+        out[k] = -float(fits[k]['lam_inf']) / lam_hac
+    return out
+
+
+def conduct_order(combo):
+    """组合式里出现的物种（加项在前、减项在后），按 STRONG_SPECIES 归一顺序。"""
+    keys = list((combo or {}).get('add', [])) + list((combo or {}).get('sub', []))
+    return [k for k in STRONG_SPECIES if k in keys]
+
+
+def _kbar_forward(tables, combo, kf=None, kappa_w=None):
+    """独立的**前向模型**：按给定的 κ 缩放因子重算 K̄（求平均法均值）。
+
+    ``kf`` = {物种: [逐瓶因子]}，把``tables[物种]`` 的**测量电导率**乘上这些
+    因子（缺省为 1）。返回 ``(K̄, Λ∞(HAc))``；数据不齐时返回 ``(nan, nan)``。
+
+    ⚠ 为什么误差预算必须走这个前向模型，而不是套解析灵敏度系数：
+
+    一开始我按教科书公式推 ∂lnK/∂lnc = 1+r、∂lnK/∂lnκ = 2+r，然后逐项相乘。
+    用整链有限差分一验，**符号和量级都不对**——因为这些误差并不是干净地只
+    作用在一个输入量上：
+
+      · 「母液浓度偏 f 倍」并不是「浓度变 f 倍」：实际浓度偏 f 时，测到的 κ
+        也同比例偏大，而程序用的仍是**名义** c。于是 Λm = κ/c 偏 f、α = Λm/Λ∞
+        里 f 又抵消，真正传下去的是「κ 偏 f 而 c 不动」。直接对 c 求偏导会得到
+        完全不同的结果（实测：按 c 求偏导得 −1.07，按真实机制只有 2+r 的路径）。
+      · Λ∞(HAc) 是**三个强电解质的加减**，带正负权重，某一物种的误差可能被
+        放大（HCl 权重 1.09）也可能反向（NaCl 权重 −0.31）。手推容易丢符号。
+      · K̄ 是**各瓶 K 的平均**，单瓶扰动的系数是 w_i(2+r_i)（w_i 为瓶权重），
+        把「单瓶」当成「全体」会差 n 倍。
+
+    与其把这三层耦合手推一遍（我推错过两版），不如让代码自己算：给 κ 加
+    一个小扰动、重跑整条链、读 ΔK̄/K̄。符号与量级由构造保证，并与主计算共用
+    同一套 ``kohlrausch`` / ``k_from_mean``，不会另立口径。
+    """
+    if not tables:
+        return float('nan'), float('nan')
+    present = [k for k in STRONG_SPECIES if k in tables]
+    if len(present) < len(STRONG_SPECIES):
+        return float('nan'), float('nan')
+    need = list(STRONG_SPECIES) + ['HAc']
+    if 'HAc' not in tables:
+        return float('nan'), float('nan')
+
+    def rows_for(key):
+        src = tables[key]
+        f = (kf or {}).get(key) or [1.0] * len(src)
+        out = []
+        for r, fi in zip(src, f):
+            km = float(r.get('kappa', float('nan')))
+            if not np.isfinite(km):
+                km = r['kappa_corr'] + (kappa_w or 0.0)
+            kw = (kappa_w if kappa_w is not None
+                  else float(r['kappa']) - float(r['kappa_corr']))
+            kc = km * fi - kw
+            c = float(r['c'])
+            out.append(dict(c=c, kappa=km * fi, kappa_corr=kc,
+                            sigma_kappa=r.get('sigma_kappa', float('nan')),
+                            lam=(kc / c) if c else float('nan')))
+        return out
+
+    fits = {}
+    for key in STRONG_SPECIES:
+        fits[key] = kohlrausch(rows_for(key))
+    lam, _sig = combo_lambda_inf(fits, combo)
+    if not np.isfinite(lam):
+        return float('nan'), float('nan')
+    rows_h = rows_for('HAc')
+    ks = [k_bottle(r['c'], r['kappa_corr'], lam)['k'] for r in rows_h
+          if r['c'] and np.isfinite(r['kappa_corr'])]
+    if not ks:
+        return float('nan'), float('nan')
+    return float(np.mean(ks)), float(lam)
+
+
+def _budget_forward(tables, combo, per_species=None, per_bottle=None,
+                    kappa_w=None):
+    """把一批 κ 扰动施加到前向模型上，返回 ``ΔK̄/K̄``（分数）。
+
+    ``per_species``: {物种: 相对扰动}，该物种**所有瓶一起**动（共同项）
+    ``per_bottle``: [(物种, 瓶序号, 相对扰动), …]，逐瓶独立扰动
+    """
+    K0, _ = _kbar_forward(tables, combo, kappa_w=kappa_w)
+    if not np.isfinite(K0) or K0 == 0:
+        return float('nan')
+    kf = {}
+    for key, eps in (per_species or {}).items():
+        n = len(tables.get(key) or [])
+        if n:
+            kf[key] = [1.0 + eps] * n
+    for key, idx, eps in (per_bottle or []):
+        if key not in tables:
+            continue
+        f = kf.get(key)
+        if f is None or len(f) != len(tables[key]):
+            f = [1.0] * len(tables[key])
+        else:
+            f = list(f)
+        f[idx] = f[idx] * (1.0 + eps)
+        kf[key] = f
+    K1, _ = _kbar_forward(tables, combo, kf=kf, kappa_w=kappa_w)
+    if not np.isfinite(K1):
+        return float('nan')
+    return (K1 - K0) / K0
+
+
+def error_budget(tables, fits, lam_inf, sigma_lam_inf, combo,
+                 temp_c=None, compensation=None, kappa_w=None,
+                 stock_rel_pct=None, flask_ml=None, temp_fluct_k=None):
+    """把 K° 的误差拆成可命名的几项，返回 dict。
+
+    参数
+    ----
+    tables : {物种: solution_table 的行}，需含 c / kappa / kappa_corr /
+        sigma_kappa。**四个物种都要**（组合式要用三个强电解质）。
+    fits : 三种强电解质的 Kohlrausch 拟合结果（取 sigma_inf）
+    lam_inf, sigma_lam_inf : 组合得到的 Λ∞(HAc) 及其标准误
+    combo : 离子独立运动定律的组合 {'add': [...], 'sub': [...]}
+    temp_c / compensation : 实测温度（℃）与仪器设定的补偿系数（%/℃）
+    kappa_w : 去离子水电导率（S·m⁻¹）
+
+    各项都由 :func:`_budget_forward` 的**数值扰动**给出（见该函数说明），
+    不用手推的灵敏度系数。
+
+    返回::
+
+        {'ok': bool,
+         'terms': [{'key','name','value'(相对 K 的分数),'pct','share',
+                    'kind':'common'|'independent','detail'}, …],  # 按 value 降序
+         'total'/'total_pct': 合成相对不确定度,
+         'coef': {'kappa': 2+r̄, 'c': 1+r̄},   # 仅供参考，不参与合成
+         'weights': {物种: 组合权重},
+         'comp_cancel': bool,      # 温度补偿是否一阶抵消
+         'lam_comp_pct': 温度补偿对**表6 各 Λ∞ 绝对值**的影响（%）
+         'notes': [...]}
+
+    退化情形（数据不齐、温度未填）时 ``ok`` 为 False，``notes`` 说明原因。
+    **不抛异常**。
+    """
+    notes = []
+    terms = []
+
+    if not tables or 'HAc' not in tables:
+        return dict(ok=False, terms=[], total=float('nan'),
+                    total_pct=float('nan'),
+                    notes=['缺少 HAc 数据，无法做 K° 的误差预算。'])
+    # ⚠ 先查缺物种、再查 Λ∞ 是否可用：强电解质不齐时 Λ∞(HAc) 必然是 NaN
+    # （组合式做不出来），若先查 Λ∞ 就只会得到「Λ∞ 不可用」这句笼统的话，
+    # 读者看不出到底是缺了哪一瓶的数据。诊断信息要指向**可操作**的原因。
+    missing = [k for k in STRONG_SPECIES if k not in tables]
+    if missing:
+        return dict(ok=False, terms=[], total=float('nan'),
+                    total_pct=float('nan'),
+                    notes=['强电解质数据不齐（缺 %s），组合式不成立，'
+                           '无法做 K° 的误差预算。'
+                           % '、'.join(SPECIES_LABEL.get(k, k) for k in missing)])
+    if not np.isfinite(lam_inf) or lam_inf <= 0:
+        return dict(ok=False, terms=[], total=float('nan'),
+                    total_pct=float('nan'),
+                    notes=['Λ∞(HAc) 不可用（拟合退化或浓度点太少），'
+                           '无法做 K° 的误差预算。'])
+
+    rows_h = [r for r in tables['HAc']
+              if np.isfinite(r.get('c', np.nan)) and r['c'] > 0]
+    if len(rows_h) < len(tables['HAc']):
+        notes.append('HAc 有无法解析的浓度，已从预算中剔除对应瓶。')
+    n = len(rows_h)
+    if n < 2:
+        notes.append('HAc 只有 %d 瓶有效数据，误差预算的说服力有限。' % n)
+
+    if kappa_w is None:
+        r0 = tables['HAc'][0]
+        kappa_w = float(r0.get('kappa', 0.0)) - float(r0.get('kappa_corr', 0.0))
+
+    stock_rel = (STOCK_REL_PCT if stock_rel_pct is None else float(stock_rel_pct))
+    flask = (FLASK_VOLUME_ML if flask_ml is None else float(flask_ml))
+    t_fluct = (TEMP_FLUCT_K if temp_fluct_k is None else float(temp_fluct_k))
+    flask_tol = FLASK_TOL_ML.get(flask)
+    if flask_tol is None:
+        nearest = min(FLASK_TOL_ML, key=lambda v: abs(v - flask))
+        flask_tol = FLASK_TOL_ML[nearest] * flask / nearest
+        notes.append('定容体积 %.0f mL 不在容量瓶允差表内，按 %.0f mL 折算。'
+                     % (flask, nearest))
+
+    weights = _lambda_weights(fits, lam_inf, combo)
+    order = conduct_order(combo)
+
+    # ---- 灵敏度系数（只用于正文说明"为什么 κ 的影响约为 c 的两倍"）
+    rs = [max(r['kappa_corr'], 0.0) / (r['c'] * lam_inf) for r in rows_h]
+    rr = [a / (1.0 - a) for a in rs if a < 1.0]
+    s_c = 1.0 + float(np.mean(rr)) if rr else float('nan')
+    s_kap = 2.0 + float(np.mean(rr)) if rr else float('nan')
+
+    def add(key, name, value, kind, detail):
+        if value is None or not np.isfinite(value):
+            return
+        terms.append(dict(key=key, name=name, value=abs(float(value)),
+                          kind=kind, detail=detail))
+
+    # ---- (1) 拟合误差 Λ∞(HAc)
+    # 每个物种的 Λ∞ 标准误按其自身相对大小扰动该物种的 κ（等价于扰动 Λ∞_s），
+    # 再 RSS。这样权重、符号、瓶数全部由前向模型负责。
+    fit_parts = []
+    for k in order:
+        if k not in fits or k not in weights:
+            continue
+        s = float(fits[k].get('sigma_inf', float('nan')))
+        lim = float(fits[k].get('lam_inf', float('nan')))
+        if not (np.isfinite(s) and np.isfinite(lim) and lim):
+            continue
+        eps = s / lim                       # 该物种 Λ∞ 的相对标准不确定度
+        d = _budget_forward(tables, combo, per_species={k: eps}, kappa_w=kappa_w)
+        if np.isfinite(d):
+            fit_parts.append((k, eps, d))
+    if fit_parts:
+        v = float(np.sqrt(sum(d ** 2 for _k, _e, d in fit_parts)))
+        lead = max(fit_parts, key=lambda t: abs(t[2]))
+        add('fit', '拟合误差', v, 'common',
+            'Λ∞(HAc) 由 %s 组合，权重 %s；主导项 %s（自身 %.2f%%、权重 %+.2f）'
+            % ('、'.join(SPECIES_LABEL.get(k, k) for k in order),
+               '、'.join('%s %+.2f' % (SPECIES_LABEL.get(k, k), weights[k])
+                        for k in order if k in weights),
+               SPECIES_LABEL.get(lead[0], lead[0]), lead[1] * 100,
+               weights.get(lead[0], float('nan'))))
+    else:
+        notes.append('各物种 Λ∞ 的标准误不可用（浓度点太少），拟合项无法估计。')
+
+    # ---- (2) 温度补偿：残差
+    lam_comp_pct = float('nan')
+    if temp_c is None or not np.isfinite(temp_c):
+        notes.append('未填实验温度，温度补偿与温度波动两项无法估计。')
+    elif compensation is None or not np.isfinite(compensation):
+        notes.append('未填补偿系数，温度补偿项无法估计。')
+    else:
+        dT = T_REF_C - float(temp_c)
+        eps = {}
+        for k in SPECIES_ORDER:
+            b = species_temp_coeff(k)
+            eps[k] = ((b - float(compensation)) * dT / 100.0
+                      if np.isfinite(b) else 0.0)
+        d = _budget_forward(tables, combo, per_species=eps, kappa_w=kappa_w)
+        add('comp', '温度补偿', d, 'common',
+            '|25−T| = %.1f K，仪器按固定 %.2f %%/℃ 补偿而各物种真实 β = %s，'
+            '残差代入后 ΔK/K = %+.3f%%'
+            % (abs(dT), float(compensation),
+               '、'.join('%s %.2f' % (SPECIES_LABEL.get(k, k),
+                                      species_temp_coeff(k))
+                        for k in SPECIES_ORDER
+                        if np.isfinite(species_temp_coeff(k))),
+               (d or 0.0) * 100))
+        # 对**表6 各 Λ∞ 绝对值**的影响（与 K 的抵消无关，单列供正文引用）
+        lam_comp_pct = max(abs(eps[k]) for k in STRONG_SPECIES
+                           if k in eps) * 100 if eps else float('nan')
+
+        # 温度波动：逐瓶独立
+        b_h = species_temp_coeff('HAc')
+        if np.isfinite(b_h):
+            u = t_fluct * b_h / 100.0
+            per = [('HAc', i, u) for i in range(len(tables['HAc']))]
+            # 强电解质也随温度漂，一并计入（它们进 Λ∞）
+            for k in order:
+                bk = species_temp_coeff(k)
+                if np.isfinite(bk):
+                    per.extend((k, i, t_fluct * bk / 100.0)
+                               for i in range(len(tables.get(k) or [])))
+            d = _budget_forward(tables, combo, per_bottle=per, kappa_w=kappa_w)
+            add('fluct', '温度波动', d, 'independent',
+                '恒温槽波动 ±%.1f K，按各物种 β 折算为 κ 的随机波动，逐瓶独立'
+                % t_fluct)
+
+    # ---- (3) 溶液浓度（母液标定 + 容量瓶定容）：同一物种内为共同项
+    u_flask = flask_tol / _TOL_DIVISOR / flask
+    u_conc = float(np.sqrt((stock_rel / 100.0) ** 2 + u_flask ** 2))
+    parts = []
+    for k in SPECIES_ORDER:
+        d = _budget_forward(tables, combo, per_species={k: u_conc},
+                            kappa_w=kappa_w)
+        if np.isfinite(d):
+            parts.append(d)
+    if parts:
+        add('conc', '溶液浓度', float(np.sqrt(sum(x ** 2 for x in parts))),
+            'common',
+            '母液 %.1f%%（估计值）+ 容量瓶 %.0f mL 允差 ±%.2f mL → '
+            'u(c)/c = %.3f%%；实际偏 f 倍时测到的 κ 也同比例偏大、而程序用的是'
+            '名义 c，故按「κ 偏 f」传入'
+            % (stock_rel, flask, flask_tol, u_conc * 100))
+
+    # ---- (4) 移液管允差：逐瓶独立
+    per = []
+    detail = []
+    vols = {}
+    for k in SPECIES_ORDER:
+        for j, v_ml in enumerate(_PREP_VOLUMES.get(k, [])):
+            if v_ml <= 0:
+                continue
+            nom, tol = pipette_for(v_ml)
+            u_rel = tol / _TOL_DIVISOR / v_ml
+            vols[(k, j)] = dict(volume_ml=v_ml, nominal_ml=nom,
+                                tol_ml=tol, u_rel=u_rel)
+            detail.append((k, j, v_ml, nom, tol, u_rel))
+        if k in tables and len(_PREP_VOLUMES.get(k, [])) == len(tables[k]):
+            per.extend((k, i, vols[(k, i)]['u_rel'])
+                       for i in range(len(tables[k])))
+    if per:
+        d = _budget_forward(tables, combo, per_bottle=per, kappa_w=kappa_w)
+        worst = max(detail, key=lambda t: t[5]) if detail else None
+        add('pip', '移液管允差', d, 'independent',
+            '按讲义配制表的量取体积逐瓶取「能放出该体积的最小标称规格」的允差'
+            '（GB/T 12807 A 类）；最大一项为量取 %.1f mL 用 %.1f mL 管'
+            '（±%.3f mL，u = %.2f%%）'
+            % (worst[2], worst[3], worst[4], worst[5] * 100) if worst else '')
+
+    # ---- (5) 电导率读数：逐瓶独立
+    per = []
+    ur = []
+    for i, r in enumerate(tables['HAc']):
+        sk = float(r.get('sigma_kappa', float('nan')))
+        if np.isfinite(sk) and r['kappa_corr'] > 0:
+            per.append(('HAc', i, sk / r['kappa_corr']))
+            ur.append(sk / r['kappa_corr'])
+    if per:
+        d = _budget_forward(tables, combo, per_bottle=per, kappa_w=kappa_w)
+        add('read', '电导率读数', d, 'independent',
+            '读数末位取 2（末位由量程分档决定，与记录几位小数无关），'
+            '逐瓶 σ_κ/κ = %.2f%%~%.2f%%' % (min(ur) * 100, max(ur) * 100))
+
+    # ---- 合成
+    total = float(np.sqrt(sum(t['value'] ** 2 for t in terms))) if terms else float('nan')
+    for t in terms:
+        t['pct'] = t['value'] * 100.0
+        t['share'] = (t['value'] ** 2 / total ** 2 * 100.0) if total else float('nan')
+    terms.sort(key=lambda t: -t['value'])
+
+    # 温度补偿是否一阶抵消：残差项远小于它对单个 Λ∞ 的影响，即为抵消
+    comp_term = next((t for t in terms if t['key'] == 'comp'), None)
+    comp_cancel = bool(
+        comp_term and np.isfinite(lam_comp_pct) and lam_comp_pct > 0
+        and comp_term['pct'] < 0.25 * lam_comp_pct)
+
+    return dict(ok=bool(terms) and bool(np.isfinite(total)),
+                terms=terms, total=total, total_pct=total * 100.0,
+                coef=dict(c=s_c, kappa=s_kap),
+                weights=weights, vols=vols,
+                comp_cancel=comp_cancel, lam_comp_pct=lam_comp_pct,
+                n=n, temp_c=temp_c, compensation=compensation,
+                dT=(T_REF_C - float(temp_c))
+                if (temp_c is not None and np.isfinite(temp_c)) else float('nan'),
+                stock_rel=stock_rel, flask_ml=flask, flask_tol_ml=flask_tol,
+                notes=notes)
+
+#: 母液浓度（mol·dm⁻³），讲义「仪器和试剂」给的值。用于反推投配体积。
+_STOCK_MOL_DM3 = {'NaCl': 0.25, 'NaAc': 0.25, 'HAc': 0.25, 'HCl': 0.1}
+#: 讲义配制表里各物种的量取体积（mL）。强电解质的投配体积以这张表为准，
+#: 因为报告正文的 c 就是按它配出来的——不要用「实测 c 反推」，那会把
+#: 学生的配制误差当成名义值，误差分析就自证其是了。
+_PREP_VOLUMES = {
+    'NaCl': [10.0, 4.0, 2.0, 1.0, 0.5],
+    'NaAc': [10.0, 4.0, 2.0, 1.0, 0.5],
+    'HAc': [10.0, 4.0, 2.0, 1.0, 0.5],
+    'HCl': [25.0, 12.0, 8.0, 5.0, 2.0],
+}

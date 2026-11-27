@@ -15,7 +15,8 @@
       3.3 弱电解质的数据处理     3.3.1 表7 表8（求平均法）  3.3.2 拟合直线法（图6 表9）
     4 讨论与结论
       4.1 强电解质极限摩尔电导率误差分析
-      4.2 弱电解质两种 K° 求解方法比较
+      4.2 标准电离平衡常数的误差来源分析
+      4.3 弱电解质两种 K° 求解方法比较（读了共享表时为 4.4）
       4.3 小结
     参考文献
 
@@ -109,7 +110,9 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     # ---- 封面
     group = str(cfg.get('group') or '').strip()
     group_no = str(cfg.get('group_no') or '').strip()
-    group_txt = ('%s 组 %s 号' % (group, group_no)) if (group and group_no) \
+    # 中文与西文之间**不加空格**（项目规范「汉字 空格 汉字」检查会抓）：
+    # 原来写成 '%s 组 %s 号' 会印出「周三 组 7 号」，两个空格都是多余的中文间空格。
+    group_txt = ('%s组%s号' % (group, group_no)) if (group and group_no) \
         else (group or group_no)
     temp = cfg.get('room_temp')
     pres = cfg.get('pressure')
@@ -287,11 +290,17 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
     rb.heading('4 讨论与结论')
     log('写讨论…')
     _sec_error_analysis(rb, analysis)
+    # 4.2 最终量 K° 的误差预算（用户 2026-11-27 要求）：4.1 讨论的是 Λm∞
+    # 的相对误差，这一节讨论的是「温度补偿 / 温度波动 / 溶液浓度 / 移液管允差 /
+    # 拟合误差」各自对 K° 的贡献。它依赖 esa/kmean，缺强电解质时只能说明原因。
+    log('写误差预算…')
+    _sec_error_budget(rb, analysis)
     # 共享数据那一节是**可选**的：读了共享表才有，没读时整节省略。
     # 所以后面两节的编号不能写死，要跟着顺移（否则会出现“4.1、4.3”跳号，
     # 或两个小节都叫 4.2）。
-    has_shared = _sec_shared(rb, analysis)
-    nxt = 3 if has_shared else 2
+    has_shared = _sec_shared(rb, analysis, 3)
+    # 4.1 误差分析 → 4.2 误差预算 已固定占两节，故后续从 4.3 起
+    nxt = 4 if has_shared else 3
     # ⚠ `_sec_method_compare` / `_sec_summary` 都依赖 kmean/kfit/esa；
     # 缺强电解质时为 None，原来会 TypeError。同 `_hac_ok` 一并判断。
     if _hac_ok:
@@ -327,10 +336,10 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
 def _sec_appendix(rb, an, pngs):
     """附录：组内分析的三张图（图7~图9）。
 
-    正文 4.2 节只给结论与数值（表10~表13），图放附录。理由是这三张图
-    都是“一人一点”的分布图，信息密度低于同页的统计表；正文若插三张，
-    4.2 节会从两页涨到四页，把讨论挤散。附录里图文并列，需要核对细节时
-    翻到最后即可。
+    正文 4.3 节（共享数据那节）只给结论与数值（表12~表15），图放附录。
+    理由是这三张图都是“一人一点”的分布图，信息密度低于同页的统计表；
+    正文若插三张，该节会从两页涨到四页，把讨论挤散。附录里图文并列，
+    需要核对细节时翻到最后即可。
 
     ⚠ 图号必须接着正文排（正文到图6），否则 audit_docx 的
     caption.gap 会报“图6 → 图7”以外的跳号。
@@ -345,14 +354,14 @@ def _sec_appendix(rb, an, pngs):
     if who:
         # 认领成功：直接写名字。若是两人合做一台仪器、表里填的是对方名字，
         # 这里如实印出“对应共享表中登记为 XX 的那一份”，不冒充成本人自测。
-        rb.para(['本附录给出 4.2 节所用组内分析的三张图。图中：空心圆为组内每人，'
+        rb.para(['本附录给出 4.3 节所用组内分析的三张图。图中：空心圆为组内每人，'
                  '红色实心为本人数据（对应共享表中登记为 %s 的那一份），'
                  '橙 × 为 Grubbs 检验判出的离群点，蓝带为 ±1 倍标准差范围，'
                  '绿色虚线为 CRC 离子加和的理论值。共 %d 位同学参与统计。'
                  % (who, n)])
     else:
         # 没认领到：不猜，也不把任何一个人标成"本人"
-        rb.para(['本附录给出 4.2 节所用组内分析的三张图。图中：空心圆为组内每人，'
+        rb.para(['本附录给出 4.3 节所用组内分析的三张图。图中：空心圆为组内每人，'
                  '橙 × 为 Grubbs 检验判出的离群点，蓝带为 ±1 倍标准差范围，'
                  '绿色虚线为 CRC 离子加和的理论值。共 %d 位同学参与统计。'
                  '（尚未指定“我的数据”，故图中未标出本人。）' % n])
@@ -605,7 +614,7 @@ def _sec_strong(rb, an, fit_pngs, hac_ok=True):
                  '（' % (len(_fit_keys), conduct.SPECIES_LABEL[_best_key]),
                  ('t', '|r|', ITALIC), ('t', ' = %.3f' % _abs_r, ITALIC),
                  '，最大），但仍有可见的弯曲。线性偏差的来源见 4.1 节：'
-                 '一方面是低浓度端电导率的绝对值小、仪器噪声与溶解 CO₂ 等'
+                 '一方面是低浓度端电导率的绝对值小、仪器噪声与溶解 CO_{2} 等'
                  '杂质的相对影响大；另一方面是电极浸入深度与摆放位置会改变'
                  '有效电导池面积，这部分对稀溶液尤为显著。'])
     else:
@@ -689,7 +698,7 @@ def _sec_weak_skipped(rb, an):
     """强电解质数据不齐、`esa`/`kmean`/`kfit` 为 None 时的替代小节。
 
     ⚠ 不能**静默省略**整个 3.3 节：读者会以为实验只做了强电解质，
-    或者以为报告漏印。必须写清楚「为什么没有」——这正是
+    或者以为报告漏印。必须写清楚“为什么没有”——这正是
     `Analysis.compute()` 已经给出的 warning，转述到报告里即可。
     """
     rb.heading('3.3 弱电解质的数据处理（本次未完成）', 2)
@@ -1031,14 +1040,405 @@ def _sec_error_analysis(rb, an):
         rb.para(_cmp)
     rb.para('线性欠佳的系统性原因在于：极低浓度下摩尔电导率较高，但绝对'
             '电导率很低，仪器噪声与杂质的影响很大。杂质可能来自空气及呼吸'
-            '带出的 CO₂；仪器方面，铂电极片的浸入深度、摆放位置都可能改变'
+            '带出的 CO_{2}；仪器方面，铂电极片的浸入深度、摆放位置都可能改变'
             '有效电导池面积，这些影响对稀溶液尤为显著。此外，Kohlrausch 经验'
             '公式只对“极稀溶液”成立，NaAc 还可能轻微水解，但本实验的浓度'
             '已处于一般文献认可的极稀范围内，不构成主要因素。')
 
 
-def _sec_shared(rb, an):
-    """4.2 节：共享数据的组内统计与 t/F 检验。
+# ---------------------------------------------------------------- 4.2 误差预算
+#
+# 用户 2026-11-27 指出：4.1 那一节讨论的是「强电解质 Λm∞ 的相对误差」，
+# 而课程要求的误差分析是**最终量 K° 的误差贡献分解**——温度补偿、温度波动、
+# 溶液浓度、移液管允差、拟合误差各占多少。两者是不同的对象：
+# 4.1 的自变量是 Λm∞（对表6），本节的自变量是 K°（对表9）。
+#
+# 本节的所有数字都来自 ``conduct.error_budget``，而它是用**数值扰动 + 整链
+# 重算**得到的，不是手推灵敏度系数乘出来的——原因见该函数的说明：三层耦合
+# （κ/c 的传导方式、Λ∞ 组合的正负权重、瓶平均）手推容易错符号或差 n 倍，
+# 我在这上面推错过两版，最后用有限差分定标才定下来。
+def _sec_error_budget(rb, an):
+    esa = an.esa
+    kmean = an.kmean
+    if esa is None or kmean is None:
+        return False
+    eb = conduct.error_budget(
+        an.tables, an.fits, esa['lam_inf'], esa['sigma'], esa['combo'],
+        temp_c=an.ctx.get('temp'), compensation=an.ctx.get('compensation'),
+        kappa_w=an.ctx.get('kappa_w'))
+    if not eb.get('ok'):
+        rb.heading('4.2 标准电离平衡常数的误差来源分析', 2)
+        rb.para(['本节本应对最终量 ', ('t', 'K^{⊖}', ITALIC),
+                 ' 作误差来源分解，但'])
+        rb.para(['；'.join(eb.get('notes') or ['数据不足，无法完成预算']) + '。'])
+        rb.para('补齐数据后重新生成报告，本节会自动给出完整的分项贡献。')
+        return True
+
+    rb.para(['4.1 节讨论的是 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+             ' 的相对误差（对应表6）；本节的对象是最终量 ',
+             ('t', 'K^{⊖}', ITALIC),
+             '（对应表9）。两者的误差来源并不相同：',
+             ('t', 'K^{⊖}', ITALIC),
+             ' 由 ', ('t', 'Λ_{m}', ITALIC), '、', ('t', 'c', ITALIC),
+             ' 和 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+             ' 共同决定，而 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+             '(HAc) 又要由三个强电解质的加减得到，误差在其中会被加权、'
+             '也可能相互抵消。因此有必要按对最终量的贡献逐项分解。'])
+
+    # ---- 4.2.1 灵敏度：为什么不能"按输入量直接乘"
+    rb.heading('4.2.1 各输入量对 K 的灵敏度', 3)
+    S2 = eb['coef']['kappa']
+    S1 = eb['coef']['c']
+    rb.para(['由 ', ('t', 'K^{⊖}', ITALIC), ' 与 ', ('t', 'α', ITALIC),
+             ' 的定义对 ', ('t', 'κ_{corrected}', ITALIC), '、', ('t', 'c', ITALIC),
+             ' 求偏导，可得相对灵敏度：'])
+    rb.equation(r'\left|\frac{\partial\ln K^{\ominus}}{\partial\ln c}\right|=1+\frac{\alpha}{1-\alpha},'
+                r'\qquad\left|\frac{\partial\ln K^{\ominus}}{\partial\ln\kappa}\right|'
+                r'=\left|\frac{\partial\ln K^{\ominus}}{\partial\ln\Lambda_{m}^{\infty}}\right|'
+                r'=2+\frac{\alpha}{1-\alpha}')
+    rb.para(['本实验各瓶的 ', ('t', 'α', ITALIC), ' 在 %s~%s 之间，'
+             % (_f3(min(b['alpha'] for b in kmean['bottles'])),
+                _f3(max(b['alpha'] for b in kmean['bottles']))),
+             '故两个系数分别为 ',
+             ('t', '%.3f' % S1, {}), ' 和 ', ('t', '%.3f' % S2, {}),
+             '——', ('t', 'κ', ITALIC),
+             ' 的误差对 ', ('t', 'K', ITALIC),
+             ' 的影响约为浓度的两倍。这一点决定了后面的排序：'
+             '凡是通过 ', ('t', 'κ', ITALIC),
+             ' 进入的项（读数、温度补偿、', ('t', 'Λ^{∞}', ITALIC),
+             '、母液与移液管引起的 ', ('t', 'κ', ITALIC),
+             ' 变化）都带 ', ('t', '≈2.07', {}), ' 的放大因子；'
+             '只有直接影响名义浓度的那部分带 ',
+             ('t', '≈1.07', {}), '。'])
+    rb.para(['需要特别强调一个容易写错的地方：配制偏浓时，测到的 ',
+             ('t', 'κ', ITALIC),
+             ' 也同比例偏大，而计算仍用配制表上的名义 ', ('t', 'c', ITALIC),
+             '。所以浓度类误差在 ', ('t', 'Λ_{m}=κ/c', ITALIC),
+             ' 里并不抵消——它表现为 ', ('t', 'κ', ITALIC),
+             ' 偏了而 ', ('t', 'c', ITALIC),
+             ' 没变，因而走的是 2.07 那条'
+             '路径，不是 1.07。若照“浓度误差只影响 ', ('t', 'c', ITALIC),
+             '”去算，会把 ',
+             'HAc 母液那一项低估一半。'])
+
+    # ---- 4.2.2 分项贡献
+    rb.heading('4.2.2 各误差来源的分项贡献', 3)
+    rb.para(['把上述各项的输入不确定度逐一代入完整的计算链（组合 ',
+             ('t', 'Λ_{m}^{∞}', ITALIC),
+             '(HAc) → 逐瓶 ', ('t', 'α', ITALIC), ' → 逐瓶 ',
+             ('t', 'K^{⊖}', ITALIC), ' → 求平均），重算 ',
+             ('t', 'K^{⊖}', ITALIC),
+             ' 的变化量，得到表10。每一项都是“只扰动该项、其余不动”的单次'
+             '重算，与正文的计算共用同一套函数，因此不存在另一套口径。'])
+    _NAME = {'fit': ('拟合误差', '各物种 ', None),
+             'conc': ('溶液浓度', '母液标定 + 容量瓶定容', None),
+             'read': ('电导率读数', '仪器末位（取 2）', None),
+             'pip': ('移液管允差', 'GB/T 12807 A 类', None),
+             'comp': ('温度补偿', '仪器补偿系数与真实 β 之差', None),
+             'fluct': ('温度波动', '恒温槽波动', None)}
+    rows = []
+    for t in eb['terms']:
+        nm = _NAME.get(t['key'], (t['name'], '', None))[0]
+        rows.append([nm,
+                     '共同' if t['kind'] == 'common' else '独立',
+                     '%.2f' % t['pct'],
+                     '%.1f' % t['share']])
+    rb.caption('表10  K^{⊖} 各误差来源的贡献（按对 K^{⊖} 的相对影响排序）')
+    rb.table(['误差来源', '性质', 'ΔK^{⊖}/K^{⊖} / %', '方差占比 / %'],
+             rows + [['合成', '—', '%.2f' % eb['total_pct'], '100']],
+             widths_cm=[3.6, 1.8, 4.0, 3.4])
+    rb.para(['表中“共同”指该项对各瓶同向作用（如拟合误差、母液浓度），'
+             '它不会因多测几瓶而减小；“独立”指逐瓶独立的随机项（如读数末位、'
+             '逐瓶移液），取平均后按 1/√n 下降。最后一列是方差占比'
+             '（平方后归一），所以几项相加可以超过 100%，这是独立误差按'
+             '平方和合成的直接结果，不是算错。'])
+
+    # ---- 4.2.3 逐项讨论（顺序由数据决定，不预设）
+    rb.heading('4.2.3 主要来源的机理', 3)
+    fitted = next((t for t in eb['terms'] if t['key'] == 'fit'), None)
+    conc = next((t for t in eb['terms'] if t['key'] == 'conc'), None)
+    read = next((t for t in eb['terms'] if t['key'] == 'read'), None)
+    pip = next((t for t in eb['terms'] if t['key'] == 'pip'), None)
+    comp = next((t for t in eb['terms'] if t['key'] == 'comp'), None)
+    fluct = next((t for t in eb['terms'] if t['key'] == 'fluct'), None)
+
+    # 名次由 eb['terms'] 的顺序给出（已按 value 降序），不写死「第 1 项是谁」
+    rank = {t['key']: i + 1 for i, t in enumerate(eb['terms'])}
+    _CN = {1: '（1）', 2: '（2）', 3: '（3）', 4: '（4）', 5: '（5）', 6: '（6）'}
+
+    if fitted is not None:
+        w = eb['weights']
+        order = conduct.conduct_order(esa['combo'])
+        # 主导物种 = |权重| × 自身相对不确定度 最大者
+        cand = []
+        for k2 in order:
+            if k2 not in w or k2 not in an.fits:
+                continue
+            lim = float(an.fits[k2].get('lam_inf', float('nan')))
+            sig = float(an.fits[k2].get('sigma_inf', float('nan')))
+            if np.isfinite(lim) and lim and np.isfinite(sig):
+                cand.append((k2, w[k2], sig / lim, abs(w[k2]) * sig / lim))
+        lead = max(cand, key=lambda t2: t2[3]) if cand else None
+        # ⚠ 「谁自身相对误差大谁就主导」是**错的**：实测 HCl 自身只有 0.65%
+        # （三个物种里最小），但它在组合式里权重 1.09、其余两项仅 ±0.2~0.3，
+        # 于是它反而是主导项。必须按「权重 × 自身误差」判，不能按自身误差判。
+        _wtxt = '、'.join('%s %+.2f' % (conduct.SPECIES_LABEL.get(k2, k2), w[k2])
+                          for k2 in order if k2 in w)
+        rb.para(['%s拟合误差（%.2f%%，占 %.0f%% 的方差）是本项中最大的来源。'
+                 % (_CN.get(rank.get('fit', 9), ''), fitted['pct'],
+                    fitted['share']),
+                 ('t', 'Λ_{m}^{∞}', ITALIC), '(HAc) 由 ',
+                 '、'.join(conduct.SPECIES_LABEL.get(k2, k2) for k2 in order),
+                 ' 加减得到，三者的拟合标准误按权重传递（权重 ',
+                 _wtxt, '）。'])
+        if lead:
+            rb.para(['真正起决定作用的不是自身相对误差最大的物种，而是'
+                     '“权重 × 自身误差”最大的那一个：本实验中 ',
+                     conduct.SPECIES_LABEL.get(lead[0], lead[0]),
+                     ' 自身的 ', ('t', 'σ/Λ_{m}^{∞}', ITALIC), ' 只有 ',
+                     ('t', '%.2f%%' % (lead[2] * 100), {}),
+                     '，在三个物种里并不突出，但它在组合式里的权重是 ',
+                     ('t', '%+.2f' % lead[1], {}),
+                     '（因为 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                     '(HCl) 数值远大于其余两项），放大后成为主导。'
+                     '这也解释了为什么单纯“把每个物种都拟合得更直”并不等价于'
+                     '“把 K 做得更准”——要优先压的是权重大的那个物种。'])
+        rb.para(['另一条不能忽略的路径是：拟合误差属于“共同项”，'
+                 '它对各浓度瓶同向作用，多测几瓶不会把它压小。'
+                 '这与读数、移液这类逐瓶随机的项性质不同。'])
+
+    if conc is not None:
+        rb.para(['%s溶液浓度（%.2f%%，占 %.0f%% 的方差）。本项包含两部分：'
+                 '母液本身浓度的不确定度（按 %.1f%% 估计，母液由老师配制标定，'
+                 '学生不参与）与 %.0f mL 容量瓶的定容允差（±%.2f mL）。'
+                 '两者合成 ' % (_CN.get(rank.get('conc', 9), ''), conc['pct'],
+                                conc['share'], eb['stock_rel'],
+                                eb['flask_ml'], eb['flask_tol_ml']),
+                 ('t', 'u(c)/c', ITALIC), ' = ',
+                 ('t', '%.3f%%' % (np.sqrt((eb['stock_rel'] / 100.0) ** 2
+                                           + (eb['flask_tol_ml'] / np.sqrt(3.0)
+                                              / eb['flask_ml']) ** 2) * 100), {}),
+                 '。逐物种分别计算后按独立量合成——不同物种的母液是各自配制的，'
+                 '其浓度误差互不相关，不能假定它们同向抵消。'])
+        rb.para(['值得注意：如果假设四个物种的母液同时同向偏同样的比例，'
+                 '对 K 的影响反而接近于零（因为 ',
+                 ('t', 'Λ_{m}', ITALIC), ' 与 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                 ' 同比例变化，在 ', ('t', 'α', ITALIC),
+                 ' 里抵消）。这是一个虚假的抵消：它只在“四份母液误差完全'
+                 '相关”时才成立，而实际上它们是四次独立的称量与定容。'
+                 '按独立处理才是正确口径，也是本项排到第二位的原因。'])
+
+    if read is not None:
+        rb.para(['%s电导率读数（%.2f%%）。读数末位按量程分档取 2，逐瓶 '
+                 % (_CN.get(rank.get('read', 9), ''), read['pct']),
+                 ('t', 'σ_{κ}/κ', ITALIC),
+                 ' %s' % _read_span(an),
+                 ' 不等——低浓度瓶的 ', ('t', 'κ', ITALIC),
+                 ' 绝对值小，同样的'
+                 '仪器分辨力带来更大的相对误差。再经 ',
+                 ('t', '2+r', {}), ' 放大后进入 ', ('t', 'K', ITALIC), '。'])
+
+    if pip is not None:
+        rb.para(['%s移液管允差（%.2f%%）。按讲义配制表的量取体积，逐瓶取'
+                 '“能放出该体积的最小标称规格”的允差（GB/T 12807 A 类）。'
+                 '这一项本身不大，但 0.5 mL 那一档的相对允差已达 1.15%%，'
+                 '是全组最大——低浓度瓶的配制精度天然最差，'
+                 '这也是浓度档位不宜再往下取的原因之一。'
+                 % (_CN.get(rank.get('pip', 9), ''), pip['pct'])])
+
+    if comp is not None:
+        rb.para(['%s温度补偿（%.2f%%）。这一项的结果需要解释，因为它与直觉相反。'
+                 % (_CN.get(rank.get('comp', 9), ''), comp['pct'])])
+        if eb.get('comp_cancel'):
+            rb.para(['电导率仪按固定的 ',
+                     ('t', '%.2f %%/℃' % float(eb['compensation']), {}),
+                     ' 做线性补偿，而各物种的真实温度系数并不相同（本实验按 '
+                     'CRC 离子值加权得 ',
+                     '、'.join('%s %.2f' % (conduct.SPECIES_LABEL.get(k2, k2),
+                                            conduct.species_temp_coeff(k2))
+                              for k2 in conduct.SPECIES_ORDER
+                              if np.isfinite(conduct.species_temp_coeff(k2))),
+                     ' %%/℃）。|25−T| = %.1f K 时，这会让单个 ' % abs(eb['dT']),
+                     ('t', 'Λ_{m}^{∞}', ITALIC), ' 偏约 ',
+                     ('t', '%.2f%%' % eb['lam_comp_pct'], {}),
+                     '——若只看表6，这是 0.7% 量级的项。'])
+            rb.para(['但对 ', ('t', 'K^{⊖}', ITALIC),
+                     ' 而言它几乎完全抵消：',
+                     ('t', 'Λ_{m}^{∞}', ITALIC),
+                     '(HAc) 是由同一批离子加和出来的，与 HAc 溶液自身的电导率'
+                     '同源，补偿系数整体偏一点时 ',
+                     ('t', 'κ(HAc)', {}), ' 与 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                     ' 按同一比例变化，比值不变。实测代入后 ',
+                     ('t', 'ΔK^{⊖}/K^{⊖}', ITALIC), ' 只剩 ',
+                     ('t', '%.3f%%' % comp['pct'], {}),
+                     '。所以温度补偿是表6 的显著误差源，却不是 K 的误差源，'
+                     '这两件事必须分开讲：只笼统说“温度补偿有影响”会误导。'])
+            rb.para(['剩下的残差来自二阶项与各物种 ', ('t', 'β', ITALIC),
+                     ' 的差异不能完全对齐，量级已降到 0.1% 以下，可以忽略。'])
+        else:
+            rb.para(['本次温度补偿未能一阶抵消（残差 %.2f%%），'
+                     '说明各物种的补偿残差不满足同源条件，需要单独核对'
+                     '补偿系数的设置。' % comp['pct']])
+
+    if fluct is not None:
+        # ⚠ `%` 只作用于紧邻的字符串字面量：把它写在片段列表的中间会导致
+        # "not all arguments converted"。先算成变量再插进列表。
+        _fl = ('%s温度波动（%.2f%%）。恒温槽波动按 ±%.1f K 估计。'
+               '与温度补偿同理，瓶间同步的波动大部分抵消，留下的是逐瓶的'
+               '随机部分，故量级远小于按 2+r 直接估算的结果。'
+               % (_CN.get(rank.get('fluct', 9), ''), fluct['pct'],
+                  conduct.TEMP_FLUCT_K))
+        rb.para([_fl])
+
+    # ---- 4.2.4 合成与判断
+    rb.heading('4.2.4 合成不确定度与系统偏差', 3)
+    _k_mean = float(kmean['mean'])
+    _sig_abs = eb['total'] * _k_mean
+    rb.para(['把上表各项按方和根合成，得 ', ('t', 'K^{⊖}', ITALIC), ' = ',
+             # ⚠ sci_pm 自己已经带一对外括号（值是 (1.80 ± 0.01)×10^{-5} 形式），
+             # 外面再包一层就成了 ((1.633 ± 0.043)×10⁻⁵)，实测踩到。
+             ('t', '%s' % sci_pm(_k_mean, _sig_abs), {}),
+             '，相对合成不确定度 ',
+             ('t', '%.2f%%' % eb['total_pct'], {}),
+             '。作为对照，3.3.1 节按瓶间离散给出的 ',
+             ('t', 'σ_{K^{⊖}}', ITALIC), ' 是 ',
+             ('t', '%s' % sci_pm(_k_mean, float(kmean['sigma'])), {}),
+             '（相对 %.2f%%）。' % (float(kmean['sigma']) / _k_mean * 100)])
+    # 两个口径谁大谁小要按数据说：A 类只含瓶间离散，B 类含全部已知来源
+    if float(kmean['sigma']) > _sig_abs:
+        rb.para(['瓶间离散给出的不确定度大于分项合成值。这说明各瓶 ',
+                 ('t', 'K^{⊖}', ITALIC),
+                 ' 之间还存在上表未覆盖的系统漂移（活度系数未校正），'
+                 '此时应以瓶间离散作为 A 类估计，分项预算用于说明构成'
+                 '而不是替代它。'])
+    else:
+        rb.para(['分项合成值大于瓶间离散给出的 A 类估计，这是预期的：'
+                 'A 类只反映“各瓶彼此差多少”，而共同项（拟合误差、母液浓度、'
+                 '温度补偿）对各瓶同向作用，不会体现在瓶间离散里。'
+                 '因此报告 K 的不确定度时应以分项合成为准，表8 的瓶内/瓶间项'
+                 '只用于判断“各浓度瓶是否自洽”。'])
+
+    ka = conduct.KA_HAC
+    dev = (_k_mean - ka) / ka * 100.0
+    ratio = abs(dev) / eb['total_pct'] if eb['total_pct'] else float('nan')
+    rb.para(['再与手册值比较：', ('t', 'K_{a}', ITALIC), ' = ',
+             ('t', sci(ka, 4, -5), {}),
+             '（', ('t', 'p', {}), ('t', 'K_{a}', ITALIC), ' = 4.756），'
+             '本实验值偏 ', ('t', 'E_{r}', ITALIC), ' = ',
+             ('t', '%s' % pct(dev), {}), '，是合成不确定度的 ',
+             ('t', '%.1f' % ratio, {}), ' 倍。'])
+    if ratio >= 3.0:
+        rb.para(['偏差达到 3 倍以上不确定度，说明存在上表未涵盖的系统误差，'
+                 '不能仅用随机误差解释。下面把已知的系统项逐条核对，'
+                 '定位偏差的来源。'])
+    elif ratio >= 1.0:
+        rb.para(['偏差与合成不确定度同一量级（1~3 倍），说明随机项与系统项'
+                 '都有贡献，尚不能断言存在未识别的系统误差。'])
+    else:
+        rb.para(['偏差小于合成不确定度，本实验值与手册值在不确定度范围内一致，'
+                 '没有证据表明存在显著的系统误差。'])
+
+    # ---- 4.2.5 已知系统项的量级核对（只在偏差显著时才需要"解释"）
+    rb.heading('4.2.5 已知系统项的核对与改进方向', 3)
+    theo_hac = conduct.LAMBDA_THEO.get('HAc')
+    bias_l = ((esa['lam_inf'] - theo_hac) / theo_hac * 100.0
+              if theo_hac else float('nan'))
+    S2 = eb['coef']['kappa']
+    rb.para(['按课程要求的四级口径收束本节：'])
+    rb.caption('表11  K^{⊖} 误差来源的四级分析（Level 0~3）')
+    lvl_rows = [
+        ['Level 0 穷举',
+         '拟合、母液浓度、容量瓶、移液管、电导率读数、温度补偿、温度波动',
+         '共 %d 项，均已定量' % len(eb['terms'])],
+        ['Level 1 半定量',
+         '各项 ΔK/K 见表10；最大项 %.2f%%，最小项 %.2f%%'
+         % (eb['terms'][0]['pct'], eb['terms'][-1]['pct']),
+         '跨越 %.0f 倍'
+         % (eb['terms'][0]['pct'] / eb['terms'][-1]['pct'])
+         if eb['terms'][-1]['pct'] else '—'],
+        ['Level 2 定主因',
+         '方差占比前两位：%s' % '、'.join(
+             '%s %.0f%%' % (t['name'], t['share']) for t in eb['terms'][:2]),
+         '合计 %.0f%%' % sum(t['share'] for t in eb['terms'][:2])],
+        ['Level 3 改进',
+         _level3_text(eb, an), '按杠杆大小排序'],
+    ]
+    rb.table(['层级', '内容', '量化结果'], lvl_rows,
+             widths_cm=[2.6, 8.4, 4.0], font_size=10.5, keep_together=True)
+
+    if np.isfinite(bias_l) and ratio >= 1.0:
+        rb.para(['其中一项可以由数据直接核对：本实验 ',
+                 ('t', 'Λ_{m}^{∞}', ITALIC), '(HAc) = ',
+                 ('t', '%s' % sig_fig(esa['lam_inf'], 5), {}),
+                 '，比离子加和的理论值 ',
+                 ('t', '%s' % sig_fig(theo_hac, 5), {}),
+                 ' 偏 ', ('t', '%+.2f%%' % bias_l, {}),
+                 '。由于 ', ('t', 'K^{⊖}∝(Λ_{m}^{∞})^{-2}', ITALIC),
+                 '，这一项单独就能让 K 系统偏 ',
+                 ('t', '%+.2f%%' % (-S2 * bias_l), {}),
+                 '——占实测总偏差 %.2f%% 的约 %.0f%%。'
+                 % (dev, abs(-S2 * bias_l) / abs(dev) * 100 if dev else float('nan')),
+                 '也就是说，K 偏低的主要来源是 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+                 '(HAc) 偏高，而不是 K 本身的推算有误。'])
+        rb.para(['据此，最有效的一步改进不是加密读数，而是压低 ',
+                 ('t', 'Λ_{m}^{∞}', ITALIC),
+                 '(HAc) 的偏差：把强电解质的浓度范围往低端延伸、'
+                 '严格控制铂电极的浸入深度与位置、并用同一支电导池连续测完'
+                 '四个物种（避免换池引入 ', ('t', 'K_{cell}', ITALIC),
+                 ' 的差异）。这些措施同时压小 4.2.2 表中排第一的拟合项。'])
+    return True
+
+
+def _read_span(an):
+    """逐瓶 σ_κ/κ 的最小/最大值（百分数），供正文插值。
+
+    单独提出来是为了避开“%”只能作用于紧邻字符串字面量这条限制：
+    片段列表里夹 ('t', …) 元组时不能对整句做 % 运算。
+    """
+    vals = []
+    for r in (an.tables.get('HAc') or []):
+        sk = float(r.get('sigma_kappa', float('nan')))
+        if np.isfinite(sk) and r['kappa_corr'] > 0:
+            vals.append(sk / r['kappa_corr'] * 100.0)
+    if not vals:
+        return '—'
+    return '%.2f%% 到 %.2f%%' % (min(vals), max(vals))
+
+
+def _f3(x):
+    """三位有效数字的普通写法（用于 α 这类 0.0x 量级的小数）。"""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return '—'
+    if not np.isfinite(x):
+        return '—'
+    return '%.3f' % x
+
+
+def _level3_text(eb, an):
+    """Level 3 改进方案：按“去掉该项后 σ 能降多少”排序，用数据说话。
+
+    ⚠ 返回值是**片段列表**而不是字符串：里面要插 σ 这个量符号，
+    写成纯字符串会整段排成正体（check_source_symbols 会抓）。
+    表格单元格接受片段列表（与 RSD 表头同一套写法）。
+    """
+    if not eb.get('terms') or not eb.get('total_pct'):
+        return '—'
+    total = eb['total_pct']
+    cand = []
+    for t in eb['terms']:
+        left = np.sqrt(max(total ** 2 - t['pct'] ** 2, 0.0))
+        cand.append((t['name'], t['pct'], left, total - left))
+    cand.sort(key=lambda x: -x[3])
+    top = cand[0]
+    return ['优先压“%s”（去掉它 ' % top[0],
+            ('t', 'σ', ITALIC),
+            ' 由 %.2f%% 降到 %.2f%%）' % (total, top[2])]
+
+
+def _sec_shared(rb, an, num=3):
+    """4.x 节：共享数据的组内统计与 t/F 检验（num 由 build_report 传入）。
 
     讲义“五、数据记录和处理”第（5）条要求“利用共享数据与自测实验数据
     进行误差分析”，思考题还直接问“如何利用共享数据对实验结果进行定量或
@@ -1056,7 +1456,7 @@ def _sec_shared(rb, an):
     if not group or group.get('n', 0) < 2:
         return False
 
-    rb.heading('4.2 共享数据的组内误差分析', 2)
+    rb.heading('4.%d 共享数据的组内误差分析' % num, 2)
     n = group['n']
     rb.para(['本实验的数据按要求录入了全组共享表，共 %d 位同学（%s）。'
              '本节用这些共享数据对实验结果作定量误差分析：先看组内各人结果'
@@ -1068,7 +1468,7 @@ def _sec_shared(rb, an):
              % (n, '、'.join(m['name'] for m in members))])
 
     # ---- 4.2.1 组内一致性
-    rb.heading('4.2.1 极限摩尔电导率的组内一致性', 3)
+    rb.heading('4.%d.1 极限摩尔电导率的组内一致性' % num, 3)
     rb.para(['把每位同学各自算出的 ', ('t', 'Λ_{m}^{∞}', ITALIC),
              ' 汇集起来，计算组内平均值 ', ('t', 'x̄', ITALIC),
              '、样本标准偏差 ', ('t', 's', ITALIC),
@@ -1115,10 +1515,11 @@ def _sec_shared(rb, an):
                      '%.2f' % hg['g'] if np.isfinite(hg.get('g', float('nan')))
                      else '—',
                      '正常' if not hg.get('is_outlier') else '异常'])
-    rb.caption('表10  各物种极限摩尔电导率的组内一致性（n = %d）' % n)
+    rb.caption('表12  各物种极限摩尔电导率的组内一致性（n = %d）' % n)
     rb.table(_SHARED_HEAD, rows, widths_cm=[2.2, 4.0, 2.2, 1.8, 1.9, 3.4])
-    # 表号必须与正文引用一致：表10 后面依次是 11/12/13（见本函数各 caption）。
-    # docxkit 的 caption 不会自动编号，写错就出现"表10 之后是表12"的跳号。
+    # 表号必须与正文引用一致：本函数依次是表12/13/14/15（见各 caption）。
+    # docxkit 的 caption 不会自动编号，写错就出现"表12 之后是表14"的跳号。
+    # ⚠ 4.2 节（K° 误差预算）新增了两张表（表10、表11），因此本函数从表12 起。
 
     # 逐句解读：只写数据支持的话，不预设"某个物种一定好/差"
     nacl_rsd = ((group.get('species') or {}).get('NaCl', {})
@@ -1172,7 +1573,7 @@ def _sec_shared(rb, an):
             rb.para([_head] + ([_why] if worst_key == 'HCl' else []) + _why_tail)
 
     # ---- 4.2.2 Grubbs
-    rb.heading('4.2.2 异常值的统计甄别', 3)
+    rb.heading('4.%d.2 异常值的统计甄别' % num, 3)
     rb.para(['对每一列用 Grubbs 检验（',
              ('t', 'α', ITALIC), ' = 0.05）判断是否存在离群值。'
              '检验统计量为 ',
@@ -1209,7 +1610,7 @@ def _sec_shared(rb, an):
     # ---- 4.2.3 我 vs 组内：t 检验与 F 检验
     me = group.get('me')
     if me and group.get('tests'):
-        rb.heading('4.2.3 本人数据与组内水平的比较', 3)
+        rb.heading('4.%d.3 本人数据与组内水平的比较' % num, 3)
         rb.para(['把本人的结果与其余 %d 位同学的平均值比较。'
                  '采用 t 检验：' % (n - 1)])
         # ⚠ 这个 OMML 转换器**不支持 \\bar**：写 \\bar{x} 会在正文里残留一个
@@ -1234,7 +1635,7 @@ def _sec_shared(rb, an):
                           '%.2f' % t['t'] if np.isfinite(t['t']) else '—',
                           '%.2f' % t['p'] if np.isfinite(t['p']) else '—',
                           '显著' if t['significant'] else '不显著'])
-        rb.caption('表11  本人结果与组内其余同学平均值的 t 检验')
+        rb.caption('表13  本人结果与组内其余同学平均值的 t 检验')
         rb.table(['物种', '本人值', '组内均值', 't', 'p', '判定（α = 0.05）'],
                  trows, widths_cm=[2.0, 3.4, 3.4, 1.7, 1.7, 3.2])
 
@@ -1255,7 +1656,7 @@ def _sec_shared(rb, an):
                      '有代表性的，结果之间的差别属于正常的实验分散，'
                      '不是系统性偏差。'])
 
-        rb.heading('4.2.4 实验精度的 F 检验', 3)
+        rb.heading('4.%d.4 实验精度的 F 检验' % num, 3)
         rb.para(['t 检验比较的是“结果的高低”，属于准确度；'
                  'F 检验比较的是“拟合残差的大小”，属于精度的重复性。'
                  '两者是不同的问题：一个人可能每次测得的 ', ('t', 'Λ_{m}^{∞}', ITALIC),
@@ -1276,7 +1677,7 @@ def _sec_shared(rb, an):
                           '%d, %d' % (f['df1'], f['df2']),
                           '显著' if f['significant'] else '不显著'])
         if frows:
-            rb.caption('表12  本人拟合精度与组内的 F 检验')
+            rb.caption('表14  本人拟合精度与组内的 F 检验')
             rb.table(['物种', 'F', 'p', '自由度', '判定（α = 0.05）'],
                      frows, widths_cm=[2.2, 2.4, 2.2, 2.6, 3.2])
             fsig = [conduct.SPECIES_LABEL[k]
@@ -1296,7 +1697,7 @@ def _sec_shared(rb, an):
     # ---- 4.2.5 两法 K° 的组内比较
     km = group.get('k_methods') or {}
     if km.get('paired') and km.get('mean', {}).get('n', 0) >= 2:
-        rb.heading(['4.2.5 两种 ', ('t', 'K^{°}', ITALIC),
+        rb.heading(['4.%d.5 两种 ' % num, ('t', 'K^{°}', ITALIC),
                 ' 求解方法的组内比较'], 3)
         rb.para(['下一节比较两种方法的依据是单组数据的相对误差大小，'
                  '样本量为 1，说服力有限。这里先用共享数据做更硬的检验：'
@@ -1305,7 +1706,7 @@ def _sec_shared(rb, an):
                  '配对的要点是同一人的两个结果相减——这样浓度配制、'
                  '温度等共同因素被抵消，剩下的才是方法本身的差异。' % n])
         p = km['paired']
-        rb.caption('表13  两种方法所得 K° 的组内统计（n = %d）' % n)
+        rb.caption('表15  两种方法所得 K° 的组内统计（n = %d）' % n)
         rb.table(['方法', '组内平均 K^{⊖}', 's', [('RSD', _UP)]],
                  [['求平均法', _sci_or_dash(km['mean']['mean']),
                    _sci_or_dash(km['mean']['sd']),
@@ -1324,13 +1725,19 @@ def _sec_shared(rb, an):
         if p['significant']:
             # ⚠ 量符号必须走片段列表：α / Λm∞ / K° 若写在纯字符串里会整串正体
             rb.para(['在 ', ('t', 'α', ITALIC), ' = 0.05 水平下两种方法存在系统性差异，'
-                     '这与 4.2 节对单组数据的分析方向一致，且现在有了'
-                     '组内重复的证据支持：求平均法的偏差不是偶然，'
-                     '而是由该方法把 ', ('t', '(1−α)', {}),
-                     ' 放在分母上、放大低浓度端随机误差这一结构性问题造成的。'])
+                     '这与 4.3 节对单组数据的分析方向一致，且现在有了'
+                     '组内重复的证据支持：两种方法给出不同的 ',
+                     ('t', 'K^{⊖}', ITALIC),
+                     '，这个差值不是某一个人测偏造成的，而是方法本身的结构性差别'
+                     '（求平均法把 ', ('t', '(1−α)', {}),
+                     ' 放在分母上、放大低浓度端随机误差）。'])
         else:
+            # ⚠ 这里原来写死「单组数据里看到的“拟合直线法更接近文献值”」，
+            # 把某一法更准当成了既定事实。但哪个更接近手册值**取决于数据**，
+            # 换个数据集就可能反过来（本工具的其他数据集里确实出现过）。
+            # 改成中性说法：不能据此断言任何一种方法更好。
             rb.para(['在 ', ('t', 'α', ITALIC), ' = 0.05 水平下两种方法未检出系统性差异。'
-                     '这说明单组数据里看到的“拟合直线法更接近文献值”'
+                     '这说明单组数据里看到的“某一种方法更接近手册值”'
                      '可能只是偶然；两种方法的差别小于组内各人之间的差别。'
                      '因此不宜据此断言某一种方法更好。'
                      '若要判别方法的优劣，需要更多重复或更宽的浓度范围。'])
@@ -1374,7 +1781,7 @@ def _ssci(v):
 def _sci_or_dash(v, digits=3):
     """科学计数法；``digits`` 控制有效位数。
 
-    表11 的“本人值”与“组内均值”必须用足够位数，否则两者舍入成同一个数
+    表13 的“本人值”与“组内均值”必须用足够位数，否则两者舍入成同一个数
     （实测 1.247×10⁻² 与 1.247×10⁻²），读者看不出差别、更看不出 t 检验
     比的是什么。这里给 4 位。
     """
@@ -1388,7 +1795,7 @@ def _sci_or_dash(v, digits=3):
 
 
 def _sec_tail_skipped(rb, an, num):
-    """数据不齐时替代「两法比较 + 小结」两节。
+    """数据不齐时替代“两法比较 + 小结”两节。
 
     同样不能静默省略：读者会以为报告没写完。
     """
@@ -1409,11 +1816,40 @@ def _sec_tail_skipped(rb, an, num):
 
 
 def _sec_method_compare(rb, an, num=2):
-    # num 由 build_report 传入：读了共享数据时本节顺移为 4.3。
+    # num 由 build_report 传入：读了共享数据时本节顺移为 4.4。
     rb.heading(['4.%d 弱电解质两种 ' % num, ('t', 'K^{°}', ITALIC),
                 ' 求解方法比较'], 2)
-    rb.para(['求平均法的误差显著大于拟合直线法，这符合理论预期。对于求平均法，'
-             '各瓶 ', ('t', 'K^{⊖}', ITALIC), ' 由 ', ('t', 'α', ITALIC),
+    # ⚠ 这一节原来开头写死「求平均法的误差显著大于拟合直线法，这符合理论预期」，
+    # 但**两个判据方向相反**（2026-11-27 实测）：
+    #     求平均法  K = 1.633e-5 ± 1.95e-7 （相对 1.20%）  偏差 −6.89%
+    #     拟合直线法 K = 1.719e-5 ± 3.48e-7 （相对 2.02%）  偏差 −1.99%
+    # 按 σ 判，**拟合直线法更大**；按与手册值的偏差判，拟合直线法更准。
+    # 所以不能笼统说「某法误差更大」——必须分开讲准确度（偏差）与精密度（σ），
+    # 否则就是拿一个判据的结论去支持另一个判据的问题。
+    _ka = conduct.KA_HAC
+    _er_mean = (an.kmean['mean'] - _ka) / _ka * 100.0
+    _er_fit = (an.kfit['K'] - _ka) / _ka * 100.0
+    _sig_mean = an.kmean['sigma'] / an.kmean['mean'] * 100.0
+    _sig_fit = an.kfit['sigma_K'] / an.kfit['K'] * 100.0
+    _closer = ('拟合直线法' if abs(_er_fit) < abs(_er_mean) else '求平均法')
+    _tighter = ('求平均法' if _sig_mean < _sig_fit else '拟合直线法')
+    rb.para(['两种方法的比较要从两个不同的判据看：与手册值的偏差'
+             '（准确度）和不确定度 ', ('t', 'σ_{K^{⊖}}', ITALIC),
+             '（精密度）。本实验的结果是：求平均法 ',
+             ('t', 'E_{r}', ITALIC), ' = ', ('t', '%s' % pct(_er_mean), {}),
+             '、相对 ', ('t', 'σ', ITALIC), ' = ',
+             ('t', '%.2f%%' % _sig_mean, {}),
+             '；拟合直线法 ', ('t', 'E_{r}', ITALIC), ' = ',
+             ('t', '%s' % pct(_er_fit), {}), '、相对 ',
+             ('t', 'σ', ITALIC), ' = ', ('t', '%.2f%%' % _sig_fit, {}),
+             '。即：%s更接近手册值，而%s的随机不确定度更小。'
+             % (_closer, _tighter)])
+    rb.para(['这两个结论并不矛盾，也不会因数据不同而反转方向——它们衡量的是'
+             '不同的东西。下面分别说明。'])
+
+    # ---- 准确度：求平均法的系统偏低
+    rb.para(['先看准确度。求平均法中各瓶 ', ('t', 'K^{⊖}', ITALIC),
+             ' 由 ', ('t', 'α', ITALIC),
              ' 逐点计算而来：浓度较高、离解度较小时 ', ('t', 'α', ITALIC),
              ' 接近 0，分母 ', ('t', '1−', {}), ('t', 'α', ITALIC),
              ' 接近 1，计算尚可；浓度较低时 ',
@@ -1422,22 +1858,80 @@ def _sec_method_compare(rb, an, num=2):
              ('t', 'α', ITALIC), ' 相除时被急剧放大，'
              '所以低浓度端单个 ', ('t', 'K^{⊖}', ITALIC),
              ' 的偏差非常大——表7 中浓度越低、平衡常数越偏离文献值正是这一点'
-             '的体现。'])
-    rb.para(['而拟合直线法利用全部数据点共同估计一个参数。根据 Gauss–Markov '
-             '定理^{[4]}，在误差主要存在于 ', ('t', 'y', ITALIC),
+             '的体现。关键是这些偏差同向（本例各瓶一致偏低），'
+             '取平均并不能抵消它们，所以均值仍然偏低。'])
+
+    # ---- 精密度：为什么平均法的 σ 反而小（按数据说，不预设）
+    if _sig_mean < _sig_fit:
+        rb.para(['再看精密度，这里的结果与"求平均法更粗糙"的直觉相反：',
+                 '求平均法的 ', ('t', 'σ', ITALIC),
+                 ' 反而更小。原因是它对 %d 个独立瓶取了平均，'
+                 '逐瓶的随机误差按 1/√n 被压小；而拟合直线法虽然利用了全部'
+                 '数据点，其斜率的方差仍受残差大小支配，本实验的拟合残差'
+                 '（相对 %.2f%%）比瓶间离散（相对 %.2f%%）更大。'
+                 % (len(an.kmean['bottles']), _sig_fit,
+                    an.kmean['spread'] / an.kmean['mean'] * 100)])
+    else:
+        rb.para(['再看精密度：拟合直线法的', ('t', 'σ', ITALIC),
+                 ' 小于求平均法，这符合"最小二乘平滑了随机误差"的预期。'])
+
+    # ---- Gauss–Markov 的理论依据（与上面的实测分开讲）
+    rb.para(['就方法本身而言，拟合直线法的优势有理论依据：它利用全部数据点'
+             '共同估计一个参数。根据 Gauss–Markov 定理^{[4]}，'
+             '在误差主要存在于 ', ('t', 'y', ITALIC),
              ' 且满足 OLS 假设（残差独立、同方差、'
-             '零均值）时，斜率的估计方差最小：线性拟合通过最小二乘平滑了随机'
-             '误差，最终结果不会因单一数据点的过大误差而受很大影响。严格地说，',
+             '零均值）时，斜率的估计方差最小。严格地说，',
              ('t', 'x', ITALIC), ' 与 ', ('t', 'y', ITALIC),
              ' 都由同一个带噪测量 ', ('t', 'Λ_{m}', ITALIC),
-             ' 构成，并不完全满足 OLS 假设；好在 ', ('t', 'Λ_{m}', ITALIC),
-             ' 的相对不确定度很低，总体上拟合直线法仍然更好。'])
+             ' 构成，并不完全满足 OLS 假设，而且 ',
+             ('t', 'Λ_{m}^{∞}', ITALIC),
+             ' 的不确定度也直接进入拟合直线法的结果（它出现在分母上），'
+             '这部分误差与求平均法共有。所以“哪一种更好”不能只看本实验的'
+             '单组数据：两种方法的 σ 差别（%.2f%% 对 %.2f%%）小于 4.4 节'
+             '组内各人之间的差别。' % (_sig_mean, _sig_fit)]
+            if an.shared else
+            ['就方法本身而言，拟合直线法的优势有理论依据：它利用全部数据点'
+             '共同估计一个参数。根据 Gauss–Markov 定理^{[4]}，'
+             '在误差主要存在于 ', ('t', 'y', ITALIC),
+             ' 且满足 OLS 假设（残差独立、同方差、'
+             '零均值）时，斜率的估计方差最小。严格地说，',
+             ('t', 'x', ITALIC), ' 与 ', ('t', 'y', ITALIC),
+             ' 都由同一个带噪测量 ', ('t', 'Λ_{m}', ITALIC),
+             ' 构成，并不完全满足 OLS 假设，而且 ',
+             ('t', 'Λ_{m}^{∞}', ITALIC),
+             ' 的不确定度也直接进入拟合直线法的结果（它出现在分母上），'
+             '这部分误差与求平均法共有。判断哪一种方法更好需要多次重复，'
+             '单组数据给出的 ', ('t', 'σ', ITALIC), ' 不足以定论。'])
+
+    # ---- 两法之差是否显著（有共享数据时才做配对检验，否则明说不能判）
+    # 两法之差要按「两个 K 值的相对差」算，不是两个百分比相减：
+    # _er_fit − _er_mean = 4.90 是**百分点**，写成「相差 4.90%」会被读成
+    # 「相对差 4.90%」，两者数值接近但含义不同，容易混淆。
+    _gap = ((an.kfit['K'] - an.kmean['mean']) / an.kmean['mean'] * 100.0)
+    rb.para(['最后要说明：两法的 ', ('t', 'K^{⊖}', ITALIC),
+             ' 相差 ', ('t', '%s' % pct(_gap), {}),
+             '，这一差值本身也带着两条路径各自的不确定度。',
+             '把“某一法更准”当作结论时，需要先确认这个差值超出合成'
+             '不确定度；单组数据只能给出倾向，不能给出证明。'])
 
 
 def _sec_summary(rb, an, num=3):
     esa, kmean, kfit = an.esa, an.kmean, an.kfit
     # num 由 build_report 传入（读了共享数据时顺移为 4.4）。
     rb.heading('4.%d 小结' % num, 2)
+    # ⚠ 原来这里写死「与文献值吻合良好」。相对误差是算出来的（共享数据里就有
+# −8.3% 的情形），无条件说「吻合良好」等于替读者下了一个数据未必支持的
+# 结论。改用与 4.1 节同一套三档判据，措辞随 max|Er| 变。
+    _max_er_s = max((abs(float(r['er'])) for r in (an.lit_table or [])),
+                    default=0.0)
+    if _max_er_s <= 3.0:
+        _lam_verdict = '与文献值吻合良好'
+    elif _max_er_s <= 10.0:
+        _lam_verdict = ('与文献值基本吻合（最大相对误差 %s）'
+                        % pct(_max_er_s))
+    else:
+        _lam_verdict = ('与文献值偏差较大（最大相对误差 %s）'
+                        % pct(_max_er_s))
     rb.para(['本实验先用标准 KCl 溶液对电导率仪进行标定，随后分别测量了不同'
              '浓度 NaCl、NaAc、HCl 和 HAc 溶液的电导率。利用 Kohlrausch '
              '经验公式对三种强电解质作 ', ('t', 'Λ_{m}', ITALIC), '–',
@@ -1450,8 +1944,9 @@ def _sec_summary(rb, an, num=3):
              '、HCl ',
              ('t', '(%s)' % pm(an.fits['HCl']['lam_inf'],
                                an.fits['HCl']['sigma_inf']), {}),
-             ' S·m⁻²·mol⁻¹，与文献值吻合良好；针对拟合线性与相对误差的'
-             '不一致，从极稀溶液的噪声/杂质影响与电极状态两方面作了归因分析。'])
+             ' S·m⁻²·mol⁻¹，%s；针对拟合线性与相对误差的'
+             '不一致，从极稀溶液的噪声/杂质影响与电极状态两方面作了归因分析。'
+             % _lam_verdict])
     rb.para(['弱电解质 HAc 不符合 Kohlrausch 经验公式，其极限摩尔电导率由'
              '离子独立运动定律组合得 ',
              ('t', '(%s)' % pm(esa['lam_inf'], esa['sigma']), {}),
@@ -1459,5 +1954,26 @@ def _sec_summary(rb, an, num=3):
              '拟合直线法求得标准电离平衡常数 ',
              ('t', sci_pm(kmean['mean'], kmean['sigma']), {}), ' 与 ',
              ('t', sci_pm(kfit['K'], kfit['sigma_K']), {}),
-             '，后者与文献值 1.754×10⁻⁵ 明显更接近，验证了线性拟合'
-             '处理带噪数据的优势。'])
+             '。'])
+    # ⚠ 原来这里写死「后者与文献值明显更接近，验证了线性拟合处理带噪数据的
+    # 优势」。但本实验的实测是**偏差与 σ 两个判据方向相反**（见 4.3 节）：
+    # 拟合直线法偏差更小，σ 反而更大。用「更接近文献值」直接推出「验证了
+    # 线性拟合的优势」是偷换判据，而且换个数据集就会说反。现在按数据分说。
+    _ka = conduct.KA_HAC
+    _er_m = (kmean['mean'] - _ka) / _ka * 100.0
+    _er_f = (kfit['K'] - _ka) / _ka * 100.0
+    _closer = '拟合直线法' if abs(_er_f) < abs(_er_m) else '求平均法'
+    _sig_m = kmean['sigma'] / kmean['mean'] * 100.0
+    _sig_f = kfit['sigma_K'] / kfit['K'] * 100.0
+    _tighter = '求平均法' if _sig_m < _sig_f else '拟合直线法'
+    rb.para(['与手册值 ', ('t', sci(_ka, 4, -5), {}), ' 相比，%s的结果更接近'
+             '（%s 对 %s），但%s的随机不确定度更小（%.2f%% 对 %.2f%%）。'
+             '两者的差别分别体现在准确度与精密度上，不能合成一句'
+             '“某法更好”——这一点在 4.3 节已作分析。'
+             % (_closer, pct(_er_m), pct(_er_f), _tighter, _sig_m, _sig_f)])
+    rb.para(['就自洽性而言，本实验的 ', ('t', 'Λ_{m}^{∞}', ITALIC),
+             '(HAc) 比离子加和的理论值偏高，',
+             ('t', 'K^{⊖}∝(Λ_{m}^{∞})^{-2}', ITALIC),
+             ' 使两个 ', ('t', 'K^{⊖}', ITALIC),
+             ' 同时偏低，这是两种方法共有的系统偏差，4.2 节的误差预算'
+             '已定量给出其量级。'])
