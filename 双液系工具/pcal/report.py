@@ -514,6 +514,28 @@ def _sec_boiling(rb, analysis, rows, azeo, png_phase, fig_no, tbl_no):
         lit_name = '质量比' if mode == 'ratio' else '质量分数'
         lit_w = analysis.get('lit_w')
         dev = analysis.get('deviation')
+        # ⚠ 「明显超出不确定度范围，属于系统偏差」原来是**无条件**断言。
+# 是否超差必须比出来：用 |实测−文献| 与 3σ 衡量。若某次测得与文献很接近，
+# 这句话就成了硬扣帽子（2026-11-27 修）。
+        _diff = abs(float(azeo['w']) - float(lit_x))
+        _sig = float(azeo['sigma_w']) if azeo.get('sigma_w') else 0.0
+        _n_sigma = (_diff / _sig) if _sig > 0 else None
+        if _n_sigma is None:
+            _judge = '两者相差 %s%%，需结合不确定度判断是否属系统偏差。'
+        elif _n_sigma >= 3:
+            # ⚠ 不要用 Markdown 的 **…**（docx 不解析，会原样印出星号）
+            _judge = ('相差 %s%%，约为 %s 倍标准不确定度，'
+                      '已明显超出随机波动范围，属系统偏差，其来源在 4.2 节讨论。'
+                      % ('%s', k(_n_sigma, 1)))
+        elif _n_sigma >= 2:
+            _judge = ('相差 %s%%，约 %s 倍标准不确定度，处于 2~3σ 之间，'
+                      '可能有系统偏差的成分，但尚不能断言，4.2 节给出可能来源。'
+                      % ('%s', k(_n_sigma, 1)))
+        else:
+            _judge = ('相差 %s%%，在 %s 倍标准不确定度以内，'
+                      '与随机波动相当，未发现明显系统偏差。'
+                      % ('%s', k(_n_sigma, 1)))
+        _pct_txt = pct(abs(dev) * 100) if dev is not None else '—'
         rb.para([('t', 'σ_{x}', ITALIC), ' 之所以达到 %s 量级，主要来自拟合系数'
                  % k(azeo['sigma_w'], 3),
                  '经反解公式分母 ',
@@ -523,12 +545,11 @@ def _sec_boiling(rb, analysis, rows, azeo, png_phase, fig_no, tbl_no):
                  '%s K，恒沸组成以乙醇摩尔分数 0.4540 计，'
                  '换算成乙醇质量分数为 %s' % (k(lit_T, 2), k(lit_w, 4)),
                  '（%s为 %s）。本实验测得恒沸点 %s K 与文献值相差 %s K；'
-                 '组成 (%s) 较文献 %s 相差 %s%%，'
-                 '明显超出不确定度范围，属于系统偏差，其来源在 4.2 节讨论。'
+                 '组成 (%s) 较文献 %s '
                  % (lit_name, k(lit_x, 4), k(azeo['T_K'], 2),
                     k(azeo['T_K'] - lit_T, 2),
-                    pm(azeo['w'], azeo['sigma_w']), k(lit_x, 4),
-                    pct(abs(dev) * 100) if dev is not None else '—')])
+                    pm(azeo['w'], azeo['sigma_w']), k(lit_x, 4)),
+                 _judge.replace('%s', _pct_txt)])
     return fig_no, tbl_no
 
 

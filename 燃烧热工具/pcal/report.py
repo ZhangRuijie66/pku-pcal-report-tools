@@ -468,12 +468,30 @@ def build_report(analysis, cfg, out_path, plots_dir, template_path,
         liter = main_mol['literature']
         segs = []
         if liter:
-            errs = [m['error_percent'] for _, m in mol_lines
+            errs = [abs(m['error_percent']) for _, m in mol_lines
                     if m.get('error_percent') is not None]
-            segs.append('上述结果与手册值相差不大（相对偏差%s），'
-                        '说明扣除镍丝与棉线的燃烧热、并用雷诺校正消除体系与环境的'
-                        '热交换之后，系统误差已被有效校正。'
-                        % (('不超过 %s%%' % pct(max(errs))) if errs else '较小'))
+            # ⚠ 「相差不大」原来是无条件断言。相对偏差是算出来的，
+            # 换样品（萘、葡萄糖、食用油）可能远超几 %。按最大偏差分档说。
+            _max_er = max(errs) if errs else None
+            if _max_er is None:
+                _judge = '上述结果已给出手册值对照。'
+            elif _max_er <= 3.0:
+                # pct() 只给数字，模板里要自己补 % 号
+                _judge = ('上述结果与手册值相差不大（最大相对偏差 %s%%），'
+                          '说明扣除镍丝与棉线的燃烧热、并用雷诺校正消除体系'
+                          '与环境的交换之后，系统误差已被有效校正。'
+                          % pct(_max_er))
+            elif _max_er <= 10.0:
+                _judge = ('上述结果与手册值的相对偏差最大为 %s%%，'
+                          '在可接受范围内但仍可见系统偏差；'
+                          '镍丝与棉线的扣除和雷诺校正确实起了作用，'
+                          '但仍有残余误差来源值得注意。' % pct(_max_er))
+            else:
+                _judge = ('上述结果与手册值的相对偏差最大达 %s%%，偏大，'
+                          '需要检查取样、称量与温差读数，'
+                          '不能仅靠扣除镍丝棉线与雷诺校正解释。'
+                          % pct(_max_er))
+            segs.append(_judge)
         segs.append('误差分析表明，雷诺校正的拟合误差、室温在 1 K 内的波动以及容量瓶的'
                     '精度（0.1%%）带来的影响量级都远小于温差仪的允差，可以忽略；'
                     '镍丝与棉线的燃烧热在总放热量中占比约为 %s%%，其质量称量的不确定度'

@@ -588,25 +588,29 @@ def _sec_strong(rb, an, fit_pngs, hac_ok=True):
     #
     # ⚠ 取最差物种也必须**数据驱动**：只遍历 `fits` 里真的算出来的键，
     # 否则缺物种时 `fits[k]` 直接 KeyError（与上面三处循环同一类问题）。
-    _finite_fits = [(fits[k]['r'], k) for k in _fit_keys
-                    if np.isfinite(fits[k]['r'])]
-    worst_r, worst_key = min(_finite_fits)
+    # ⚠ `min(_finite_fits)` 取的是**代数最小**的 r。因为 Λm 随 √c 下降，
+    # r 全为负，代数最小 = |r| 最大 = **线性最好**，不是最差。
+    # 原来下面写「相关系数最低」并暗示它有问题，读起来像「HCl 拟合最差」，
+    # 而实际 HCl 线性最好（|r| 最大）。这里改成按 |r| 明确表述，
+    # 避免「最低」被误读成「最差」（用户 2026-11-27 指出）。
     rb.para(['与电导率不同，强电解质的摩尔电导率随浓度增加而降低：溶液中能导电'
              '的物质的量已给定（1 mol），浓度升高时正负离子相互作用力增加并形成'
              '离子氛，两种效应都阻碍离子在电场下的定向运动。'])
-    if worst_r > -0.99:
-        rb.para(['%d 个物种的拟合线性程度略有差别，其中 ' % len(_fit_keys),
-                 ('t', conduct.SPECIES_LABEL[worst_key], {}),
-                 ' 的相关系数最低（',
-                 ('t', 'r', ITALIC), ' = ',
-                 ('t', '%.3f' % worst_r, ITALIC),
-                 '）。线性偏差的来源见 4.1 节：一方面是低浓度端电导率的绝对'
-                 '值小、仪器噪声与溶解 CO₂ 等杂质的相对影响大；另一方面是'
-                 '电极浸入深度与摆放位置会改变有效电导池面积，这部分对稀溶液'
-                 '尤为显著。'])
+    _finite_fits = [(fits[k]['r'], k) for k in _fit_keys
+                    if np.isfinite(fits[k]['r'])]
+    _best_r, _best_key = max(_finite_fits, key=lambda t: abs(t[0]))
+    _abs_r = abs(_best_r)
+    if _abs_r < 0.99:
+        rb.para(['%d 个物种的拟合线性程度略有差别，其中 %s 的线性相对最好'
+                 '（' % (len(_fit_keys), conduct.SPECIES_LABEL[_best_key]),
+                 ('t', '|r|', ITALIC), ('t', ' = %.3f' % _abs_r, ITALIC),
+                 '，最大），但仍有可见的弯曲。线性偏差的来源见 4.1 节：'
+                 '一方面是低浓度端电导率的绝对值小、仪器噪声与溶解 CO₂ 等'
+                 '杂质的相对影响大；另一方面是电极浸入深度与摆放位置会改变'
+                 '有效电导池面积，这部分对稀溶液尤为显著。'])
     else:
         rb.para(['%d 个物种的拟合直线线性都相当好（' % len(_fit_keys),
-                 ('t', 'r', ITALIC), ' 均优于 −0.99），说明在本实验的浓度'
+                 ('t', '|r|', ITALIC), ' 均优于 0.99），说明在本实验的浓度'
                  '范围内 Kohlrausch 极限定律成立良好。'])
 
     rb.heading('3.2.3 极限摩尔电导率的计算', 3)
@@ -959,28 +963,72 @@ def _sec_error_analysis(rb, an):
         return
     er_txt = '、'.join('%s %s' % (conduct.SPECIES_LABEL[r['key']], pct(r['er']))
                        for r in an.lit_table[:3])
-    rb.para('根据表6，各强电解质极限摩尔电导率的相对误差都不大（' + er_txt +
-            '），但这个相对误差并不完全可信，分析如下。')
+    # ⚠ 原来写死「各强电解质的相对误差都不大」，但相对误差是**算出来的**，
+    # 有人 NaCl −8.3%、HCl −8.3%（共享数据里就有）。改成按实际最大偏差分档。
+    _max_er = max((abs(float(r['er'])) for r in an.lit_table), default=0.0)
+    if _max_er <= 3.0:
+        _er_verdict = '各强电解质极限摩尔电导率的相对误差都不大'
+    elif _max_er <= 10.0:
+        _er_verdict = '各强电解质极限摩尔电导率的相对误差尚可接受，但有个别偏大'
+    else:
+        _er_verdict = '各强电解质极限摩尔电导率的相对误差偏大（最大 %s）' % pct(_max_er)
+    rb.para('根据表6，%s（%s），但这个相对误差并不完全可信，分析如下。'
+            % (_er_verdict, er_txt))
     # ⚠ 原来这段专门归因于“HNO₃ 容易挥发导致低浓度点偏低”。物种换成
     # HCl 后那个解释不成立（HCl 不挥发），硬留着就是给数据编成因。
     # 现在按**实测的 r 与相对误差**分档叙述，只说数据支持的话。
+    #
+    # ⚠⚠ **相关系数必须按绝对值判好坏**：r 是负数（Λm 随 √c 下降），
+    # 「线性最好」= |r| 最大（最接近 −1）。原来直接 `max(rs)` 取的是
+    # **代数值最大**，于是把 r = −0.901 判成「最好」、把 −0.971 判成
+    # 「略差」——**结论正好反了**（用户 2026-11-27 指出「HCl 拟合最差」
+    # 不符合实际）。实测：HCl r=−0.971 才是线性最好的。
     fits = an.fits
     rs = {k: fits[k]['r'] for k in conduct.STRONG_SPECIES if k in fits}
-    best = max(rs, key=lambda k: rs[k]) if rs else None
-    worst = min(rs, key=lambda k: rs[k]) if rs else None
-    if best and worst:
-        rb.para(['从线性看，%s 的拟合最好（'
-                 % conduct.SPECIES_LABEL[worst],
-                 ('t', 'r', ITALIC), ' = ',
-                 ('t', '%.3f' % rs[worst], ITALIC), '），%s 略差（'
-                 % conduct.SPECIES_LABEL[best],
-                 ('t', 'r', ITALIC), ' = ',
-                 ('t', '%.3f' % rs[best], ITALIC),
-                 '）。但线性好坏与相对误差大小并不对应：线性最好的物种未必'
-                 '误差最小，因为 ', ('t', 'Λ_{m}^{∞}', ITALIC),
-                 ' 是外推得到的量，截距的偏差由整条'
-                 '直线的斜率与分布共同决定，而不只由残差大小决定。因此'
-                 '“相对误差小”不能单独当作拟合可信的证据。'])
+    if len(rs) >= 2:
+        _best = max(rs, key=lambda k: abs(rs[k]))     # |r| 最大 = 线性最好
+        _worst = min(rs, key=lambda k: abs(rs[k]))    # |r| 最小 = 线性最差
+        _gap = abs(abs(rs[_best]) - abs(rs[_worst]))
+        # 只有差异足够大时才分高下，否则「差不多」更诚实
+        if _gap >= 0.02:
+            _cmp = ['从线性看，%s 的拟合最好（'
+                    % conduct.SPECIES_LABEL[_best],
+                    ('t', 'r', ITALIC), ' = ',
+                    ('t', '%.3f' % rs[_best], ITALIC), '），%s 略差（'
+                    % conduct.SPECIES_LABEL[_worst],
+                    ('t', 'r', ITALIC), ' = ',
+                    ('t', '%.3f' % rs[_worst], ITALIC), '）。']
+        else:
+            _cmp = ['从线性看，各物种的相关系数差别很小（',
+                    ('t', 'r', ITALIC), ' = %.3f~%.3f），线性程度相当。'
+                    % (min(rs.values()), max(rs.values()))]
+        # 「线性好坏与误差大小是否对应」也要按数据说，不能预设。
+        #
+        # ⚠ 判据必须是「线性最好的那个物种，是不是同时也是误差最小的那个」，
+        # **不能只比 best 与 worst 两个**（我第一版就这么写错了）：
+        # 实测 |r| 最大的是 HCl（1.3%），|r| 最小的是 NaCl（1.4%），
+        # 只比这两个会得出「1.3 < 1.4 → 一致」，但真正误差最小的是
+        # 中间的 NaAc（0.84%）——三物种时漏掉中间的那个就会说反。
+        _er_by_key = {r['key']: abs(float(r['er'])) for r in an.lit_table
+                      if r['key'] in rs}
+        if _er_by_key:
+            _er_best = min(_er_by_key, key=lambda k: _er_by_key[k])
+            if _er_best == _best:
+                _rel_txt = ('本例中线性最好的物种误差也确实最小，两者一致；'
+                            '但不能据此认为线性好就一定有小的误差，因为 ')
+            else:
+                _rel_txt = ('本例中线性最好的物种（%s）并非误差最小的'
+                            '（%s），两者不一致：'
+                            % (conduct.SPECIES_LABEL[_best],
+                               conduct.SPECIES_LABEL[_er_best]))
+        else:
+            _rel_txt = '线性好坏与误差大小不一定对应：'
+        _cmp.append(_rel_txt)
+        _cmp.extend([('t', 'Λ_{m}^{∞}', ITALIC),
+                     ' 是外推得到的量，截距的偏差由整条'
+                     '直线的斜率与分布共同决定，而不只由残差大小决定。因此'
+                     '“相对误差小”不能单独当作拟合可信的证据。'])
+        rb.para(_cmp)
     rb.para('线性欠佳的系统性原因在于：极低浓度下摩尔电导率较高，但绝对'
             '电导率很低，仪器噪声与杂质的影响很大。杂质可能来自空气及呼吸'
             '带出的 CO₂；仪器方面，铂电极片的浸入深度、摆放位置都可能改变'
@@ -1089,23 +1137,39 @@ def _sec_shared(rb, an):
             key=lambda k: group['species'][k]['lam_inf']['rsd'],
             default=None)
         if best_key and worst_key:
-            # ⚠ 这段有 6 个 % 参数，`%` 只能作用于紧邻的一个字符串字面量，
-            # 片段列表里夹着 ('t', …) 会断掉格式化（实测踩过两次）。
-            # 先把带参数的部分 format 成字符串，再拼片段列表。
-            _seg1 = ('组内一致性差别明显：%s 的 RSD 最小（%.2f%%），%s 最大'
-                     '（%.2f%%）。%s 的一致性最好，与它的两个离子都是'
-                     '“普通”离子、迁移数接近、水解倾向小相符；%s 的离散'
-                     '更大，主要来自 H⁺ 的迁移数极大（约 0.83），'
-                     '因而对浓度配制误差与温度波动都更敏感——'
-                     '同样 1%% 的浓度偏差，在 '
-                     % (conduct.SPECIES_LABEL[best_key],
-                        group['species'][best_key]['lam_inf']['rsd'],
-                        conduct.SPECIES_LABEL[worst_key],
-                        group['species'][worst_key]['lam_inf']['rsd'],
-                        conduct.SPECIES_LABEL[best_key],
-                        conduct.SPECIES_LABEL[worst_key]))
-            rb.para([_seg1, ('t', 'Λ_{m}', ITALIC),
-                     ' 上的反映会被放大。'])
+            # ⚠ 原来这段把 worst_key 的离散**写死归因于「H⁺ 迁移数极大」**，
+            # 即预设最差的一定是 HCl。若某次测下来 NaCl 的 RSD 最大，
+            # 这句话就成了张冠李戴的编造。现在只在实际是 HCl 时才用那个解释，
+            # 否则给出中性说明（2026-11-27）。
+            _bs = group['species'][best_key]['lam_inf']['rsd']
+            _ws = group['species'][worst_key]['lam_inf']['rsd']
+            _head = ('组内一致性差别明显：%s 的 RSD 最小（%.2f%%），%s 最大'
+                     '（%.2f%%）。%s 的一致性最好'
+                     % (conduct.SPECIES_LABEL[best_key], _bs,
+                        conduct.SPECIES_LABEL[worst_key], _ws,
+                        conduct.SPECIES_LABEL[best_key]))
+            if worst_key == 'HCl':
+                # ⚠ 「H⁺」要用真上标。原来写 'H⁺' 但经过 % 格式化后
+                # docxkit 的 Unicode 上标转换没生效（印出 'H+'），
+                # 而且「在 … 上」中间原本插了 Λ_m 片段，改写成纯文字后
+                # 那个占位丢了，只剩双空格。现在拆片段显式给出。
+                _why = ('，%s 的离散更大，主要来自 '
+                        % conduct.SPECIES_LABEL[worst_key])
+                _why_tail = [
+                    # 与全文其它地方一致：用 Unicode 上标 H⁺。
+                    # 别写成 'H^{+}' —— `('t', …, {})` 是非斜体片段，
+                    # 不走 docxkit 的 LaTeX 上标转换，会原样印出 'H+'。
+                    'H⁺ 的迁移数极大（约 0.83），因而对浓度配制误差与温度'
+                    '波动都更敏感——同样 1% 的浓度偏差，在 ',
+                    ('t', 'Λ_{m}', ITALIC),
+                    ' 上的反映会被放大。']
+            else:
+                _head = _head + ('；%s 的离散相对更大。各组离散度的差异可能来自'
+                                 '配制、温度或电极状态，需结合原始读数核对，'
+                                 '不宜简单归因于某个离子。'
+                                 % conduct.SPECIES_LABEL[worst_key])
+                _why_tail = []
+            rb.para([_head] + ([_why] if worst_key == 'HCl' else []) + _why_tail)
 
     # ---- 4.2.2 Grubbs
     rb.heading('4.2.2 异常值的统计甄别', 3)

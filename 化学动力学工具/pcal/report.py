@@ -614,13 +614,40 @@ def _sec_first_order(rb, analysis, groups, png, num):
                 r'\sigma_{t_{1/2}}=\frac{\ln 2}{k_{1}^{2}}\sigma_{k_{1}}')
     if groups:
         gmain = groups[0]
+        # ⚠ 原来无条件写「随着盐酸浓度增大，k1 单调增大、t1/2 单调减小」。
+        # 这句是**数据结论**，不该预设：只要某一组算偏（或浓度没按序录入），
+        # 就会出现非单调，而报告仍断言单调 → 与表里数字自相矛盾。
+        # 改成先按实际序列判单调，再据实叙述（2026-11-27）。
+        _seq = [g for g in groups if np.isfinite(g.get('k1', np.nan))]
+        _ks = [g['k1'] for g in _seq]
+        _inc = all(b > a for a, b in zip(_ks, _ks[1:])) if len(_ks) >= 2 else False
+        _dec = all(b < a for a, b in zip(_ks, _ks[1:])) if len(_ks) >= 2 else False
+        _t2 = [g.get('t_half') for g in _seq
+               if np.isfinite(g.get('t_half', np.nan))]
+        _t_dec = (all(b < a for a, b in zip(_t2, _t2[1:]))
+                  if len(_t2) >= 2 else False)
+        # ⚠ `_mono` 不能是纯字符串：里面有 k_1 / t_{1/2} 两个量符号，
+# 写进裸字符串会整串正体（上一轮刚踩过同类）。这里返回片段列表。
+        _K1 = ('t', 'k_{1}', {'italic': True})
+        _T12 = ('t', 't_{1/2}', {'italic': True})
+        if _inc and _t_dec:
+            _mono = ['可以看到，随着盐酸浓度增大，', _K1, ' 单调增大、',
+                     _T12, ' 单调减小，符合酸催化反应的一般规律。']
+        elif _inc:
+            _mono = ['可以看到，随着盐酸浓度增大，', _K1,
+                     ' 总体增大，但 ', _T12, ' 并非逐组单调减小。']
+        elif _dec:
+            _mono = ['可以看到，随着盐酸浓度增大，', _K1,
+                     ' 反而减小，与酸催化的一般规律不符，'
+                     '需要核对浓度与时间的录入。']
+        else:
+            _mono = ['可以看到，', _K1, ' 与浓度之间并非单调关系'
+                     '（各组数值见表），与酸催化的一般规律不符，'
+                     '需要核对浓度与时间的录入，或检查某组拟合是否受'
+                     '离群点影响。']
         rb.para([
-            '各组 ', ('t', 'k_{1}', ITALIC), ' 与 ', ('t', 't_{1/2}', ITALIC),
-            ' 已列于表%d。可以看到，随着盐酸浓度增大，' % tbl,
-            ('t', 'k_{1}', ITALIC),
-            ' 单调增大、', ('t', 't_{1/2}', ITALIC), ' 单调减小，'
-            '符合酸催化反应的一般规律。',
-        ])
+            '各组 ', _K1, ' 与 ', _T12,
+            ' 已列于表%d。' % tbl] + _mono)
 
     rb.heading('3.3.2 拟合质量与离群点', 3)
     worst = (min(groups, key=lambda g: g['fits']['1']['r2']
