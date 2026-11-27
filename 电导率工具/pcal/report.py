@@ -1066,8 +1066,12 @@ def _sec_error_budget(rb, an):
         an.tables, an.fits, esa['lam_inf'], esa['sigma'], esa['combo'],
         temp_c=an.ctx.get('temp'), compensation=an.ctx.get('compensation'),
         kappa_w=an.ctx.get('kappa_w'))
+    # 标题在这里统一打一次：两个分支互斥，不能各写一处——
+    # 否则要么重号（两处都执行），要么正常路径漏标题（我第一版误删了
+    # 正常分支那处，于是正文直接出现「4.1 节讨论的是…」，4.2 节名凭空消失，
+    # 而 4.2.1 又照常出现，成了"有子节无父节"）。
+    rb.heading('4.2 标准电离平衡常数的误差来源分析', 2)
     if not eb.get('ok'):
-        rb.heading('4.2 标准电离平衡常数的误差来源分析', 2)
         rb.para(['本节本应对最终量 ', ('t', 'K^{⊖}', ITALIC),
                  ' 作误差来源分解，但'])
         rb.para(['；'.join(eb.get('notes') or ['数据不足，无法完成预算']) + '。'])

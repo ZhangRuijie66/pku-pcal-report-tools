@@ -243,6 +243,46 @@ class BudgetWiringTests(unittest.TestCase):
         dup = {h for h in lvl2 if lvl2.count(h) > 1}
         self.assertEqual(dup, set(), '4.x 二级标题重号：%r' % (dup,))
 
+    def test_budget_heading_emitted_exactly_once(self):
+        """4.2 的节标题只许出现一次，且在 4.2.1 之前，且**不在 if 分支内**。
+
+        ⚠ 这条是踩出来的：两个分支（预算成功 / 数据不足）各写一处 heading
+        时，要么重号、要么正常路径漏标题。我第一次去重时误删了正常分支那处，
+        结果报告里 4.2 节名凭空消失，正文直接跳到「4.1 节讨论的是…」，
+        而 4.2.1 照常出现——"有子节无父节"。
+        audit_docx 不查这个（它只查同一编号是否重复，不查父节是否缺失），
+        所以必须在这里钉住。
+
+        光数出现次数**不够**：把 heading 塞进 `if not eb.get('ok'):` 分支里
+        也只有一个，正常路径照样漏标题（我做过故障注入验证，一开始就漏了
+        这一层）。所以还要查它**不在任何 if 分支里**。
+        """
+        import re
+        src = _src('report.py')
+        i = src.find('def _sec_error_budget')
+        j = src.find('\ndef ', i + 10)
+        seg = src[i:j if j > 0 else len(src)]
+        hits = re.findall(r"heading\('4\.2 标准电离平衡常数的误差来源分析'", seg)
+        self.assertEqual(len(hits), 1,
+                         '4.2 节标题应恰好出现 1 次（实际 %d 次）。'
+                         '两个分支互斥，标题要提到分支之外统一打一次。'
+                         % len(hits))
+        # 位置：标题必须早于 4.2.1
+        line_h = next((k for k, l in enumerate(seg.split('\n'))
+                       if "heading('4.2 标准电离平衡常数" in l), -1)
+        line_sub = next((k for k, l in enumerate(seg.split('\n'))
+                         if "heading('4.2.1" in l), -1)
+        self.assertGreater(line_h, -1)
+        self.assertGreater(line_sub, -1)
+        self.assertLess(line_h, line_sub, '4.2 的父节标题必须打在 4.2.1 之前')
+        # 缩进：函数体是 4 空格；比这更深说明被塞进了 if/for 分支
+        line = seg.split('\n')[line_h]
+        indent = len(line) - len(line.lstrip())
+        self.assertEqual(indent, 4,
+                         '4.2 标题的缩进是 %d，应为 4（函数体层级）。'
+                         '缩进更深说明它在 if 分支里——数据不足以外的情形'
+                         '就会漏掉这个标题。实际行：%r' % (indent, line.strip()))
+
     def test_no_markdown_bold_in_budget_section(self):
         """docx 不渲染 Markdown，'**' 会原样印出来。"""
         src = _src('report.py')
