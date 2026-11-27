@@ -27,9 +27,11 @@ class ItalicTests(unittest.TestCase):
         for label in sorted(self.cases):
             with self.subTest(module=label):
                 case = self.cases[label]
-                with tempfile.TemporaryDirectory() as td:
-                    out = generate_report(case, td)
-                    problems = check_italic.check(out)
+                # generate_report 现在走内容寻址缓存，返回的路径可能不在
+                # 调用方给的目录下（缓存命中时在临时目录），所以不要包
+                # TemporaryDirectory 再假设文件在里面——直接用返回路径。
+                out = generate_report(case)
+                problems = check_italic.check(out)
                 detail = '、'.join('%s:%r' % (k, s) for k, s, _ in problems[:6])
                 self.assertEqual(problems, [], '%s 有正斜体问题：%s' % (label, detail))
 

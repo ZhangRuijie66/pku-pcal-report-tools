@@ -20,7 +20,7 @@
 | 🌈 紫外可见吸收光谱 | `紫外光谱工具/` | 光谱仪标定、6 种共轭分子的 λmax/ε、一维势箱验证、Voigt 分峰、TD-DFT 对照 |
 | 🚪 统一入口 | `物化实验报告工具/` | 一个卡片页，一次拉起全部已安装模块 |
 
-当前版本 **v1.4.12**（2026-11-27），版本号与更新日志见 `更新日志/`。
+当前版本 **v1.5.0**（2026-11-27），版本号与更新日志见 `更新日志/`。
 
 ## 启动时会看到什么
 
@@ -158,7 +158,10 @@ canonical 源，放在 `_core/`；11 个工具里的 `pcal/` 是同步过去的�
 仍然可以单独拷走运行。
 
 ```bash
-python tests/run_tests.py                  # 全量回归（排版 + 11 个模块数值 + 报告结构审计）
+python tests/run_tests.py                  # 全量回归（并行，冷缓存约 70 s / 热缓存约 60 s）
+python tests/run_tests.py -k conduct       # 只跑文件名匹配的（调试用，几秒）
+python tests/run_tests.py -j 1             # 串行（排查并行相关问题）
+python tests/run_tests.py --failfast       # 首个失败即停
 python tests/audit_docx.py 报告.docx        # 单独审计一份已生成的报告
 python _core/sync_core.py --check           # 检查各工具副本是否与 canonical 一致
 python _core/sync_core.py --apply           # 同步（旧文件备份到 _core/backups/）
@@ -167,6 +170,27 @@ python _core/sync_core.py --apply           # 同步（旧文件备份到 _core/
 测试会检查：公式里的 `\lg`/单位/`⊖`/上下标斜体、题注化学式、表头列数、
 表格列数与表头一致、图号/表号连续、标题 keepNext、正文五号；
 数值基准用 2025 参照数据和各模块内置示例数据，覆盖全部 11 个实验。
+
+### 测试为什么这么快
+
+`run_tests.py` 按**一文件一进程**并行分发（`-j` 可调，默认 8）：
+
+| | 串行 | 并行 + 缓存 |
+|---|---|---|
+| 全量 742 项 | 约 205 s | 冷缓存 ~70 s / 热缓存 ~60 s |
+
+两个关键点：
+
+1. **报告产物走内容寻址缓存**（`tests/module_cases.generate_report`）。
+   `test_modules` 与 `test_italic` 本来各自要把 11 份报告完整生成一遍（27 s × 2）。
+   缓存键把工具源码、模板、fixtures、cfg、Python 版本全部并进去，
+   改任何一项都会重新生成——**不会拿过期产物去审计**。
+   这一点有专门的故障注入测试守着（`tests/test_test_infra.py`）。
+2. **需要改写源文件的测试独占串行**。`test_test_infra` 的缓存验证靠真的改一下
+   `report.py` 看产物是否重新生成，与并行不相容（会污染同时生成报告的文件），
+   所以放在并行批之后单独跑。
+
+排查缓存问题时可 `PCAL_TEST_NOCACHE=1 python tests/run_tests.py` 关掉缓存。
 
 ## 版本号与自动更新
 

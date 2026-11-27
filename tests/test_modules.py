@@ -293,15 +293,17 @@ class ModuleRegressionTests(unittest.TestCase):
         for label in sorted(self.cases):
             with self.subTest(module=label):
                 case = self.cases[label]
-                with tempfile.TemporaryDirectory() as td:
-                    out = generate_report(case, td)
-                    self.assertTrue(out.exists(), label)
-                    self.assertGreater(out.stat().st_size, 100_000, label)
-                    issues = audit_docx(out)
-                    errors = [i for i in issues if i.level == 'ERROR']
-                    self.assertEqual(
-                        [str(i) for i in errors], [],
-                        '%s 的报告有结构错误' % label)
+                # generate_report 走内容寻址缓存（见 module_cases 的说明）：
+                # 返回路径可能不在调用方给的目录下。不要再包一层
+                # TemporaryDirectory 然后假设文件在里面。
+                out = generate_report(case)
+                self.assertTrue(out.exists(), label)
+                self.assertGreater(out.stat().st_size, 100_000, label)
+                issues = audit_docx(out)
+                errors = [i for i in issues if i.level == 'ERROR']
+                self.assertEqual(
+                    [str(i) for i in errors], [],
+                    '%s 的报告有结构错误' % label)
 
 
 if __name__ == '__main__':
